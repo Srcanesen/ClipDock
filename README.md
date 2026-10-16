@@ -3,7 +3,7 @@
 Find, download and drop media into DaVinci Resolve Studio without leaving Resolve.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue)
-![DaVinci Resolve Studio 21](https://img.shields.io/badge/DaVinci_Resolve-Studio_21-black)
+![DaVinci Resolve Studio 21](https://img.shields.io/badge/DaVinci_Resolve-Studio_21-orange)
 ![macOS tested](https://img.shields.io/badge/macOS-tested-lightgrey)
 
 ![ClipDock adding a YouTube range to the Resolve timeline](docs/demo.gif)
@@ -71,14 +71,14 @@ ClipDock looks on `PATH` and in common install locations. See
    npm run install:plugin
    ```
 
-   > [!NOTE]
-   > On macOS, writing to Resolve's system plugin folder needs administrator rights.
-   > If installation is denied, build first, then run the installer with elevation:
-   >
-   > ```sh
-   > npm run build
-   > sudo node scripts/install-plugin.mjs
-   > ```
+> [!NOTE]
+> On macOS, writing to Resolve's system plugin folder needs administrator rights.
+> If installation is denied, build first, then run the installer with elevation:
+>
+> ```sh
+> npm run build
+> sudo node scripts/install-plugin.mjs
+> ```
 
 4. Verify the installed files against the completed build:
 
