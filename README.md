@@ -1,6 +1,9 @@
 # ClipDock
 
-Find, download and drop media into DaVinci Resolve Studio without leaving Resolve.
+A free, open-source **DaVinci Resolve plugin** that finds, downloads and drops media into
+your project without leaving Resolve. Search YouTube, Pexels and Pinterest or paste a
+public link, then send the clip to the Media Pool, the playhead or the end of the timeline.
+ClipDock runs as a Workflow Integration panel inside DaVinci Resolve Studio.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue)
 ![DaVinci Resolve Studio 21](https://img.shields.io/badge/DaVinci_Resolve-Studio_21-orange)
