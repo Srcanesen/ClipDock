@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BlackmagicDesign>
+    <Plugin>
+        <Id>com.clipdock.app</Id>
+        <Name>ClipDock</Name>
+        <Version>0.1.0</Version>
+        <Description>Video search and media import panel for DaVinci Resolve Studio</Description>
+        <FilePath>main.js</FilePath>
+    </Plugin>
+</BlackmagicDesign>

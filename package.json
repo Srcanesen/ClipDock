@@ -1,0 +1,34 @@
+{
+  "name": "clipdock-resolve-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ClipDock is a DaVinci Resolve Studio Workflow Integration plugin for finding, downloading and importing media into your project.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "verify": "node scripts/verify-plugin.mjs",
+    "check": "npm run build && npm run verify",
+    "test": "npm run build && node --import ./scripts/test-process-safety.mjs --test test/*.test.mjs",
+    "validate": "npm test && npm run check",
+    "test:resolve:headless": "node scripts/resolve-smoke/run.mjs",
+    "preview": "npm run build && node scripts/preview.mjs",
+    "install:plugin": "npm run build && node scripts/install-plugin.mjs",
+    "verify:installed": "node scripts/verify-installed-plugin.mjs",
+    "test:resolve:e2e": "node scripts/resolve-smoke/e2e.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Srcanesen/ClipDock.git"
+  },
+  "homepage": "https://github.com/Srcanesen/ClipDock#readme",
+  "bugs": {
+    "url": "https://github.com/Srcanesen/ClipDock/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

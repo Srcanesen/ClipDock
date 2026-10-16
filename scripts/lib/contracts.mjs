@@ -1,0 +1,175 @@
+// Single contract source for the verifier and runtime.
+// This file is the ONLY definition site for the literals below.
+// src/shared.ts imports from here; scripts/verify-plugin.mjs imports from here.
+export const PLUGIN_ID = 'com.clipdock.app';
+
+export const MANIFEST_FILE_PATH = 'main.js';
+
+export const IPC_CHANNELS = {
+  getStatus: 'clipdock:getStatus',
+  resolveQuit: 'clipdock:resolve-quit',
+  selectFile: 'clipdock:select-file',
+  nativeDragStart: 'clipdock:native-drag-start',
+  importToMediaPool: 'clipdock:import-to-media-pool',
+  addToTimeline: 'clipdock:add-to-timeline',
+  searchYoutube: 'clipdock:search-youtube',
+  searchPinterest: 'clipdock:search-pinterest',
+  prefetchYoutube: 'clipdock:prefetch-youtube',
+  loadYoutube: 'clipdock:load-youtube',
+  downloadYoutube: 'clipdock:download-youtube',
+  cancelYoutube: 'clipdock:cancel-youtube',
+  loadSocial: 'clipdock:load-social',
+  loadSocialThumbnail: 'clipdock:load-social-thumbnail',
+  downloadSocial: 'clipdock:download-social',
+  cancelSocial: 'clipdock:cancel-social',
+  loadPinterest: 'clipdock:load-pinterest',
+  downloadPinterest: 'clipdock:download-pinterest',
+  cancelPinterest: 'clipdock:cancel-pinterest',
+  pinterestEvent: 'clipdock:pinterest-event',
+  socialEvent: 'clipdock:social-event',
+  queueDelete: 'clipdock:queue-delete',
+  youtubeEvent: 'clipdock:youtube-event',
+  setAlwaysOnTop: 'clipdock:set-always-on-top',
+  pexelsKeyStatus: 'clipdock:pexels-key-status',
+  setPexelsKey: 'clipdock:set-pexels-key',
+  clearPexelsKey: 'clipdock:clear-pexels-key',
+  searchPexels: 'clipdock:search-pexels',
+  loadPexels: 'clipdock:load-pexels',
+  downloadPexels: 'clipdock:download-pexels',
+  cancelPexels: 'clipdock:cancel-pexels',
+  cancelPexelsRequests: 'clipdock:cancel-pexels-requests',
+  pexelsEvent: 'clipdock:pexels-event',
+  openPexelsExternal: 'clipdock:open-pexels-external',
+  openYoutubeExternal: 'clipdock:open-youtube-external',
+  openYoutubePreview: 'clipdock:youtube-preview-open',
+  closeYoutubePreview: 'clipdock:youtube-preview-close',
+  setYoutubePreviewBounds: 'clipdock:youtube-preview-bounds',
+  youtubePreviewState: 'clipdock:youtube-preview-state',
+  workspaceStatus: 'clipdock:workspace-status',
+  openWorkspace: 'clipdock:open-workspace',
+  cleanupWorkspace: 'clipdock:cleanup-workspace',
+  searchSubtitles: 'clipdock:search-subtitles',
+  historyList: 'clipdock:history-list',
+  historyReuse: 'clipdock:history-reuse',
+  historyReveal: 'clipdock:history-reveal',
+  historyRevealSubtitle: 'clipdock:history-reveal-subtitle',
+  historySource: 'clipdock:history-source',
+  historyCopy: 'clipdock:history-copy',
+  historyRelink: 'clipdock:history-relink',
+  historyDelete: 'clipdock:history-delete',
+  downloadFolderStatus: 'clipdock:download-folder-status',
+  chooseDownloadFolder: 'clipdock:choose-download-folder',
+};
+
+export const DOWNLOAD_INTENTS = ['download', 'import', 'playhead', 'end'];
+export const DOWNLOAD_INTENT_DEFAULT = 'download';
+
+export const MEDIA_PROFILES = ['original', 'fast', 'editing'];
+
+export const TARGET_BINS = ['active', 'clipdock'];
+
+export const TIMELINE_PLACEMENTS = ['end', 'playhead'];
+
+export const DIST_REQUIRED_FILES = [
+  'preload.js',
+  'renderer.js',
+  'status.js',
+  'status-provider.js',
+  'transfer.js',
+  'workflow-integration.js',
+  'ytdlp-url.js',
+  'ytdlp.js',
+  'gallerydl.js',
+  'media-prep.js',
+  'workspace.js',
+  'history.js',
+  'settings.js',
+  'pexels-credential.js',
+  'package.json',
+];
+
+export const PRELOAD_API_METHODS = [
+  'selectFile',
+  'startNativeDrag',
+  'importToMediaPool',
+  'addToTimeline',
+  'searchYoutube',
+  'prefetchYoutube',
+  'loadYoutube',
+  'downloadYoutube',
+  'cancelYoutube',
+  'loadSocial',
+  'loadSocialThumbnail',
+  'downloadSocial',
+  'cancelSocial',
+  'onSocialEvent',
+  'searchPinterest',
+  'loadPinterest',
+  'downloadPinterest',
+  'cancelPinterest',
+  'onPinterestEvent',
+  'queueDelete',
+  'searchSubtitles',
+  'onYoutubeEvent',
+  'setAlwaysOnTop',
+  'pexelsKeyStatus',
+  'setPexelsKey',
+  'clearPexelsKey',
+  'searchPexels',
+  'loadPexels',
+  'downloadPexels',
+  'cancelPexels',
+  'cancelPexelsRequests',
+  'onPexelsEvent',
+  'openPexelsExternal',
+  'openYoutubeExternal',
+  'openYoutubePreview',
+  'closeYoutubePreview',
+  'setYoutubePreviewBounds',
+  'onYoutubePreviewState',
+  'workspaceStatus',
+  'openWorkspace',
+  'cleanupWorkspace',
+  'historyList',
+  'historyReuse',
+  'historyReveal',
+  'historyRevealSubtitle',
+  'historySource',
+  'historyCopy',
+  'historyRelink',
+  'historyDelete',
+  'downloadFolderStatus',
+  'chooseDownloadFolder',
+  'getStatus',
+  'onResolveQuit',
+];
+
+export const MEDIA_PROFILE_LABELS = [['original', 'Best quality'], ['fast', 'Fast'], ['editing', 'Edit-ready']];
+
+export const PRELOAD_TRANSFER_METHODS = ['selectFile', 'startNativeDrag', 'importToMediaPool', 'addToTimeline'];
+
+export const SURFACE_IDS = ['surface-nav-search', 'surface-nav-queue', 'surface-nav-library', 'settings-btn', 'search-surface', 'queue-surface', 'library-surface', 'settings-panel'];
+
+export const COMMON_STAGING_IDS = ['common-output', 'common-profile', 'common-quality', 'common-media-mode', 'common-audio-format', 'common-target-bin', 'common-intent', 'selection-toolbar', 'select-all-results-btn', 'clear-selection-btn', 'selection-count', 'enqueue-selected-btn', 'completed-downloads'];
+
+export const REQUIRED_HTML_IDS = {
+  transferQueue: ['youtube-profile', 'youtube-target-bin', 'youtube-intent', 'download-youtube-btn', 'youtube-download-queue'],
+  social: ['provider-social', 'social-url', 'load-social-btn', 'social-platform-instagram', 'social-platform-twitter', 'social-platform-facebook'],
+  pinterest: ['provider-pinterest', 'pinterest-url', 'load-pinterest-btn', 'pinterest-item-list', 'pinterest-original-note'],
+  audioSubtitle: ['youtube-media-mode', 'youtube-audio-format', 'youtube-subtitles', 'youtube-subtitle-language'],
+  settings: ['settings-panel', 'settings-btn', 'settings-close', 'first-use-dialog'],
+  settingsFolder: ['settings-download-folder', 'choose-download-folder-btn', 'settings-folder-note'],
+  queueHeading: ['open-downloads-folder-btn'],
+  providerSwitch: ['provider-youtube', 'provider-pexels', 'provider-social'],
+  commonOutput: ['common-output', 'common-profile', 'common-quality', 'common-media-mode', 'common-audio-format', 'common-target-bin', 'common-intent'],
+  selectionToolbar: ['selection-toolbar', 'select-all-results-btn', 'clear-selection-btn', 'selection-count', 'enqueue-selected-btn'],
+  historyLibrary: ['history-search-input', 'history-provider-filter', 'history-availability-filter', 'history-refresh-btn', 'history-status', 'history-show-more'],
+  queue: ['youtube-queue-status', 'youtube-progress', 'youtube-search-results', 'youtube-download-queue'],
+  inspector: ['youtube-metadata', 'youtube-thumbnail', 'source-monitor', 'preview-selected-btn', 'open-youtube-external-btn'],
+  surface: ['surface-nav-search', 'surface-nav-queue', 'surface-nav-library', 'settings-btn', 'search-surface', 'queue-surface', 'library-surface', 'settings-panel'],
+  workspace: ['workspace-splitter'],
+  pexels: ['pexels-setup', 'pexels-api-key', 'pexels-connect-btn', 'pexels-disconnect-btn', 'pexels-connection-status'],
+};
+
+// flat list of every required id for simple parity checks
+export const REQUIRED_HTML_IDS_FLAT = Array.from(new Set(Object.values(REQUIRED_HTML_IDS).flat()));
