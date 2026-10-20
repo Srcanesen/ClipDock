@@ -256,6 +256,7 @@ export class PexelsClient {
   #jobApiJobs = new ProviderJobRunner({cancelledMessage: 'Pexels request cancelled.', disposedMessage: 'Pexels client is shut down.'});
   #metadataCache: LruCache<string, Record<string, unknown>>;
   #metadataPending = new Map<string, SharedMetadataRequest>();
+  #terminations = new Set<Promise<unknown>>();
   #cooldowns: LruCache<string, number>;
   #setTimeout: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
   #clearTimeout: typeof clearTimeout;
@@ -570,8 +571,10 @@ export class PexelsClient {
     try { return await abortable(pending, signal); }
     catch (error) {
       if (signal.reason instanceof ProviderJobCancelledError) {
-        const response = await pending.catch(() => null);
-        if (response) await response.body?.cancel();
+        // The job ends now; only disposal waits for the late response and its body.
+        const termination = pending.then(response => response.body?.cancel(), () => undefined).catch(() => undefined);
+        this.#terminations.add(termination);
+        void termination.finally(() => this.#terminations.delete(termination));
       }
       throw error;
     }
@@ -636,5 +639,6 @@ export class PexelsClient {
   async dispose(): Promise<void> {
     this.clearKey();
     await Promise.all([this.#downloads.dispose(), this.#apiJobs.dispose(), this.#jobApiJobs.dispose()]);
+    await Promise.all([...this.#terminations]);
   }
 }

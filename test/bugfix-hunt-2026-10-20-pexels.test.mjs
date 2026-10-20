@@ -68,3 +68,21 @@ for (const ending of ['size limit', 'cancel', 'idle timeout']) {
     await client.dispose();
   });
 }
+
+for (const operation of ['API', 'download']) {
+  test(`a user ${operation} cancel does not wait for a late response or its unacknowledged body cancel`, async t => {
+    let respond, bodiesCancelled = 0;
+    const responseReady = new Promise(resolve => {respond = resolve;});
+    const {client, root} = setup(t, async () => responseReady);
+    client.restoreKey('P'.repeat(20), true, 'Connected');
+    const pending = operation === 'API' ? client.load('photo', 7, {jobId: 'late'}) : client.download('late', {url: 'https://images.pexels.com/photos/1/a.jpeg', mime: 'image/jpeg'}, () => undefined);
+    await new Promise(resolve => setImmediate(resolve));
+    const cancelled = client.cancel('late');
+    assert.equal(await settled(pending), operation === 'API' ? 'Pexels request cancelled.' : 'Download cancelled.');
+    assert.equal(await settled(cancelled), 'completed');
+    respond(new Response(new ReadableStream({cancel() {bodiesCancelled++; return hostileCancel();}})));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(bodiesCancelled, 1, 'the late body is still terminated in the background');
+    assert.deepEqual(readdirSync(root), []);
+  });
+}
