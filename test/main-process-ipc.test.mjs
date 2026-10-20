@@ -214,7 +214,8 @@ test('provider-originated Pexels preflight cancellation normalizes the invoke re
     pending = f.start();
     const result = pending.then(() => 'completed', error => error.message);
     await f.metadataEntered.promise;
-    assert.equal(f.workers.pexels.abortApiRequests(), true);
+    // Browse aborts no longer reach a download's metadata step; cancel it inside the provider.
+    assert.notEqual(f.workers.pexels.cancel('job'), null);
     f.releaseMetadata.resolve();
     assert.equal(await result, 'Download cancelled.');
     assert.deepEqual(f.events(), [cancelled]);

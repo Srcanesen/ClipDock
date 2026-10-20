@@ -31,6 +31,7 @@ const METADATA_CACHE_MAX = 60;
 const METADATA_CACHE_TTL = 60_000;
 const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const MAX_REDIRECTS = 3;
+const NO_KEY = 'Connect a Pexels API key.';
 const IMAGE_MIMES = new Set(['image/jpeg', 'image/png']);
 
 const safeText = (value: unknown, max = 240): string | null =>
@@ -51,6 +52,19 @@ const contentType = (response: Response): string =>
 // Cancellation must not wait for a hostile upstream body to acknowledge it.
 function cancelBody(response: Response): void {
   void response.body?.cancel().catch(() => undefined);
+}
+
+// Node's web-stream adapter waits for the source to acknowledge cancellation;
+// this proxy acknowledges at once and terminates the upstream body in the background.
+function detachCancel(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  return new ReadableStream({
+    async pull(controller) {
+      const {done, value} = await reader.read();
+      if (done) controller.close(); else controller.enqueue(value);
+    },
+    cancel(reason) { void reader.cancel(reason).catch(() => undefined); },
+  });
 }
 
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -238,6 +252,8 @@ export class PexelsClient {
   #connectionMessage = 'Disconnected.';
   #downloads = new ProviderJobRunner({cancelledMessage: 'Download cancelled.', disposedMessage: 'Pexels client is shut down.'});
   #apiJobs = new ProviderJobRunner({cancelledMessage: 'Pexels request cancelled.', disposedMessage: 'Pexels client is shut down.'});
+  // Metadata steps of download jobs; browse cancellation must not reach them.
+  #jobApiJobs = new ProviderJobRunner({cancelledMessage: 'Pexels request cancelled.', disposedMessage: 'Pexels client is shut down.'});
   #metadataCache: LruCache<string, Record<string, unknown>>;
   #metadataPending = new Map<string, SharedMetadataRequest>();
   #cooldowns: LruCache<string, number>;
@@ -302,6 +318,7 @@ export class PexelsClient {
 
   #resetMetadata(): void {
     this.abortApiRequests();
+    this.#jobApiJobs.cancel();
     this.#metadataCache.clear();
     this.#metadataPending.clear();
   }
@@ -340,23 +357,24 @@ export class PexelsClient {
   isDownloading(): boolean { return this.#downloads.isActive(); }
 
   cancel(jobId?: string): Promise<void> | null {
-    const pending = [this.#downloads.cancel(jobId), this.#apiJobs.cancel(jobId)].filter((done): done is Promise<void> => done !== null);
+    const pending = [this.#downloads.cancel(jobId), this.#apiJobs.cancel(jobId), this.#jobApiJobs.cancel(jobId)].filter((done): done is Promise<void> => done !== null);
     return pending.length ? Promise.all(pending).then(() => undefined) : null;
   }
 
   async #runApi<T>(name: 'search' | 'load' | 'validate', task: (signal: AbortSignal, metadataReady: () => void) => Promise<T>, jobId?: string): Promise<T> {
     const slot = jobId ?? `${name}-${randomUUID()}`;
+    const jobs = jobId ? this.#jobApiJobs : this.#apiJobs;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await this.#apiJobs.run(slot, context => {
-        timeout = this.#setTimeout(() => { this.#apiJobs.cancel(slot, new Error('Pexels request timed out.')); }, API_TIMEOUT_MS);
+      return await jobs.run(slot, context => {
+        timeout = this.#setTimeout(() => { jobs.cancel(slot, new Error('Pexels request timed out.')); }, API_TIMEOUT_MS);
         return task(context.signal, () => this.#clearTimeout(timeout));
-      }, {cancelledEventMessage: jobId ? 'Download cancelled.' : undefined, mapError: error => error.message.startsWith('Pexels ') ? error : new Error('Pexels request failed.')});
+      }, {cancelledEventMessage: jobId ? 'Download cancelled.' : undefined, mapError: error => error.message.startsWith('Pexels ') || error.message === NO_KEY ? error : new Error('Pexels request failed.')});
     } finally { this.#clearTimeout(timeout); }
   }
 
   async #requestJson(url: URL, signal: AbortSignal, key = this.#key): Promise<Record<string, unknown>> {
-    if (!key) throw new Error('Connect a Pexels API key.');
+    if (!key) throw new Error(NO_KEY);
     const reusable = url.pathname !== '/v1/curated';
     const cacheKey = `${key}:${url}`;
     const cached = reusable ? this.#metadataCache.get(cacheKey) : undefined;
@@ -520,7 +538,7 @@ export class PexelsClient {
         const opened = openExclusive(directory, basename(temp));
         context.register(opened.file);
         out = createWriteStream(temp, {fd: opened.fd, autoClose: true});
-        await pipeline(Readable.fromWeb(response.body as never), meter, out, {signal: context.signal});
+        await pipeline(Readable.fromWeb(detachCancel(response.body) as never), meter, out, {signal: context.signal});
         emitProgress(100, true);
         context.check();
         const temporary = context.owned(temp);
@@ -603,7 +621,7 @@ export class PexelsClient {
       }
       return Buffer.concat(chunks, total);
     } catch (error) {
-      await reader.cancel();
+      void reader.cancel().catch(() => undefined);
       throw error;
     } finally { reader.releaseLock(); }
   }
@@ -617,6 +635,6 @@ export class PexelsClient {
 
   async dispose(): Promise<void> {
     this.clearKey();
-    await Promise.all([this.#downloads.dispose(), this.#apiJobs.dispose()]);
+    await Promise.all([this.#downloads.dispose(), this.#apiJobs.dispose(), this.#jobApiJobs.dispose()]);
   }
 }
