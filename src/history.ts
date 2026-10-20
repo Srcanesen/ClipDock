@@ -60,11 +60,13 @@ export class DownloadHistory {
   }
   private managedRoot: () => ManagedRoot | null;
   private readonly sessionRoots = new Map<string, ManagedRoot | null>();
+  /** Legacy records lacking trustedRoot are bound once, to the root active at startup; undefined when it was unavailable. */
+  private readonly legacyRoots = new Map<string, string | undefined>();
   constructor(private readonly file: string, managedRoot: ManagedRoot | string | (() => ManagedRoot | null), private readonly projectName: () => string | null = () => null) {
     this.storeDirectory = prepareDirectory(dirname(file));
     if (typeof managedRoot === 'function') this.managedRoot = managedRoot;
     else { const captured = this.captureRoot(managedRoot); this.managedRoot = () => captured; }
-    this.load();
+    this.load(true);
   }
   /** Point the managed-root boundary at a new download folder; old records keep their absolute paths. */
   setManagedRoot(root: ManagedRoot | string): void {
@@ -101,7 +103,7 @@ export class DownloadHistory {
       const root = this.sessionRoots.get(r.trustedRoot); root?.verify(); return root ?? null;
     } catch { return null; }
   }
-  private load(): void {
+  private load(initial = false): void {
     try {
       const raw = JSON.parse(readFileSync(this.file, 'utf8')) as Store;
       if (raw?.schemaVersion !== 1 || !Array.isArray(raw.records)) throw new Error('Unsupported history store.');
@@ -115,7 +117,9 @@ export class DownloadHistory {
         const createdAt = Number.isFinite(r.createdAt) ? Number(r.createdAt) : Date.now();
         const subtitlePath = typeof r.subtitlePath === 'string' && r.subtitlePath.length <= 2048 && isAbsolute(r.subtitlePath) && supportedSubtitlePath(r.subtitlePath) ? r.subtitlePath : null;
         // Preserve invalid provenance: undefined means explicitly external, never failed managed validation.
-        const trustedRoot = typeof r.trustedRoot === 'string' ? r.trustedRoot : this.root()?.verify() ?? '';
+        // Transaction reloads reuse the startup binding instead of the folder active now.
+        if (initial && typeof r.trustedRoot !== 'string') this.legacyRoots.set(r.id, this.root()?.verify());
+        const trustedRoot = typeof r.trustedRoot === 'string' ? r.trustedRoot : this.legacyRoots.get(r.id);
         return [{ id: r.id, provider: r.provider, source, project: typeof r.project === 'string' ? r.project.slice(0, 200) : null, filePath: r.filePath, managed: r.managed === true, trustedRoot: r.managed === true ? trustedRoot : undefined, fileName: r.fileName.slice(0, 300), bytes: Number.isSafeInteger(r.bytes) && Number(r.bytes) >= 0 ? Number(r.bytes) : 0, assetId: typeof r.assetId === 'string' ? r.assetId.slice(0, 100) : null, title: typeof r.title === 'string' ? r.title.slice(0, 300) : r.fileName.slice(0, 300), creator: typeof r.creator === 'string' ? r.creator.slice(0, 200) : null, profile: typeof r.profile === 'string' ? r.profile.slice(0, 40) : 'original', quality: typeof r.quality === 'string' ? r.quality.slice(0, 80) : null, mediaMode: typeof r.mediaMode === 'string' ? r.mediaMode.slice(0, 20) : 'video', selection, automation: { provider: r.provider, source, selection, chapters }, createdAt, lastUsedAt: Number.isFinite(r.lastUsedAt) ? Number(r.lastUsedAt) : createdAt, subtitlePath }];
       }).slice(0, MAX_RECORDS);
       // Capture session protection once. Extra fields from the unreleased identity format are discarded above.
