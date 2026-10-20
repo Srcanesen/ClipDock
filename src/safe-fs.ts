@@ -9,9 +9,24 @@ type Code = 'root-changed' | 'outside' | 'symlink' | 'replaced' | 'exists' | 'no
 export class SafeFsError extends Error {
   constructor(readonly code: Code) { super(`File safety check failed: ${code}.`); this.name = 'SafeFsError'; }
 }
-type Identity = Readonly<{path: string; dev: bigint; ino: bigint}>;
+type Identity = Readonly<{path: string; dev: bigint; ino: bigint; birth?: bigint}>;
 export type DirectorySnapshot = Readonly<{path: string; directories: ReadonlyArray<Identity>}>;
 const same = (a: {dev: bigint; ino: bigint}, b: {dev: bigint; ino: bigint}) => a.dev === b.dev && a.ino === b.ino;
+type FileStats = {dev: bigint; ino: bigint; birthtimeNs: bigint};
+// macOS exFAT reports a negative placeholder inode for an empty file and its start
+// cluster after the first write. Adopt that change once, on the same device and birth time.
+const adopted = new WeakMap<Identity, {dev: bigint; ino: bigint}>();
+function fileIdentity(path: string, info: FileStats): Identity {
+  return Object.freeze(info.ino < 0n ? {path, dev: info.dev, ino: info.ino, birth: info.birthtimeNs} : {path, dev: info.dev, ino: info.ino});
+}
+function sameFile(identity: Identity, info: FileStats): boolean {
+  if (same(info, identity)) return true;
+  const settled = adopted.get(identity);
+  if (settled) return same(info, settled);
+  if (identity.birth === undefined || info.ino < 0n || info.dev !== identity.dev || info.birthtimeNs !== identity.birth) return false;
+  adopted.set(identity, {dev: info.dev, ino: info.ino});
+  return true;
+}
 const missing = (error: unknown) => ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '');
 function inside(dir: string, path: string, equal = false): boolean {
   const rel = relative(dir, path);
@@ -77,7 +92,7 @@ export function captureFile(dir: AnchoredDir, path: string): OwnedFile {
   const info = lstatSync(path, {bigint: true});
   if (info.isSymbolicLink()) throw new SafeFsError('symlink');
   if (!info.isFile()) throw new SafeFsError('not-regular');
-  const file = Object.freeze({dir, path, chain: parent.snapshot().directories, identity: Object.freeze({path, dev: info.dev, ino: info.ino})});
+  const file = Object.freeze({dir, path, chain: parent.snapshot().directories, identity: fileIdentity(path, info)});
   verifyFile(file); return file;
 }
 export function verifyFile(file: OwnedFile): string {
@@ -85,7 +100,7 @@ export function verifyFile(file: OwnedFile): string {
   try {
     file.dir.verify(); verifyChain(file.chain);
     const info = lstatSync(file.path, {bigint: true});
-    if (!info.isFile() || info.isSymbolicLink() || !same(info, file.identity)) throw new SafeFsError('replaced');
+    if (!info.isFile() || info.isSymbolicLink() || !sameFile(file.identity, info)) throw new SafeFsError('replaced');
     return file.path;
   } catch (error) { if (error instanceof SafeFsError || missing(error)) throw new SafeFsError('replaced'); throw error; }
 }
@@ -145,7 +160,7 @@ export function openExclusive(dir: AnchoredDir, name: string, mode = 0o600): {fd
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new SafeFsError('exists'); throw error; }
   try {
     const file = captureFile(dir, path);
-    if (!same(fstatSync(fd, {bigint: true}), file.identity)) throw new SafeFsError('replaced');
+    if (!sameFile(file.identity, fstatSync(fd, {bigint: true}))) throw new SafeFsError('replaced');
     return {fd, file};
   } catch (error) { closeSync(fd); throw error; }
 }
@@ -168,7 +183,7 @@ export function publishNoReplace(src: OwnedFile, dest: AnchoredDir, name: string
     try {
       verifyFile(src);
       input = openSync(src.path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      if (!same(fstatSync(input, {bigint: true}), src.identity)) throw new SafeFsError('replaced');
+      if (!sameFile(src.identity, fstatSync(input, {bigint: true}))) throw new SafeFsError('replaced');
       const buffer = Buffer.alloc(64 * 1024);
       for (let count; (count = readSync(input, buffer, 0, buffer.length, null)) > 0;) {
         verifyFile(src); verifyFile(published);
@@ -193,7 +208,7 @@ export function appendOwned(file: OwnedFile, line: string, limit: number): void 
   const fd = openSync(file.path, constants.O_RDWR | constants.O_NOFOLLOW);
   try {
     const info = fstatSync(fd, {bigint: true});
-    if (!info.isFile() || !same(info, file.identity)) throw new SafeFsError('replaced');
+    if (!info.isFile() || !sameFile(file.identity, info)) throw new SafeFsError('replaced');
     verifyFile(file);
     const next = Buffer.from(line), size = Number(info.size);
     const kept = Math.min(size, Math.max(0, limit - next.length));
@@ -213,7 +228,7 @@ export function writeOwned(file: OwnedFile, content: string): void {
   verifyFile(file);
   const fd = openSync(file.path, constants.O_WRONLY | constants.O_NOFOLLOW);
   try {
-    if (!same(fstatSync(fd, {bigint: true}), file.identity)) throw new SafeFsError('replaced');
+    if (!sameFile(file.identity, fstatSync(fd, {bigint: true}))) throw new SafeFsError('replaced');
     const bytes = Buffer.from(content);
     for (let offset = 0; offset < bytes.length;) {
       verifyFile(file); offset += writeSync(fd, bytes, offset, bytes.length - offset, offset);

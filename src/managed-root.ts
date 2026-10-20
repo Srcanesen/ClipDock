@@ -3,7 +3,7 @@ import { closeSync, lstatSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { canonicalRoot, regularFile } from './path-boundary';
-import { AnchoredDir, ensureDirectory, openExclusive, prepareDirectory, removeOwned } from './safe-fs';
+import { AnchoredDir, ensureDirectory, openExclusive, prepareDirectory, removeOwned, writeOwned } from './safe-fs';
 
 export type RootIdentity = Readonly<{ path: string; directories: ReadonlyArray<Readonly<{ path: string; dev: number | string; ino: number | string }>> }>;
 const serial = (value: bigint): number | string => Number.isSafeInteger(Number(value)) ? Number(value) : value.toString();
@@ -83,9 +83,10 @@ export class ManagedRoot {
     root.ensureProviderDirectories();
     for (const name of ['youtube', 'social', 'pinterest', 'pexels'] as const) {
       const directory = root.providerPath(name);
+      // Write and re-check a byte: a volume whose file identity changes on write cannot be managed.
       const probe = openExclusive(AnchoredDir.capture(directory, root), `.clipdock-write-test-${randomUUID()}.tmp`);
-      try { closeSync(probe.fd); }
-      finally { removeOwned(probe.file); }
+      try { closeSync(probe.fd); writeOwned(probe.file, 'x'); }
+      finally { if (removeOwned(probe.file) !== 'removed') throw failure(); }
     }
     root.verify();
     return root;
