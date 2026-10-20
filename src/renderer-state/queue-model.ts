@@ -204,14 +204,16 @@ export class DownloadQueue {
     const item = this.queue.find((item) => item.queueId === id);
     if (!item || id !== this.active || !['downloading', 'preparing'].includes(item.status) || item.stopping) return;
     item.stopping = true; this.changed();
+    // A Stop failure describes the running download only; once it has settled the outcome stands.
+    const running = (): boolean => ['downloading', 'preparing'].includes(item.status);
     try {
-      if (!await this.adapter.cancel(item) && item.status !== 'cancelled') item.actionError = item.message = 'Could not stop this download. Try again.';
-    } catch (error) { if (item.status !== 'cancelled') item.actionError = item.message = (error as Error).message; }
+      if (!await this.adapter.cancel(item) && running()) item.actionError = item.message = 'Could not stop this download. Try again.';
+    } catch (error) { if (running()) item.actionError = item.message = (error as Error).message; }
     finally { item.stopping = false; this.changed(); }
   }
   async transfer(id: string, action: 'import' | TimelinePlacement, reason?: string | null): Promise<void> {
     const item = this.queue.find((item) => item.queueId === id);
-    if (!item || item.fileDeleted || !item.cardId || item.handingOff) return;
+    if (!item || item.fileDeleted || !item.cardId || item.handingOff || item.deleting) return;
     if (reason) { item.message = item.transferError = reason; this.changed(); return; }
     item.handingOff = true; item.actionError = undefined; this.changed();
     await this.handoff(item, action, false);
@@ -229,7 +231,7 @@ export class DownloadQueue {
   }
   async deleteFile(id: string): Promise<void> {
     const item = this.queue.find((item) => item.queueId === id);
-    if (!item || item.fileDeleted || item.status !== 'completed' || !item.cardId || id === this.active || item.deleting) return;
+    if (!item || item.fileDeleted || item.status !== 'completed' || !item.cardId || id === this.active || item.deleting || item.handingOff) return;
     item.deleting = true; this.changed();
     try {
       const result = await this.adapter.deleteFile(item.cardId);
@@ -287,6 +289,7 @@ export class DownloadQueue {
       }
     } catch (error) { if (item.status !== 'cancelled') { item.status = 'failed'; item.message = (error as Error).message; } }
     finally {
+      item.actionError = undefined; // a Stop failure ends with the download it tried to stop
       if (this.active === item.queueId) this.active = null;
       this.changed({ item, settled: true });
       this.pump();

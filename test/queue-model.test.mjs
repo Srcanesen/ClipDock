@@ -291,3 +291,33 @@ test('audio mode has a distinct fingerprint with the same quality, profile and a
   ]);
   assert.deepEqual(f.queue.items.map(item => item.status), ['completed', 'completed']);
 });
+
+test('handoff and managed delete of one card are mutually exclusive', async () => {
+  const f = fixture(); f.queue.add(input()); await complete(f); const item = f.queue.items[0];
+  const removal = deferred(); f.adapter.deleteFile = id => { f.deletes.push(id); return removal.promise; };
+  const deleting = f.queue.deleteFile(item.queueId);
+  await f.queue.transfer(item.queueId, 'import');
+  assert.deepEqual(f.transfers, [], 'no handoff while the file is being deleted');
+  removal.resolve({ deleted: false, message: 'Still used.' }); await deleting;
+  const handoff = deferred(); f.adapter.transfer = (...args) => { f.transfers.push(args); return handoff.promise; };
+  const transferring = f.queue.transfer(item.queueId, 'import');
+  await f.queue.deleteFile(item.queueId);
+  assert.deepEqual(f.deletes, ['card-0'], 'no delete while the file is being handed off');
+  handoff.resolve({ ok: true, message: 'Added.' }); await transferring;
+  assert.deepEqual(f.transfers, [['card-0', 'active', 'import']]);
+});
+
+test('a Stop failure never outlives the download it tried to stop', async () => {
+  const f = fixture(); f.queue.add(input()); const item = f.queue.items[0];
+  f.adapter.cancel = async () => false;
+  await f.queue.stop(item.queueId);
+  assert.equal(item.actionError, 'Could not stop this download. Try again.');
+  await complete(f);
+  assert.deepEqual([item.status, item.actionError, item.message], ['completed', undefined, 'Download complete.']);
+  f.queue.add(input('youtube', youtube('b'))); const late = f.queue.items[1];
+  const cancel = deferred(); f.adapter.cancel = () => cancel.promise;
+  const stopping = f.queue.stop(late.queueId);
+  await complete(f, 1);
+  cancel.resolve(false); await stopping;
+  assert.deepEqual([late.status, late.actionError, late.message], ['completed', undefined, 'Download complete.']);
+});

@@ -1006,7 +1006,12 @@ function wirePreviewControls(): void {
     if (command && event.key === 'Enter') { event.preventDefault(); ($('download-youtube-btn') as HTMLButtonElement).click(); return; }
     if (event.key === ' ' && !event.ctrlKey && !event.metaKey) {
       const active = document.activeElement as HTMLElement | null; const tag = active?.tagName ?? '';
-      if (!['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tag) && active?.getAttribute?.('contenteditable') !== 'true') { event.preventDefault(); ($('preview-selected-btn') as HTMLButtonElement).click(); return; }
+      if (!['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tag) && active?.getAttribute?.('contenteditable') !== 'true') {
+        // A focused result card previews itself; otherwise Space drives the open Inspector's monitor only.
+        const card = active && active.parentElement === document.getElementById('youtube-search-results') ? findResultDescendant(active, (element) => element.dataset?.cardAction === 'play') as HTMLButtonElement | null : null;
+        const target = card ?? (inspectorOpen ? $('preview-selected-btn') as HTMLButtonElement : null);
+        if (target) { event.preventDefault(); if (!target.disabled) target.click(); return; }
+      }
     }
     if (event.key !== 'Escape') return;
     if (openHistoryMenu) { closeHistoryActions(true); return; }
@@ -1031,6 +1036,24 @@ function appendResultSelection(row: HTMLElement, key: string, title: string, sel
   const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'result-selection'; checkbox.dataset.field = 'selection'; checkbox.checked = outputSession.staged.has(key); checkbox.disabled = selectedQueueLoadBusy; checkbox.setAttribute('aria-label', `${checkbox.checked ? 'Remove' : 'Add'} ${title} ${checkbox.checked ? 'from' : 'to'} the staged selection`);
   checkbox.addEventListener('change', () => { stageResultFromKey(key, selection, checkbox.checked); });
   row.append(checkbox); return checkbox;
+}
+function isWithin(node: Node | null, root: HTMLElement): boolean { for (let current = node; current; current = current.parentElement) if (current === root) return true; return false; }
+// A list rebuild replaces every row; keep keyboard focus on the equivalent control of
+// the same row (or on the row) instead of letting it fall back to the page body.
+function captureListFocus(list: HTMLElement, key: 'queueId' | 'recordId'): () => void {
+  const control = document.activeElement as HTMLElement | null;
+  let row = control;
+  while (row && row.parentElement !== list) row = row.parentElement;
+  const id = row?.dataset?.[key];
+  if (!control || !row || !id) return () => undefined;
+  const same = (element: HTMLElement): boolean => element.tagName === control.tagName && element.className === control.className && element.textContent === control.textContent;
+  return () => {
+    const next = (Array.from(list.children) as HTMLElement[]).find((child) => child.dataset?.[key] === id);
+    if (!next) return;
+    const target = control === row ? null : findResultDescendant(next, (element) => same(element) && !(element as HTMLButtonElement).disabled);
+    if (!target && next.getAttribute('tabindex') === null && next.tabIndex < 0) next.setAttribute('tabindex', '-1');
+    (target ?? next).focus?.();
+  };
 }
 function findResultDescendant(root: HTMLElement, predicate: (element: HTMLElement) => boolean): HTMLElement | null {
   for (const child of Array.from(root.children) as HTMLElement[]) {
@@ -1947,7 +1970,7 @@ async function fallbackTransfer(item: QueueItem, action: 'import' | TimelinePlac
 function removeFromQueue(queueId: string): void { downloadQueue.remove(queueId); }
 function stopQueueItem(item: QueueItem): void { void downloadQueue.stop(item.queueId); }
 function deleteQueueFile(item: QueueItem): void {
-  if (item.fileDeleted || item.status !== 'completed' || !item.cardId || item.queueId === downloadQueue.activeId || item.deleting) return;
+  if (item.fileDeleted || item.status !== 'completed' || !item.cardId || item.queueId === downloadQueue.activeId || item.deleting || item.handingOff) return;
   if (!window.confirm('Only a safe ClipDock-managed file will be deleted from your computer. This action cannot be undone. Continue?')) return;
   void downloadQueue.deleteFile(item.queueId);
 }
@@ -1981,7 +2004,7 @@ function renderCompletedDownloads(): void {
 }
 function renderQueue(): void {
   pruneQueueSelection();
-  const container = $('youtube-download-queue'); container.replaceChildren(); queueProgressViews.clear();
+  const container = $('youtube-download-queue'); const restoreFocus = captureListFocus(container, 'queueId'); container.replaceChildren(); queueProgressViews.clear();
   // Newest-first presentation only: iterate a reversed copy so a fresh enqueue or
   // retry lands at the top without scrolling. The queue module keeps
   // FIFO processing; the source array is never reversed in place.
@@ -2038,14 +2061,15 @@ function renderQueue(): void {
       const importLabel = 'Add to Media Pool';
       const importAction = button(importLabel, () => { void fallbackTransfer(item, 'import'); });
       const timelineAction = button('Add to timeline', () => { void fallbackTransfer(item, item.placement); });
-      importAction.disabled = !!importReason || !!item.handingOff;
-      timelineAction.disabled = !!timelineReason || !!item.handingOff;
+      // Handoff and managed delete of one file are mutually exclusive.
+      importAction.disabled = !!importReason || !!item.handingOff || !!item.deleting;
+      timelineAction.disabled = !!timelineReason || !!item.handingOff || !!item.deleting;
       if (importReason) { importAction.title = importReason; importAction.setAttribute('aria-label', `${importLabel}. ${importReason}`); }
       if (timelineReason) { timelineAction.title = timelineReason; timelineAction.setAttribute('aria-label', `Add to timeline. ${timelineReason}`); }
       const again = button('Download again', () => downloadAgain(item));
       const remove = button('Remove from queue', () => removeFromQueue(item.queueId));
       const deleteFile = button('Delete file', () => deleteQueueFile(item));
-      deleteFile.disabled = !!item.fileDeleted || !!item.deleting;
+      deleteFile.disabled = !!item.fileDeleted || !!item.deleting || !!item.handingOff;
       if (canResolveDrag) { const dragHint = document.createElement('span'); dragHint.className = 'handoff-drag-hint operation-drag-hint'; dragHint.textContent = dragHintText; actions.append(dragHint); }
       for (const quiet of [again, remove, deleteFile]) quiet.className = 'ghost';
       importAction.dataset.icon = 'pool'; timelineAction.dataset.icon = 'tl'; again.dataset.icon = 'dl'; remove.dataset.icon = 'x'; deleteFile.dataset.icon = 'trash';
@@ -2057,7 +2081,7 @@ function renderQueue(): void {
     if (canResolveDrag) { const drag = document.createElement('span'); drag.className = 'drag'; drag.setAttribute('aria-hidden', 'true'); drag.textContent = dragHintText.startsWith('Drag ') && dragHintText.includes('selected') ? `Drag ${dragHintText.split(' ')[1]}` : 'Drag'; row.append(drag); }
     row.append(details, actions); announceQueueStatus(item); container.append(row);
   }
-  updateGlobalQueueStatus(); renderCompletedDownloads(); updateControls(); renderSelectionToolbar();
+  restoreFocus(); updateGlobalQueueStatus(); renderCompletedDownloads(); updateControls(); renderSelectionToolbar();
 }
 async function loadStagedMetadata(stage: StagedSelection): Promise<YoutubeMetadata | PexelsAsset | SocialMetadata | PinterestMetadata> {
   if (stage.provider === 'youtube') return window.clipdockAPI.loadYoutube(stage.source);
@@ -2242,7 +2266,8 @@ function applyRememberedPreferences(): void {
   if (source === 'youtube' || source === 'pexels' || source === 'social' || source === 'pinterest') setProvider(source);
 }
 
-function closeHistoryActions(restoreFocus = false): void { if (!openHistoryMenu) return; openHistoryMenu.classList.add('hidden'); historyMenuTrigger?.setAttribute('aria-expanded', 'false'); const trigger = historyMenuTrigger; openHistoryMenu = null; historyMenuTrigger = null; if (restoreFocus) trigger?.focus(); }
+// Focus inside a menu that is closing returns to its trigger rather than to the page body.
+function closeHistoryActions(restoreFocus = false): void { if (!openHistoryMenu) return; restoreFocus ||= isWithin(document.activeElement, openHistoryMenu); openHistoryMenu.classList.add('hidden'); historyMenuTrigger?.setAttribute('aria-expanded', 'false'); const trigger = historyMenuTrigger; openHistoryMenu = null; historyMenuTrigger = null; if (restoreFocus) trigger?.focus(); }
 function openHistoryActions(menu: HTMLElement, trigger: HTMLButtonElement): void { if (openHistoryMenu !== menu) closeHistoryActions(); const rect = trigger.getBoundingClientRect(); menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`; menu.style.bottom = `${Math.max(8, window.innerHeight - rect.top)}px`; openHistoryMenu = menu; historyMenuTrigger = trigger; menu.classList.remove('hidden'); trigger.setAttribute('aria-expanded', 'true'); (menu.querySelector('button') as HTMLButtonElement | null)?.focus(); }
 async function useHistoryRecord(record: HistoryRecord, placement?: TimelinePlacement): Promise<void> {
   const reason = hostActionReason(placement ? 'timeline' : 'import');
@@ -2371,6 +2396,8 @@ async function renderHistory(): Promise<void> {
   const filters = historyFilters();
   const matches = filterHistoryRecords(historyRecords, filters.query, filters.provider, filters.availability);
   const visible = matches.slice(0, historyVisibleCount);
+  closeHistoryActions(); // its menu is replaced below
+  const restoreFocus = captureListFocus(list, 'recordId');
   list.replaceChildren(); historyHostRefreshers = []; renderHistoryChips();
   if (status) {
     status.textContent = historyStatusOverride !== null ? historyStatusOverride : historyStatusCopy(historyRecords.length, matches.length, visible.length);
@@ -2420,6 +2447,7 @@ async function renderHistory(): Promise<void> {
     appendHistoryRowFace(row, record, more);
     list.append(row);
   }
+  restoreFocus();
 }
 function watchHistoryHandoff(control: HTMLButtonElement, label: string, action: 'import' | 'timeline'): void {
   const refresh = (): void => {
@@ -2524,6 +2552,8 @@ window.addEventListener('DOMContentLoaded', () => {
   for (const [surface, id] of Object.entries(SURFACE_NAV_IDS) as Array<[Surface, string]>) document.getElementById(id)?.addEventListener('click', () => openSurfaceFromNav(surface));
   document.getElementById('global-queue-status')?.addEventListener('click', () => openSurfaceFromNav('queue'));
   document.getElementById('settings-close')?.addEventListener('click', () => closeSettings());
+  // Escape cancels the modal dialog; it counts as the acknowledgement, like the button.
+  document.getElementById('first-use-dialog')?.addEventListener('cancel', () => writePreference('permitted-content-ack', 'true'));
   document.getElementById('first-use-ack')?.addEventListener('click', () => { writePreference('permitted-content-ack', 'true'); const dialog = document.getElementById('first-use-dialog') as HTMLDialogElement | null; try { dialog?.close?.(); } catch { /* fallback dialog has no close method */ } dialog?.removeAttribute?.('open'); });
   wirePreviewControls();
   document.addEventListener?.('pointerdown', (event) => { if (openHistoryMenu && event.target instanceof Node && !openHistoryMenu.contains(event.target) && event.target !== historyMenuTrigger) closeHistoryActions(); });
