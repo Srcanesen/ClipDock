@@ -32,6 +32,8 @@ export function validateYoutubeUrl(input: unknown): ValidYoutubeUrl | null {
 }
 
 const PIN_ID = /^\d{1,40}$/;
+/** pinterest.com, www.pinterest.com, or a two-letter country subdomain such as tr.pinterest.com. */
+export const pinterestPinHost = (host: string): boolean => /^(?:(?:www|[a-z]{2})\.)?pinterest\.com$/.test(host);
 const PINTEREST_SHORT_TOKEN = /^[A-Za-z0-9_-]{1,80}$/;
 
 /** Validate and normalize one anonymous Pinterest search query. */
@@ -52,15 +54,15 @@ export function validatePinterestShortUrl(input: unknown): ValidPinterestShortUr
   return {url: `https://pin.it/${match[1]}`, token: match[1]};
 }
 
-/** Validate exactly one public Pinterest Pin URL and canonicalize it to www + slash. */
+/** Validate exactly one public Pinterest Pin URL (including its /sent/ share form) and canonicalize it to www + slash. */
 export function validatePinterestUrl(input: unknown): ValidPinterestUrl | null {
   if (typeof input !== 'string' || input.length < 26 || input.length > 2_048 || /[\u0000-\u0020\u005c\u007f-\u009f]/.test(input)) return null;
   let parsed: URL;
   try { parsed = new URL(input); } catch { return null; }
   const host = parsed.hostname.toLowerCase();
   const authority = input.match(/^https:\/\/([^/?#]*)/i)?.[1] ?? '';
-  if (parsed.protocol !== 'https:' || (host !== 'pinterest.com' && host !== 'www.pinterest.com') || authority.toLowerCase() !== host || parsed.port || parsed.username || parsed.password || parsed.hash) return null;
-  const match = parsed.pathname.match(/^\/pin\/(\d{1,40})\/?$/);
+  if (parsed.protocol !== 'https:' || !pinterestPinHost(host) || authority.toLowerCase() !== host || parsed.port || parsed.username || parsed.password || parsed.hash) return null;
+  const match = parsed.pathname.match(/^\/pin\/(\d{1,40})(?:\/sent)?\/?$/);
   if (!match || !PIN_ID.test(match[1])) return null;
   return { url: `https://www.pinterest.com/pin/${match[1]}/`, pinId: match[1] };
 }

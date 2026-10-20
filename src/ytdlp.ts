@@ -257,6 +257,24 @@ function socialThumbnailHost(platform: SocialPlatform, host: string): boolean {
   if (platform === 'twitter') return value === 'pbs.twimg.com';
   return value === 'fbcdn.net' || value.endsWith('.fbcdn.net') || value === 'fbsbx.com' || value.endsWith('.fbsbx.com');
 }
+// yt-dlp and gallery-dl pass path arguments through Python's os.path.expandvars.
+// `${CLIPDOCK_LITERAL_DOLLAR}` expands to a literal `$` that is never re-expanded.
+// On Windows, `%%` spells `%` outside yt-dlp templates (which already double it),
+// and single quotes suspend expansion, so a quoted `$` or `%` cannot be spelled.
+const LITERAL_DOLLAR = 'CLIPDOCK_LITERAL_DOLLAR';
+const UNSPELLABLE_PATH = 'The download folder path cannot combine an apostrophe with $ or %. Choose another download folder.';
+export function literalPath(path: string, platform: NodeJS.Platform, template = false): string {
+  if (platform === 'win32' && path.includes('\'') && /[$%]/.test(path)) throw new Error(UNSPELLABLE_PATH);
+  const literal = path.replace(/\$/g, `\${${LITERAL_DOLLAR}}`);
+  return platform === 'win32' && !template ? literal.replace(/%/g, '%%') : literal;
+}
+export function literalPathEnv(args: string[]): NodeJS.ProcessEnv | undefined {
+  return args.some(arg => arg.includes(`\${${LITERAL_DOLLAR}}`)) ? {...process.env, [LITERAL_DOLLAR]: '$'} : undefined;
+}
+// yt-dlp prefixes extractor errors with "[extractor] <id>:"; IDs are not diagnostics.
+function withoutExtractorPrefix(text: string): string {
+  return text.replace(/^(\s*ERROR:\s*)\[[^\]\r\n]*\]\s*[^\s:]*:\s*/gim, '$1');
+}
 function sanitized(value: string): string {
   return value.replace(/https?:\/\/\S+/gi, '[url]').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, '?').trim();
 }
@@ -267,12 +285,13 @@ const DOWNLOAD_FAILURE_MESSAGES = new Set([
   'This video exceeds ClipDock’s 2 GB download limit.',
   'There is not enough disk space to finish the download.',
   'Could not write the downloaded media. Check the download folder permissions and try again.',
+  UNSPELLABLE_PATH,
   'The requested format is not available. Choose another quality or media mode.',
   'Download failed.',
 ]);
 export function downloadFailureMessage(detail: unknown): string {
   const raw = typeof detail === 'string' ? detail : '';
-  const errors = raw.split(/\r?\n/).filter(line => /^\s*ERROR:/i.test(line));
+  const errors = raw.split(/\r?\n/).filter(line => /^\s*ERROR:/i.test(line)).map(withoutExtractorPrefix);
   // Provider errors carry ERROR prefixes. Ignore warnings and strip paths/URLs
   // before matching access/availability words that may occur in a filename.
   const text = errors.join('\n')
@@ -288,6 +307,19 @@ export function downloadFailureMessage(detail: unknown): string {
   if (/\bprivate\b|login|log in|sign in|authentication|authenticate|cookies?/.test(text)) return 'This video is private or requires login. Only public videos are supported.';
   if (/removed|deleted|no longer available|video unavailable|not available|copyright/.test(text)) return 'This video was removed or is no longer available.';
   return 'Download failed.';
+}
+
+// yt-dlp matches --sub-langs whole, so `en` misses `en-US`. Pick one available tag:
+// human subtitles before automatic captions, the exact tag before a regional one.
+function subtitleTag(rawInfo: string | null, language: SubtitleLanguage): string {
+  let info: Record<string, unknown> = {};
+  try { info = rawInfo ? JSON.parse(rawInfo) as Record<string, unknown> : {}; } catch { /* exact tag */ }
+  for (const source of [info.subtitles, info.automatic_captions]) {
+    const tags = source && typeof source === 'object' ? Object.keys(source) : [];
+    const tag = tags.includes(language) ? language : tags.find(tag => tag.startsWith(`${language}-`) && /^[A-Za-z0-9-]{1,32}$/.test(tag));
+    if (tag) return tag;
+  }
+  return language;
 }
 
 function srtTime(seconds: number): string {
@@ -449,7 +481,7 @@ export class YtdlpWorker {
     const context = this.current!.context;
     context.check();
     const bounded = spawnBounded(this.assertAvailable(), this.jsRuntime ? [...args.slice(0, 1), '--js-runtimes', this.jsRuntime, ...args.slice(1)] : args, this.spawn, {
-      maxStdout: MAX_STDOUT, maxStderr: MAX_STDERR, onLine, onStderrLine,
+      env: literalPathEnv(args), maxStdout: MAX_STDOUT, maxStderr: MAX_STDERR, onLine, onStderrLine,
       timeoutMs: details.kind === 'download' ? this.downloadTimeoutMs : this.metadataTimeoutMs,
       killGraceMs: this.killGraceMs, platform: this.platform, processSpawn: this.processSpawn,
     });
@@ -593,7 +625,7 @@ export class YtdlpWorker {
       job.check();
       if (result.code !== 0) {
         this.log(`social metadata failed code=${result.code}: ${result.stderr || 'no stderr'}`);
-        const detail = result.stderr.toLowerCase();
+        const detail = withoutExtractorPrefix(result.stderr).toLowerCase();
         if (/\blive\b|upcoming/.test(detail)) throw new Error('Live streams are not supported. Use a public video post.');
         if (/private|login|log in|sign in|authentication|authenticate/.test(detail)) throw new Error('This video is private or requires login. Only public videos are supported.');
         throw new Error('Could not load public social video metadata. Only permitted public video posts are supported.');
@@ -638,11 +670,12 @@ export class YtdlpWorker {
         return overall;
       };
       const cachedInfo = 'videoId' in valid && !selection ? this.metadataStore.raw.get(valid.videoId) : null;
+      const subtitleLanguage = subtitleTag('videoId' in valid ? this.metadataStore.raw.get(valid.videoId) : null, options.subtitleLanguage);
       const infoPath = join(jobDir, 'source.info.json');
       if (cachedInfo) writeExclusive(this.jobDirectories.get(jobDir)!, basename(infoPath), cachedInfo);
       let bytesWritten = false;
       const combinedSubtitles = options.subtitles && !selection;
-      const runDownload = (loaded: boolean) => this.begin([...BASE, '--quiet', '--progress', '--progress-delta', '0.25', '--newline', '--progress-template', 'download:C|%(progress.status)s|%(progress._percent).1f|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s', '--progress-template', 'postprocess:Q|%(progress.status)s', '--print', 'before_dl:S|%(format_id)s|%(requested_formats.:.filesize)l|%(filesize,filesize_approx)s', '--print', 'after_move:P|%(filepath)s', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', ffmpegPath, ...(selection ? ['--download-sections', `*${selection.start.toFixed(3)}-${selection.end.toFixed(3)}`, '--force-keyframes-at-cuts'] : []), ...(combinedSubtitles ? ['--write-subs', '--write-auto-subs', '--sub-langs', options.subtitleLanguage, '--sub-format', 'srt/vtt', '--ignore-errors'] : []), ...conversion, '-f', selectedFormat, ...formatSort, '-o', join(jobDir.replace(/%/g, '%%'), selection ? `%(title).120B [%(id)s] [${selection.label.replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 50)}].%(ext)s` : '%(title).150B [%(id)s].%(ext)s'), ...(loaded ? ['--load-info-json', infoPath] : [valid.url])], { jobDir, kind: 'download', emit, jobId }, (line) => {
+      const runDownload = (loaded: boolean) => this.begin([...BASE, '--quiet', '--progress', '--progress-delta', '0.25', '--newline', '--progress-template', 'download:C|%(progress.status)s|%(progress._percent).1f|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s', '--progress-template', 'postprocess:Q|%(progress.status)s', '--print', 'before_dl:S|%(format_id)s|%(requested_formats.:.filesize)l|%(filesize,filesize_approx)s', '--print', 'after_move:P|%(filepath)s', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', literalPath(ffmpegPath, this.platform), ...(selection ? ['--download-sections', `*${selection.start.toFixed(3)}-${selection.end.toFixed(3)}`, '--force-keyframes-at-cuts'] : []), ...(combinedSubtitles ? ['--write-subs', '--write-auto-subs', '--sub-langs', subtitleLanguage, '--sub-format', 'srt/vtt', '--ignore-errors'] : []), ...conversion, '-f', selectedFormat, ...formatSort, '-o', literalPath(join(jobDir.replace(/%/g, '%%'), selection ? `%(title).120B [%(id)s] [${selection.label.replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 50)}].%(ext)s` : '%(title).150B [%(id)s].%(ext)s'), this.platform, true), ...(loaded ? ['--load-info-json', literalPath(infoPath, this.platform)] : [valid.url])], { jobDir, kind: 'download', emit, jobId }, (line) => {
         if (line.startsWith('Q|')) { emit({jobId, state: 'processing', percent: null, message: 'Processing media…'}); return; }
         if (line.startsWith('P|')) { output = line.slice(2); return; }
         const fields = line.split('|');
@@ -719,7 +752,7 @@ export class YtdlpWorker {
       if (options.subtitles) {
         emit({ jobId, state: 'processing', percent: null, message: 'Retrieving subtitles…' });
         try {
-          const pendingSubtitle = selection ? this.begin([...BASE, '--quiet', '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', options.subtitleLanguage, '--convert-subs', 'srt', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', ffmpegPath, '-o', join(jobDir.replace(/%/g, '%%'), '%(title).150B [%(id)s].%(ext)s'), valid.url], { jobDir, kind: 'download', emit, jobId }) : Promise.resolve({code: 0});
+          const pendingSubtitle = selection ? this.begin([...BASE, '--quiet', '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', subtitleLanguage, '--convert-subs', 'srt', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', literalPath(ffmpegPath, this.platform), '-o', literalPath(join(jobDir.replace(/%/g, '%%'), '%(title).150B [%(id)s].%(ext)s'), this.platform, true), valid.url], { jobDir, kind: 'download', emit, jobId }) : Promise.resolve({code: 0});
           const subtitle = await pendingSubtitle;
           context.check();
           // Full clips use the existing cue normalizer to write SRT directly.
@@ -784,7 +817,7 @@ export class YtdlpWorker {
       const raw = this.metadataStore.raw.get(valid.videoId);
       const infoPath = join(jobDir, 'source.info.json');
       if (raw) writeExclusive(this.jobDirectories.get(jobDir)!, basename(infoPath), raw);
-      const runSubtitles = (loaded: boolean) => this.begin([...BASE, '--quiet', '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', language as string, '--convert-subs', 'vtt', '-o', join(jobDir.replace(/%/g, '%%'), 'captions.%(ext)s'), ...(loaded ? ['--load-info-json', infoPath] : [valid.url])], {jobDir, kind: 'metadata'});
+      const runSubtitles = (loaded: boolean) => this.begin([...BASE, '--quiet', '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', subtitleTag(raw, language as SubtitleLanguage), '--convert-subs', 'vtt', '-o', literalPath(join(jobDir.replace(/%/g, '%%'), 'captions.%(ext)s'), this.platform, true), ...(loaded ? ['--load-info-json', literalPath(infoPath, this.platform)] : [valid.url])], {jobDir, kind: 'metadata'});
       let result = await runSubtitles(!!raw);
       context.check();
       if (raw && result.code !== 0) {

@@ -14,7 +14,8 @@ import { discoverBinary, executable, absoluteForPlatform, LruCache, spawnBounded
 import { ProviderJobRunner, type ProviderJobContext } from './provider-job';
 import { homedir, tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { validatePinterestSearchQuery, validatePinterestShortUrl, validatePinterestUrl, type ValidPinterestUrl } from './ytdlp-url';
+import { pinterestPinHost, validatePinterestSearchQuery, validatePinterestShortUrl, validatePinterestUrl, type ValidPinterestUrl } from './ytdlp-url';
+import { literalPath, literalPathEnv } from './ytdlp';
 
 export type PinterestMediaKind = 'image' | 'video';
 export type PinterestItem = {
@@ -239,7 +240,7 @@ function pinterestPinRedirect(value: string, base: string): ValidPinterestUrl | 
   let parsed: URL;
   try { parsed = new URL(value, base); } catch { return null; }
   const host = parsed.hostname.toLowerCase();
-  if (parsed.protocol !== 'https:' || (host !== 'pinterest.com' && host !== 'www.pinterest.com') || parsed.port || parsed.username || parsed.password || parsed.hash) return null;
+  if (parsed.protocol !== 'https:' || !pinterestPinHost(host) || parsed.port || parsed.username || parsed.password || parsed.hash) return null;
   const match = parsed.pathname.match(/^\/pin\/(\d{1,40})(?:\/sent)?\/?$/);
   return match ? {url: `https://www.pinterest.com/pin/${match[1]}/`, pinId: match[1]} : null;
 }
@@ -659,9 +660,10 @@ export class GalleryDlWorker {
     // ffmpeg from gallery-dl's video merge. Prepend only the verified ffmpeg directory.
     const inheritedPath = process.env.PATH ?? '';
     const ffmpegDir = this.ffmpegPath ? dirname(this.ffmpegPath) : null;
+    const literal = literalPathEnv(args);
     const env = ffmpegDir
-      ? {...process.env, PATH: `${ffmpegDir}${inheritedPath ? (this.platform === 'win32' ? ';' : ':') : ''}${inheritedPath}`}
-      : undefined;
+      ? {...literal ?? process.env, PATH: `${ffmpegDir}${inheritedPath ? (this.platform === 'win32' ? ';' : ':') : ''}${inheritedPath}`}
+      : literal;
     // Single shell:false spawn site via provider-platform
     const bounded = spawnBounded(this.assertAvailable(), args, this.spawn as unknown as import('./provider-platform').Spawn, {
       detached: true,
@@ -798,7 +800,7 @@ export class GalleryDlWorker {
       // Keep gallery-dl's .part behavior enabled: partial files are visible to
       // the worker while the process runs, never accepted as final artifacts,
       // and removed with the private job directory on terminal completion.
-      const args = ['--config-ignore', '-D', jobDir, '-f', 'pinterest.{extension}', '--post-range', '1', '--range', String(itemIndex), '--filesize-max', expectedKind === 'image' ? '20M' : '2G', '--no-mtime', '--http-timeout', HTTP_TIMEOUT_SECONDS, '--retries', HTTP_RETRIES, '--sleep-request', HTTP_SLEEP_SECONDS, valid.url];
+      const args = ['--config-ignore', '-D', literalPath(jobDir, this.platform), '-f', 'pinterest.{extension}', '--post-range', '1', '--range', String(itemIndex), '--filesize-max', expectedKind === 'image' ? '20M' : '2G', '--no-mtime', '--http-timeout', HTTP_TIMEOUT_SECONDS, '--retries', HTTP_RETRIES, '--sleep-request', HTTP_SLEEP_SECONDS, valid.url];
       const pending = this.begin(args, {jobDir, kind: 'download', jobId, emit}, () => undefined);
       const result = await pending;
       context.check();
@@ -824,7 +826,7 @@ export class GalleryDlWorker {
       return {filePath: safe.path, fileName: basename(safe.path), kind: safe.kind};
     }, error => {
       const message = error instanceof Error ? error.message : '';
-      const userMessage = message === PINTEREST_YTDLP_ERROR || message.startsWith('gallery-dl 1.28.0') ? message : message.includes('limit') || message.includes('safety') || message.includes('signature') || message.includes('output') || message.includes('exactly one') ? message : mapError(message || PINTEREST_DOWNLOAD_ERROR, true);
+      const userMessage = message === PINTEREST_YTDLP_ERROR || message.startsWith('The download folder path') || message.startsWith('gallery-dl 1.28.0') ? message : message.includes('limit') || message.includes('safety') || message.includes('signature') || message.includes('output') || message.includes('exactly one') ? message : mapError(message || PINTEREST_DOWNLOAD_ERROR, true);
       return new Error(userMessage);
     });
   }
