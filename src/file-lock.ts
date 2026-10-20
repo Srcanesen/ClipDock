@@ -1,10 +1,14 @@
 // Cooperative process locks. A live owner is never displaced, regardless of age.
 import { closeSync, fstatSync, linkSync, lstatSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { uptime } from 'node:os';
 
 const LOCK_STALE_MS = 60_000;
 
-type Snapshot = { dev: number; ino: number; mtimeMs: number; encoded: string; pid: number | null };
+// Clock steps after boot shift this estimate; the margin keeps a current-boot owner live.
+const BOOT_MARGIN_MS = 60_000;
+
+type Snapshot = { dev: number; ino: number; mtimeMs: number; encoded: string; pid: number | null; createdAt: number | null };
 export type FileLock = { release(): void };
 function snapshot(file: string): Snapshot | null {
   try {
@@ -15,7 +19,8 @@ function snapshot(file: string): Snapshot | null {
     try { value = JSON.parse(encoded); } catch { value = null; }
     // Accept the old history PID-only format during upgrade.
     const pid = typeof value === 'number' ? value : (value as {pid?: unknown} | null)?.pid;
-    return {dev: info.dev, ino: info.ino, mtimeMs: info.mtimeMs, encoded, pid: Number.isSafeInteger(pid) && Number(pid) > 0 ? Number(pid) : null};
+    const createdAt = (value as {createdAt?: unknown} | null)?.createdAt;
+    return {dev: info.dev, ino: info.ino, mtimeMs: info.mtimeMs, encoded, pid: Number.isSafeInteger(pid) && Number(pid) > 0 ? Number(pid) : null, createdAt: Number.isFinite(createdAt) ? Number(createdAt) : null};
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
@@ -25,6 +30,8 @@ function recoverable(owner: Snapshot): boolean {
   // Previous versions created the lock before writing its owner. Preserve a
   // possible writer mid-write, but recover old empty/corrupt files after 60s.
   if (owner.pid === null) return Date.now() - owner.mtimeMs >= LOCK_STALE_MS;
+  // An owner from a previous boot is dead even if the OS has reused its PID.
+  if (owner.createdAt !== null && owner.createdAt < Date.now() - uptime() * 1000 - BOOT_MARGIN_MS) return true;
   try { process.kill(owner.pid, 0); return false; }
   catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
 }
@@ -39,12 +46,13 @@ function publish(file: string): FileLock | null {
   let linked = false;
   let owner!: Snapshot;
   try {
-    const encoded = JSON.stringify({pid: process.pid, token: randomUUID(), createdAt: Date.now()});
+    const createdAt = Date.now();
+    const encoded = JSON.stringify({pid: process.pid, token: randomUUID(), createdAt});
     writeFileSync(fd, encoded);
     // Capture release authority before publication; no fallible pathname read
     // or candidate cleanup may strand a successfully linked live-owner lock.
     const info = fstatSync(fd);
-    owner = {dev: info.dev, ino: info.ino, mtimeMs: info.mtimeMs, encoded, pid: process.pid};
+    owner = {dev: info.dev, ino: info.ino, mtimeMs: info.mtimeMs, encoded, pid: process.pid, createdAt};
     try { linkSync(candidate, file); linked = true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
   } finally {
