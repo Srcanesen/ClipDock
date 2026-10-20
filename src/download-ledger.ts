@@ -115,13 +115,15 @@ export class DownloadLedger {
     const card = this.resolve(cardId);
     if (typeof cardId !== 'string' || !card) return { deleted: false, message: 'File was not deleted safely because its ClipDock history record is unavailable. It remains in the queue.' };
     try {
+      // A bound companion shares its media's history record: delete only its own file.
+      const recorded = !card.ownerPath && card.historyId && this.history.get(card.historyId);
       const protectedPaths = this.protectedPaths(cardId, card.historyId ? this.historyCards.get(card.historyId) : undefined);
-      const result = card.historyId && this.history.get(card.historyId)
+      const result = recorded && card.historyId
         ? this.history.delete(card.historyId, protectedPaths, this.mediaInUse(), true)
         : this.history.deleteUnrecorded(card.path, card.trustedRoot, protectedPaths, { media: card.ownedMedia ?? null, subtitle: card.ownedSubtitle ?? null }, this.mediaInUse(), card.subtitlePath);
       if (!result.deleted) return { deleted: false, message: result.warning ?? 'File was not deleted safely. It remains in the queue; retry after other references or active work are gone.' };
       this.cards.delete(cardId);
-      if (card.historyId) this.unbind(card.historyId);
+      if (card.historyId && !card.ownerPath) this.unbind(card.historyId);
       for (const [id, companion] of this.cards) if (companion.ownerPath === card.path) this.cards.delete(id);
       this.sessionSubtitles.delete(card.path);
       return { deleted: true, message: result.warning === 'Download history could not be updated.' ? 'File deleted, but download history could not be updated.' : result.warning ? `File deleted. ${result.warning}` : 'File deleted.' };
