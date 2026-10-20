@@ -21,7 +21,8 @@ const DIAGNOSTIC_NAMES = new Set(['clipdock.log']);
 function classifyFile(name: string): WorkspaceFileClass {
   const ext = extname(name).toLowerCase();
   if (DIAGNOSTIC_NAMES.has(name)) return 'diagnostic';
-  if (TRANSIENT_EXTENSIONS.has(ext)) return 'transient';
+  // macOS writes "._name" AppleDouble sidecars on exFAT, FAT and SMB volumes.
+  if (TRANSIENT_EXTENSIONS.has(ext) || name.startsWith('._')) return 'transient';
   if (COMPANION_EXTENSIONS.has(ext)) return 'companion';
   return 'media';
 }
