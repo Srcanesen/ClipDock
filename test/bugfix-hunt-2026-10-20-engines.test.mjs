@@ -107,6 +107,21 @@ test('bug 2: subtitles match regional tags, preferring human subtitles and the e
   }
 });
 
+test('bug 2: an evicted info cache still chooses the human regional subtitle tag', {skip: needsYtdlp}, async t => {
+  const root = mkdtempSync(path.join(tmpdir(), 'clipdock-subtitle-evicted-'));
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  const vtt = text => ['text/vtt', `WEBVTT\n\n00:00:00.500 --> 00:00:01.500\n${text}\n`];
+  const data = {subtitles: {'en-GB': [{ext: 'vtt', url: 'BASE/human.vtt'}]}, automatic_captions: {en: [{ext: 'vtt', url: 'BASE/auto.vtt'}]}};
+  const {worker} = await localYoutube(t, root, {data, routes: {'/human.vtt': vtt('human regional'), '/auto.vtt': vtt('wrong automatic')}});
+  // The narrow metadata stays cached while the raw info JSON (10 entries) is evicted.
+  worker.metadataStore.raw.delete(id);
+  const result = await worker.download(youtube, 'best', 'subtitle-evicted', () => {}, {...options, subtitles: true});
+  assert.equal(result.warning, undefined);
+  assert.match(readFileSync(result.subtitlePath, 'utf8'), /human regional/);
+  worker.metadataStore.raw.delete(id);
+  assert.deepEqual((await worker.subtitles(youtube, 'en')).map(cue => cue.text), ['human regional']);
+});
+
 test('bug 3: country-domain and /sent/ Pin URLs normalize to the www Pin URL', () => {
   for (const url of ['https://tr.pinterest.com/pin/123456789012/', 'https://www.pinterest.com/pin/123456789012/sent/?invite_code=abc&sender=1', 'https://de.pinterest.com/pin/123456789012/sent/']) {
     assert.deepEqual(validatePinterestUrl(url), {url: 'https://www.pinterest.com/pin/123456789012/', pinId: '123456789012'}, url);

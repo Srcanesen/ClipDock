@@ -558,10 +558,21 @@ export class YtdlpWorker {
     const sharedMetadata = !this.metadataStore.youtube.has(valid.videoId) && this.metadataStore.pending.has(valid.videoId);
     return this.runJob({jobDir: '', kind: 'metadata', sharedMetadata, jobId: context?.jobId, emit: context?.emit}, async job => {
       const cached = this.metadataStore.youtube.get(valid.videoId); if (cached) return structuredClone(cached);
-      return this.subscribeMetadata(this.metadataStore.pending, valid.videoId, job.signal, worker => worker.loadMetadata(valid.url).then(value => {
-        this.metadataStore.youtube.set(valid.videoId, value); return value;
-      }));
+      return this.extractMetadata(valid, job.signal);
     }, context ? 'Download cancelled.' : 'Could not load video metadata.');
+  }
+  private extractMetadata(valid: ValidYoutubeUrl, signal: AbortSignal): Promise<NarrowMetadata> {
+    return this.subscribeMetadata(this.metadataStore.pending, valid.videoId, signal, worker => worker.loadMetadata(valid.url).then(value => {
+      this.metadataStore.youtube.set(valid.videoId, value); return value;
+    }));
+  }
+  /** The subtitle tag choice needs the raw info, which (10 entries) is evicted before narrow metadata (30). */
+  private async subtitleInfo(valid: ValidYoutubeUrl, context: ProviderJobContext): Promise<string | null> {
+    if (this.metadataStore.youtube.has(valid.videoId) && !this.metadataStore.raw.has(valid.videoId)) {
+      try { await this.extractMetadata(valid, context.signal); }
+      catch { context.check(); /* Without info, the exact tag is requested. */ }
+    }
+    return this.metadataStore.raw.get(valid.videoId);
   }
   private async subscribeMetadata<T>(pending: Map<string, SharedProviderOperation<T>>, key: string, signal: AbortSignal, load: (worker: YtdlpWorker) => Promise<T>): Promise<T> {
     let shared = pending.get(key);
@@ -669,8 +680,8 @@ export class YtdlpWorker {
         overall = Math.max(overall, Math.min(100, ((done + weights[index] * streamPercent / 100) / total) * 100));
         return overall;
       };
+      const subtitleLanguage = subtitleTag('videoId' in valid && options.subtitles ? await this.subtitleInfo(valid, context) : null, options.subtitleLanguage);
       const cachedInfo = 'videoId' in valid && !selection ? this.metadataStore.raw.get(valid.videoId) : null;
-      const subtitleLanguage = subtitleTag('videoId' in valid ? this.metadataStore.raw.get(valid.videoId) : null, options.subtitleLanguage);
       const infoPath = join(jobDir, 'source.info.json');
       if (cachedInfo) writeExclusive(this.jobDirectories.get(jobDir)!, basename(infoPath), cachedInfo);
       let bytesWritten = false;
@@ -814,7 +825,7 @@ export class YtdlpWorker {
     const valid = validateYoutubeUrl(input); if (!valid || !SUBTITLE_LANGUAGES.has(language as SubtitleLanguage)) throw new Error('Invalid subtitle request.');
     const jobDir = join(this.sessionDir, `subtitles-${randomUUID()}`);
     return this.runJob({jobDir, kind: 'metadata'}, async context => {
-      const raw = this.metadataStore.raw.get(valid.videoId);
+      const raw = await this.subtitleInfo(valid, context);
       const infoPath = join(jobDir, 'source.info.json');
       if (raw) writeExclusive(this.jobDirectories.get(jobDir)!, basename(infoPath), raw);
       const runSubtitles = (loaded: boolean) => this.begin([...BASE, '--quiet', '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', subtitleTag(raw, language as SubtitleLanguage), '--convert-subs', 'vtt', '-o', literalPath(join(jobDir.replace(/%/g, '%%'), 'captions.%(ext)s'), this.platform, true), ...(loaded ? ['--load-info-json', literalPath(infoPath, this.platform)] : [valid.url])], {jobDir, kind: 'metadata'});
