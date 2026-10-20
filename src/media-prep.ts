@@ -171,22 +171,29 @@ export function createMediaPrep(options: Options = {}) {
       const parent = AnchoredDir.capture(dirname(input), ownedSource.dir.root);
       const privateDir = createPrivateDir(parent, '.clipdock-prep-');
       try {
-        const temporary = privateDir.child(request.profile === 'fast' ? 'output.mp4' : 'output.mov');
-        let pending = '';
-        const progressLine = (line: string) => {
-          const [key, value] = line.split('=', 2);
-          if (key === 'progress' && value === 'end') request.emit({ jobId: request.jobId, state: 'processing', percent: 100, message: preparing });
-          else if ((key === 'out_time_ms' || key === 'out_time_us') && source.duration && Number.isFinite(Number(value))) request.emit({ jobId: request.jobId, state: 'processing', percent: Math.max(0, Math.min(99.9, Number(value) / 1_000_000 / source.duration * 100)), message: preparing });
+        const convert = async (attempt: MediaPrepResult['action']): Promise<OwnedFile | null> => {
+          const temporary = privateDir.child(`${attempt}${request.profile === 'fast' ? '.mp4' : '.mov'}`);
+          let pending = '';
+          const progressLine = (line: string) => {
+            const [key, value] = line.split('=', 2);
+            if (key === 'progress' && value === 'end') request.emit({ jobId: request.jobId, state: 'processing', percent: 100, message: preparing });
+            else if ((key === 'out_time_ms' || key === 'out_time_us') && source.duration && Number.isFinite(Number(value))) request.emit({ jobId: request.jobId, state: 'processing', percent: Math.max(0, Math.min(99.9, Number(value) / 1_000_000 / source.duration * 100)), message: preparing });
         };
         const progress = (chunk: string) => { pending += chunk; const lines = pending.split(/[\r\n]+/); pending = lines.pop() ?? ''; lines.forEach(progressLine); };
         verifySource(ownedSource); privateDir.verify();
-        await run(context, ffmpeg!, ffmpegArgs(action, request.profile, input, temporary, source.video), progress);
+        await run(context, ffmpeg!, ffmpegArgs(attempt, request.profile, input, temporary, source.video), progress);
         if (pending) progressLine(pending);
         const prepared = captureFile(privateDir, temporary);
         if (statSync(verifyFile(prepared)).size === 0) throw new Error('Media file failed the safety check.');
         const output = await probe(context, verifyFile(prepared));
         verifyFile(prepared); verifySource(ownedSource);
-        if (!validated(source, output, request.profile, action)) throw new Error('Prepared media failed validation.');
+        return validated(source, output, request.profile, attempt) ? prepared : null;
+        };
+        // A copy can expose timing its container hid (Matroska reports timebase rates for VFR): re-encode once.
+        let final = action;
+        let prepared = await convert(action);
+        if (!prepared && action !== 'transcode') prepared = await convert(final = 'transcode');
+        if (!prepared) throw new Error('Prepared media failed validation.');
         let published: OwnedFile;
         for (let index = 1;; index++) {
           try { published = publishNoReplace(prepared, parent, outputName(input, request.profile, index)); break; }
@@ -197,7 +204,7 @@ export function createMediaPrep(options: Options = {}) {
           verifySource(ownedSource);
           if (removeOwned(ownedSource) !== 'removed') throw new Error('Media source was replaced; replacement preserved.');
         });
-        return { filePath: published.path, fileName: basename(published.path), action };
+        return { filePath: published.path, fileName: basename(published.path), action: final };
       } finally { removePrivateDir(privateDir); }
     }, {
       invalidMessage: 'Invalid media preparation request.',
