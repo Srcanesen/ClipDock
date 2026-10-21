@@ -371,6 +371,11 @@ test('Staged selection bar keeps its status on one visible line (audit bug 2)', 
   assert.match(css, /\.selection-toolbar\s*\{[^}]*flex-wrap:\s*wrap/, 'bar wraps instead of stacking a blank column');
 });
 
+test('Results toolbar wraps its controls instead of overflowing a 320px feed column', () => {
+  assert.match(css, /\.feed-toolbar\s*\{[^}]*flex-wrap:\s*wrap/, 'toolbar controls wrap');
+  assert.match(css, /\.feed-toolbar \.edgecode\s*\{[^}]*flex:\s*1 1 0/, 'status absorbs free space without forcing a wrap');
+});
+
 test('Responsive cascade: one fluid contact sheet; detail beside it at 760px and over it below', () => {
   assert.match(css, /#youtube-search-results\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(176px,\s*1fr\)\)/, 'results are a fluid grid at every width');
   assert.doesNotMatch(css, /#youtube-search-results\s*\{[^}]*display:\s*block/, 'results never fall back to block');
