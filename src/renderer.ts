@@ -2,7 +2,7 @@
 import { createGenerationGuard } from './renderer-state/search-session';
 import { PreviewSession } from './renderer-state/preview-session';
 import { MetadataSession, StatusRefreshSession } from './renderer-state/status-session';
-import { ItemOutputSession, transitionSourceSelection, selectSourceSegments, resolveSourceSelection, selectionEnvelope, sourceQualityChoices, type RawItemOutput, type SourceSelection, type OutputDefaults, type StagedSelection, type ResultSelection, cloneOutputDefaults, cloneOutputOverrides, resultOptionsId, cardQualityLabel, cardOutputSummary, profileLabel, intentLabel } from './renderer-state/item-output-session';
+import { ItemOutputSession, transitionSourceSelection, selectSourceSegments, resolveSourceSelection, selectionEnvelope, sourceQualityChoices, type RawItemOutput, type SourceSelection, type OutputDefaults, type StagedSelection, type ResultSelection, cloneOutputDefaults, cloneOutputOverrides, resultOptionsId, cardQualityLabel, cardOutputSummary, profileLabel, intentLabel, isStock, type StockProvider } from './renderer-state/item-output-session';
 import { DownloadQueue, resultKeyFor, type QueueItem as MutableQueueItem, type QueueInsertionMode, type QueueMetadata, type TargetBin, type TimelinePlacement, type YoutubeQuality, type MediaProfile, type MediaMode, type AudioFormat, type SubtitleLanguage, type YoutubeSelection, type DownloadOptions, type DownloadIntent, type SocialPlatform, type Provider, type PinterestMediaKind, type PinterestItem, type PinterestMetadata, type PexelsKind, type PexelsFile, type PexelsAsset, type QueueState, type MediaCard, type YoutubeChapter, type YoutubeMetadata, type SocialMetadata } from './renderer-state/queue-model';
 type QueueItem = Readonly<MutableQueueItem>;
 type Surface = 'search' | 'queue' | 'library' | 'settings';
@@ -27,7 +27,7 @@ interface YoutubeSearchPage { query: string; page: number; pageSize: number; res
 interface YoutubeEvent { jobId: string; state: string; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; subtitle?: MediaCard; warning?: string; }
 interface SocialEvent { jobId: string; state: string; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; warning?: string; }
 
-declare global { interface Window { clipdockAPI: { getStatus(): Promise<StatusSnapshot>; downloadFolderStatus(): Promise<DownloadFolderStatus>; chooseDownloadFolder(): Promise<DownloadFolderStatus>; onResolveQuit(callback: () => void): () => void; selectFile(): Promise<{ canceled: boolean; cardId?: string; fileName?: string }>; startNativeDrag(cardIds: string | string[]): void; importToMediaPool(id: string, bin: TargetBin): Promise<TransferResult>; addToTimeline(id: string, bin: TargetBin, placement: TimelinePlacement): Promise<TransferResult>; searchYoutube(query: string, page: number): Promise<YoutubeSearchPage>; prefetchYoutube(url: string): Promise<void>; loadYoutube(url: string): Promise<YoutubeMetadata>; downloadYoutube(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string, options: DownloadOptions): Promise<{ cardId: string; fileName: string; subtitle?: MediaCard; warning?: string }>; cancelYoutube(id: string): Promise<boolean>; loadSocial(url: string): Promise<SocialMetadata>; loadSocialThumbnail?(url: string): Promise<string | null>; downloadSocial(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelSocial(id: string): Promise<boolean>; onSocialEvent(callback: (event: SocialEvent) => void): () => void; loadPinterest(url: string): Promise<PinterestMetadata>; searchPinterest(query: string, page: number): Promise<PinterestSearchPage>; downloadPinterest(url: string, itemIndex: number, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPinterest(id: string): Promise<boolean>; onPinterestEvent(callback: (event: PinterestEvent) => void): () => void; queueDelete(cardId: string): Promise<{ deleted: boolean; message: string }>; searchSubtitles(url: string, language: SubtitleLanguage): Promise<SubtitleCue[]>; onYoutubeEvent(callback: (event: YoutubeEvent) => void): () => void; setAlwaysOnTop(pinned: boolean): Promise<boolean>; pexelsKeyStatus(): Promise<PexelsConnectionStatus>; setPexelsKey(key: string): Promise<PexelsConnectionStatus>; clearPexelsKey(): Promise<PexelsConnectionStatus>; searchPexels(kind: PexelsKind, query: string, page: number): Promise<PexelsPage>; loadPexels(kind: PexelsKind, id: number): Promise<PexelsAsset>; downloadPexels(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPexels(id: string): Promise<boolean>; cancelPexelsRequests(): Promise<boolean>; onPexelsEvent(callback: (event: PexelsEvent) => void): () => void; openPexelsExternal(url: string): Promise<boolean>; openYoutubeExternal(videoId: string, startSeconds?: number): Promise<boolean>; openYoutubePreview(videoId: string, startSeconds: number | undefined, bounds: PreviewBounds): Promise<boolean>; closeYoutubePreview(): Promise<boolean>; setYoutubePreviewBounds(bounds: PreviewBounds): Promise<boolean>; onYoutubePreviewState(callback: (state: YoutubePreviewState) => void): () => void; workspaceStatus(): Promise<WorkspaceSummary>; openWorkspace(): Promise<boolean>; cleanupWorkspace(): Promise<WorkspaceCleanupResult>; historyList(): Promise<HistoryRecord[]>; historyReuse(id: string): Promise<MediaCard | null>; historyReveal(id: string): Promise<boolean>; historyRevealSubtitle(id: string): Promise<boolean>; historySource(id: string): Promise<boolean>; historyCopy(id: string): Promise<boolean>; historyRelink(id: string): Promise<HistoryRecord | null>; historyDelete(id: string): Promise<{ deleted: boolean; removed: boolean; warning?: string; removedCardIds?: string[] }>; }; } }
+declare global { interface Window { clipdockAPI: { getStatus(): Promise<StatusSnapshot>; downloadFolderStatus(): Promise<DownloadFolderStatus>; chooseDownloadFolder(): Promise<DownloadFolderStatus>; onResolveQuit(callback: () => void): () => void; selectFile(): Promise<{ canceled: boolean; cardId?: string; fileName?: string }>; startNativeDrag(cardIds: string | string[]): void; importToMediaPool(id: string, bin: TargetBin): Promise<TransferResult>; addToTimeline(id: string, bin: TargetBin, placement: TimelinePlacement): Promise<TransferResult>; searchYoutube(query: string, page: number): Promise<YoutubeSearchPage>; prefetchYoutube(url: string): Promise<void>; loadYoutube(url: string): Promise<YoutubeMetadata>; downloadYoutube(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string, options: DownloadOptions): Promise<{ cardId: string; fileName: string; subtitle?: MediaCard; warning?: string }>; cancelYoutube(id: string): Promise<boolean>; loadSocial(url: string): Promise<SocialMetadata>; loadSocialThumbnail?(url: string): Promise<string | null>; downloadSocial(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelSocial(id: string): Promise<boolean>; onSocialEvent(callback: (event: SocialEvent) => void): () => void; loadPinterest(url: string): Promise<PinterestMetadata>; searchPinterest(query: string, page: number): Promise<PinterestSearchPage>; downloadPinterest(url: string, itemIndex: number, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPinterest(id: string): Promise<boolean>; onPinterestEvent(callback: (event: PinterestEvent) => void): () => void; queueDelete(cardId: string): Promise<{ deleted: boolean; message: string }>; searchSubtitles(url: string, language: SubtitleLanguage): Promise<SubtitleCue[]>; onYoutubeEvent(callback: (event: YoutubeEvent) => void): () => void; setAlwaysOnTop(pinned: boolean): Promise<boolean>; pexelsKeyStatus(): Promise<PexelsConnectionStatus>; setPexelsKey(key: string): Promise<PexelsConnectionStatus>; clearPexelsKey(): Promise<PexelsConnectionStatus>; searchPexels(kind: PexelsKind, query: string, page: number): Promise<PexelsPage>; loadPexels(kind: PexelsKind, id: number): Promise<PexelsAsset>; downloadPexels(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPexels(id: string): Promise<boolean>; cancelPexelsRequests(): Promise<boolean>; onPexelsEvent(callback: (event: PexelsEvent) => void): () => void; openPexelsExternal(url: string): Promise<boolean>; pixabayKeyStatus(): Promise<PexelsConnectionStatus>; setPixabayKey(key: string): Promise<PexelsConnectionStatus>; clearPixabayKey(): Promise<PexelsConnectionStatus>; searchPixabay(kind: 'video', query: string, page: number): Promise<PexelsPage>; loadPixabay(kind: 'video', id: number): Promise<PexelsAsset>; downloadPixabay(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPixabay(id: string): Promise<boolean>; cancelPixabayRequests(): Promise<boolean>; onPixabayEvent(callback: (event: PexelsEvent) => void): () => void; openPixabayExternal(url: string): Promise<boolean>; openYoutubeExternal(videoId: string, startSeconds?: number): Promise<boolean>; openYoutubePreview(videoId: string, startSeconds: number | undefined, bounds: PreviewBounds): Promise<boolean>; closeYoutubePreview(): Promise<boolean>; setYoutubePreviewBounds(bounds: PreviewBounds): Promise<boolean>; onYoutubePreviewState(callback: (state: YoutubePreviewState) => void): () => void; workspaceStatus(): Promise<WorkspaceSummary>; openWorkspace(): Promise<boolean>; cleanupWorkspace(): Promise<WorkspaceCleanupResult>; historyList(): Promise<HistoryRecord[]>; historyReuse(id: string): Promise<MediaCard | null>; historyReveal(id: string): Promise<boolean>; historyRevealSubtitle(id: string): Promise<boolean>; historySource(id: string): Promise<boolean>; historyCopy(id: string): Promise<boolean>; historyRelink(id: string): Promise<HistoryRecord | null>; historyDelete(id: string): Promise<{ deleted: boolean; removed: boolean; warning?: string; removedCardIds?: string[] }>; }; } }
 
 const $ = (id: string): HTMLElement => { const el = document.getElementById(id); if (!el) throw new Error(`Missing #${id}`); return el; };
 // Drawn contact print for results without a photo: a seeded skyline in darkroom
@@ -60,18 +60,35 @@ function skylinePoster(seed: string): string {
 const LOCAL_POSTER = skylinePoster('clipdock');
 const IMAGE_PLACEHOLDER = LOCAL_POSTER;
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+// Pexels and Pixabay share one Stock tab and one rendering path; only the bridge methods,
+// the label and Pixabay's video-only scope differ.
+const stockLabel = (source: StockProvider): string => source === 'pixabay' ? 'Pixabay' : 'Pexels';
+function stockApi(source: StockProvider) {
+  const api = window.clipdockAPI;
+  return source === 'pixabay' ? {
+    status: () => api.pixabayKeyStatus(), set: (key: string) => api.setPixabayKey(key), clear: () => api.clearPixabayKey(),
+    search: (_kind: PexelsKind, query: string, page: number) => api.searchPixabay('video', query, page), load: (_kind: PexelsKind, id: number) => api.loadPixabay('video', id),
+    download: (asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string) => api.downloadPixabay(asset, fileId, profile, id), cancel: (id: string) => api.cancelPixabay(id),
+    cancelRequests: () => api.cancelPixabayRequests(), open: (url: string) => api.openPixabayExternal(url), home: 'https://pixabay.com/', keyPage: 'https://pixabay.com/api/docs/',
+  } : {
+    status: () => api.pexelsKeyStatus(), set: (key: string) => api.setPexelsKey(key), clear: () => api.clearPexelsKey(),
+    search: (kind: PexelsKind, query: string, page: number) => api.searchPexels(kind, query, page), load: (kind: PexelsKind, id: number) => api.loadPexels(kind, id),
+    download: (asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string) => api.downloadPexels(asset, fileId, profile, id), cancel: (id: string) => api.cancelPexels(id),
+    cancelRequests: () => api.cancelPexelsRequests(), open: (url: string) => api.openPexelsExternal(url), home: 'https://www.pexels.com/', keyPage: 'https://www.pexels.com/api/',
+  };
+}
 const downloadQueue = new DownloadQueue({
   newId,
   download: (item) => {
     const api = window.clipdockAPI;
-    if (item.provider === 'pexels') return api.downloadPexels(item.pexelsAsset!, item.pexelsFileId!, item.profile, item.jobId);
+    if (isStock(item.provider)) return stockApi(item.provider).download(item.pexelsAsset!, item.pexelsFileId!, item.profile, item.jobId);
     if (item.provider === 'pinterest') return api.downloadPinterest(item.url, item.pinterestItemIndex!, item.profile, item.jobId);
     if (item.provider === 'social') return api.downloadSocial(item.url, item.quality as YoutubeQuality, item.profile, item.jobId);
     return api.downloadYoutube(item.url, item.quality as YoutubeQuality, item.profile, item.jobId, item.options);
   },
   cancel: (item) => {
     const api = window.clipdockAPI;
-    return item.provider === 'pexels' ? api.cancelPexels(item.jobId) : item.provider === 'social' ? api.cancelSocial(item.jobId) : item.provider === 'pinterest' ? api.cancelPinterest(item.jobId) : api.cancelYoutube(item.jobId);
+    return isStock(item.provider) ? stockApi(item.provider).cancel(item.jobId) : item.provider === 'social' ? api.cancelSocial(item.jobId) : item.provider === 'pinterest' ? api.cancelPinterest(item.jobId) : api.cancelYoutube(item.jobId);
   },
   transfer: (id, bin, action) => action === 'import' ? window.clipdockAPI.importToMediaPool(id, bin) : window.clipdockAPI.addToTimeline(id, bin, action),
   deleteFile: (id) => window.clipdockAPI.queueDelete(id),
@@ -130,8 +147,12 @@ let provider: Provider = 'youtube';
 let pexelsKind: PexelsKind = 'video';
 let pexels: PexelsAsset | null = null;
 let pexelsSearch: PexelsPage | null = null;
-let pexelsConnected = false;
-let pexelsConnecting = false;
+// The Stock tab reopens on the last stock source used.
+let lastStock: StockProvider = 'pexels';
+const stockConnected: Record<StockProvider, boolean> = { pexels: false, pixabay: false };
+const stockConnecting: Record<StockProvider, boolean> = { pexels: false, pixabay: false };
+/** Pixabay is video-only; Pexels keeps its chosen media kind. */
+const stockKind = (): PexelsKind => provider === 'pixabay' ? 'video' : pexelsKind;
 let sourceSelection = transitionSourceSelection(null, { type: 'source', source: '' });
 const selectedChapters = new Set<number>();
 const subtitleGuard = createGenerationGuard();
@@ -163,7 +184,7 @@ type BrowserState = { query: string; youtubeSearch: YoutubeSearchPage | null; yo
 let youtubeState: BrowserState | null = null;
 let socialState: BrowserState | null = null;
 let pinterestState: BrowserState | null = null;
-const pexelsStates = new Map<PexelsKind, BrowserState>();
+const pexelsStates = new Map<string, BrowserState>();
 
 // ---- Search detail rail: one adjustable sheet/detail seam -------------------------
 // The clip detail sits beside the contact sheet at 760px and wider. Its width is a
@@ -432,18 +453,18 @@ function pexelsStatusView(status: PexelsConnectionStatus | null, connecting = fa
   if (!status.connected) return { text: status.message || 'Disconnected', state: 'disconnected' };
   return status.persisted ? { text: 'Connected · saved securely', state: 'connected' } : { text: 'Connected for this session', state: 'session' };
 }
-function renderPexelsConnection(status: PexelsConnectionStatus | null, error = ''): void {
-  const view = pexelsStatusView(status, pexelsConnecting, error);
-  const indicator = $('pexels-connection-status'); indicator.textContent = view.text; indicator.dataset.state = view.state;
-  setOptionalText('pexels-save-note', !status ? 'Checking connection.' : status.connected ? status.persisted ? 'Saved securely.' : 'Saved for this session.' : 'No Pexels key is connected.');
-  const input = $('pexels-api-key') as HTMLInputElement;
-  ($('pexels-connect-btn') as HTMLButtonElement).disabled = pexelsConnecting || pexelsConnected;
-  ($('pexels-disconnect-btn') as HTMLButtonElement).disabled = pexelsConnecting || !pexelsConnected;
-  input.disabled = pexelsConnecting;
+function renderPexelsConnection(status: PexelsConnectionStatus | null, error = '', source: StockProvider = 'pexels'): void {
+  const view = pexelsStatusView(status, stockConnecting[source], error);
+  const indicator = $(`${source}-connection-status`); indicator.textContent = view.text; indicator.dataset.state = view.state;
+  setOptionalText(`${source}-save-note`, !status ? 'Checking connection.' : status.connected ? status.persisted ? 'Saved securely.' : 'Saved for this session.' : `No ${stockLabel(source)} key is connected.`);
+  const input = $(`${source}-api-key`) as HTMLInputElement;
+  ($(`${source}-connect-btn`) as HTMLButtonElement).disabled = stockConnecting[source] || stockConnected[source];
+  ($(`${source}-disconnect-btn`) as HTMLButtonElement).disabled = stockConnecting[source] || !stockConnected[source];
+  input.disabled = stockConnecting[source];
 }
 // Just-in-time disclosure: the credential details element is opened only when setup or
 // recovery is required, never persisted, and never force-focused except from a failed search.
-function setPexelsSetupOpen(open: boolean): void { const setup = $('pexels-setup') as HTMLDetailsElement; if (setup.open !== open) setup.open = open; }
+function setPexelsSetupOpen(open: boolean, source: StockProvider = 'pexels'): void { const setup = $(`${source}-setup`) as HTMLDetailsElement; if (setup.open !== open) setup.open = open; }
 function formatDuration(seconds: number | null): string {
   if (seconds === null) return 'Duration unavailable';
   const hours = Math.floor(seconds / 3600); const minutes = Math.floor((seconds % 3600) / 60); const secs = Math.floor(seconds % 60);
@@ -609,7 +630,7 @@ function renderEffectiveOutputSummary(): void {
   const keys = Object.keys(overrides).length;
   if (!keys) { summary.textContent = 'Using common defaults'; summary.classList.add('hidden'); (summary as HTMLElement).hidden = true; summary.setAttribute('aria-hidden', 'true'); return; }
   const effective = outputSession.output(outputSession.selected?.key);
-  const photo = provider === 'pexels' && pexels?.kind === 'photo';
+  const photo = isStock(provider) && pexels?.kind === 'photo';
   summary.textContent = `${keys} item override${keys === 1 ? '' : 's'} · ${cardOutputSummary(effective, photo)}`;
   summary.classList.remove('hidden'); (summary as HTMLElement).hidden = false; summary.setAttribute('aria-hidden', 'false');
 }
@@ -649,7 +670,7 @@ function renderSelectionToolbar(): void {
 }
 function currentResultKeys(): string[] {
   if (provider === 'youtube') return (searchPage?.results ?? []).map((item) => resultKeyFor('youtube', item.id));
-  if (provider === 'pexels') return (pexelsSearch?.results ?? []).map((item) => resultKeyFor('pexels', String(item.id), pexelsKind));
+  if (isStock(provider)) return (pexelsSearch?.results ?? []).map((item) => resultKeyFor(provider, String(item.id), stockKind()));
   if (provider === 'pinterest') return (pinterestSearch?.results ?? []).map((item) => resultKeyFor('pinterest', item.id));
   return [];
 }
@@ -659,9 +680,9 @@ function stageAllCurrentResults(): void {
     const key = resultKeyFor('youtube', item.id);
     outputSession.stage(key, { provider: 'youtube', resultId: item.id, source: item.url, title: item.title, channel: item.channel, thumbnailDataUrl: item.thumbnailUrl });
   }
-  if (provider === 'pexels') for (const item of pexelsSearch?.results ?? []) {
-    const key = resultKeyFor('pexels', String(item.id), pexelsKind);
-    outputSession.stage(key, { provider: 'pexels', resultId: String(item.id), source: item.sourceUrl, title: item.title, channel: item.creator, thumbnailDataUrl: item.thumbnailUrl, pexelsKind });
+  if (isStock(provider)) for (const item of pexelsSearch?.results ?? []) {
+    const key = resultKeyFor(provider, String(item.id), stockKind());
+    outputSession.stage(key, { provider, resultId: String(item.id), source: item.sourceUrl, title: item.title, channel: item.creator, thumbnailDataUrl: item.thumbnailUrl, pexelsKind: stockKind() });
   }
   if (provider === 'pinterest') for (const item of pinterestSearch?.results ?? []) {
     const key = resultKeyFor('pinterest', item.id);
@@ -675,7 +696,7 @@ function clearStagedSelection(): void {
 }
 function detailOutput(): OutputDefaults {
   const choices = Array.from(($('youtube-quality') as HTMLSelectElement).options ?? []).map((option) => option.value);
-  return outputSession.output(undefined, { choices, ...(provider === 'pexels' && pexels ? { files: pexels.files, kind: pexels.kind, photo: pexels.kind === 'photo' } : { photo: provider === 'pinterest' && pinterest?.kind === 'image' }) });
+  return outputSession.output(undefined, { choices, ...(isStock(provider) && pexels ? { files: pexels.files, kind: pexels.kind, photo: pexels.kind === 'photo' } : { photo: provider === 'pinterest' && pinterest?.kind === 'image' }) });
 }
 function commitInspectorEdit(patch: RawItemOutput, preserveRangeText = false): void {
   outputSession.edit('inspector', patch);
@@ -736,14 +757,14 @@ function updateCommonQualityOptions(values: string[]): void {
 let searchError: string | null = null;
 function renderSearchState(): void {
   const pane = document.getElementById('feed-pane'); if (!pane) return;
-  const page = provider === 'pinterest' ? pinterestSearch : provider === 'pexels' ? pexelsSearch : provider === 'youtube' ? searchPage : null;
+  const page = provider === 'pinterest' ? pinterestSearch : isStock(provider) ? pexelsSearch : provider === 'youtube' ? searchPage : null;
   const state = provider === 'social' ? 'idle' : searchBusy ? 'loading' : searchError ? 'error' : !page ? 'idle' : page.results.length ? 'results' : 'empty';
   pane.dataset.searchState = state; pane.dataset.provider = provider;
   pane.setAttribute('aria-busy', String(searchBusy));
   const name = providerLabel(provider);
   const query = (page?.query ?? (document.getElementById('youtube-search-input') as HTMLInputElement | null)?.value ?? '').trim();
   let title = 'Nothing on the sheet yet.';
-  let hint = provider === 'pexels' ? (pexelsConnected ? 'Search free Pexels stock: videos and photos, free to use.' : 'Connect a free Pexels API key in Settings, then search.') : provider === 'pinterest' ? 'Search Pinterest, or paste a Pin link into the search box.' : 'Search YouTube, or paste a link to a single video.';
+  let hint = provider === 'pixabay' ? (stockConnected.pixabay ? 'Search free Pixabay stock videos, free to use.' : 'Connect a free Pixabay API key in Settings, then search.') : provider === 'pexels' ? (stockConnected.pexels ? 'Search free Pexels stock: videos and photos, free to use.' : 'Connect a free Pexels API key in Settings, then search.') : provider === 'pinterest' ? 'Search Pinterest, or paste a Pin link into the search box.' : 'Search YouTube, or paste a link to a single video.';
   if (state === 'empty') { title = `No frames for “${query}” on ${name}.`; hint = 'Try fewer words, or look on another source.'; }
   if (state === 'error') { title = `${name} didn't answer.`; hint = `${searchError ?? ''} Your marked frames are kept.`.trim(); }
   setOptionalText('search-empty-title', title); setOptionalText('search-empty-hint', hint);
@@ -753,7 +774,7 @@ function renderSearchState(): void {
 function setSearchBusy(busy: boolean): void {
   if (busy) stopPreview(); searchBusy = busy;
   const blocked = busy || metadataSession.busy;
-  const page = provider === 'pinterest' ? pinterestSearch : provider === 'pexels' ? pexelsSearch : searchPage;
+  const page = provider === 'pinterest' ? pinterestSearch : isStock(provider) ? pexelsSearch : searchPage;
   ($('youtube-search-input') as HTMLInputElement).disabled = blocked; ($('youtube-search-btn') as HTMLButtonElement).disabled = blocked;
   ($('youtube-search-prev') as HTMLButtonElement).disabled = blocked || !page?.hasPrevious; ($('youtube-search-next') as HTMLButtonElement).disabled = blocked || !page?.hasNext;
   searchButtons.forEach((button) => { (button as HTMLButtonElement).setAttribute('aria-disabled', String(blocked)); });
@@ -761,9 +782,9 @@ function setSearchBusy(busy: boolean): void {
 }
 // A link field is a draft: the loaded source stays the download target, so an
 // edited, unloaded link blocks downloading until Load replaces the source.
-const loadedLinks = new Map<Exclude<Provider, 'pexels'>, string>();
+const loadedLinks = new Map<Exclude<Provider, StockProvider>, string>();
 function linkPending(): boolean {
-  if (provider === 'pexels') return false;
+  if (isStock(provider)) return false;
   const field = document.getElementById(provider === 'social' ? 'social-url' : provider === 'pinterest' ? 'pinterest-url' : 'youtube-url') as HTMLInputElement | null;
   const loaded = loadedLinks.get(provider);
   const text = field?.value.trim() ?? '';
@@ -787,7 +808,7 @@ function updateControls(): void {
   if (socialInput) socialInput.disabled = metadataSession.busy;
   if (pinterestLoad) pinterestLoad.disabled = metadataSession.busy;
   if (pinterestInput) pinterestInput.disabled = metadataSession.busy;
-  const selected = provider === 'pexels' ? pexels : provider === 'social' ? social : provider === 'pinterest' ? pinterest : youtube;
+  const selected = isStock(provider) ? pexels : provider === 'social' ? social : provider === 'pinterest' ? pinterest : youtube;
   const audio = provider === 'youtube' && ($('youtube-media-mode') as HTMLSelectElement).value === 'audio';
   ($('youtube-quality') as HTMLSelectElement).disabled = !selected || metadataSession.busy || audio;
   const disabled = !selected || metadataSession.busy || linkPending();
@@ -815,7 +836,7 @@ function formatCount(value: number): string { try { return new Intl.NumberFormat
 function formatAge(timestamp: number): string { const seconds = Math.max(0, Math.floor(Date.now() / 1000) - timestamp); if (seconds < 60) return 'just now'; const minutes = Math.floor(seconds / 60); if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`; const days = Math.floor(hours / 24); if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`; const weeks = Math.floor(days / 7); if (weeks < 5) return `${weeks} week${weeks === 1 ? '' : 's'} ago`; const months = Math.floor(days / 30); if (days < 365) return `${months} month${months === 1 ? '' : 's'} ago`; const years = Math.floor(days / 365); return `${years} year${years === 1 ? '' : 's'} ago`; }
 function formatMeta(item: YoutubeSearchItem): string { const channel = item.channel ? `${item.channel}${item.channelVerified ? ' ✓' : ''}` : null; return [channel, item.viewCount === null ? null : `${formatCount(item.viewCount)} views`, item.publishedAt === null ? null : formatAge(item.publishedAt)].filter(Boolean).join(' · '); }
 function providerLabel(value: Provider, platform: SocialPlatform | null = null): string {
-  return value === 'youtube' ? 'YouTube' : value === 'pexels' ? 'Pexels' : value === 'pinterest' ? 'Pinterest' : platform ? socialPlatformLabel(platform) : 'Social media';
+  return value === 'youtube' ? 'YouTube' : value === 'pexels' ? 'Pexels' : value === 'pixabay' ? 'Pixabay' : value === 'pinterest' ? 'Pinterest' : platform ? socialPlatformLabel(platform) : 'Social media';
 }
 function sourceRowAriaLabel(source: string, title: string, duration: string, metadata = ''): string {
   return [`Source: ${source}`, `Duration: ${duration}`, `Title: ${title}`, metadata ? `Metadata: ${metadata}` : null].filter(Boolean).join('. ');
@@ -860,7 +881,7 @@ function playSourceLock(): void {
 }
 function updatePreviewButton(): void {
   const button = $('preview-selected-btn') as HTMLButtonElement;
-  const valid = provider === 'social' || provider === 'pinterest' ? false : provider === 'pexels' ? !!pexels && pexels.kind === 'video' && !!pexels.previewUrl && !youtubeBusy : !!youtube && VIDEO_ID.test(youtube.id) && !youtubeBusy;
+  const valid = provider === 'social' || provider === 'pinterest' ? false : isStock(provider) ? !!pexels && pexels.kind === 'video' && !!pexels.previewUrl && !youtubeBusy : !!youtube && VIDEO_ID.test(youtube.id) && !youtubeBusy;
   const manual = previewSession.source === 'manual';
   button.disabled = !manual && !valid;
   button.textContent = manual ? 'Stop preview' : 'Preview';
@@ -873,7 +894,7 @@ function updatePreviewButton(): void {
   const reason = document.getElementById('preview-note');
   if (reason) {
     reason.textContent = provider === 'social' ? 'Preview is unavailable for pasted links.' : provider === 'pinterest' ? 'Pinterest preview is unavailable.' : provider === 'youtube' ? previewSession.failure ? 'Preview failed. Open on YouTube to continue.' : 'Adaptive quality; YouTube branding and related videos may appear.' : '';
-    reason.classList.toggle('hidden', provider === 'pexels');
+    reason.classList.toggle('hidden', isStock(provider));
   }
   if (provider === 'social') { button.title = 'Preview is unavailable for pasted links.'; button.setAttribute('aria-label', 'Preview unavailable for pasted links'); }
   else if (provider === 'pinterest') { button.title = 'Pinterest preview is unavailable.'; button.setAttribute('aria-label', 'Pinterest preview unavailable'); }
@@ -965,7 +986,7 @@ function startPexelsPreview(asset: PexelsAsset, resultKey: string | null = outpu
 
 function wirePreviewControls(): void {
   document.getElementById('source-monitor')?.addEventListener('animationend', () => document.getElementById('source-monitor')?.classList.remove('locking'));
-  $('preview-selected-btn').addEventListener('click', () => { if (previewSession.source === 'manual') stopPreview(); else if (provider === 'pexels' && pexels) startPexelsPreview(pexels); else if (provider === 'youtube' && youtube) void startYoutubePreview(youtube.id, currentSelection()?.start); });
+  $('preview-selected-btn').addEventListener('click', () => { if (previewSession.source === 'manual') stopPreview(); else if (isStock(provider) && pexels) startPexelsPreview(pexels); else if (provider === 'youtube' && youtube) void startYoutubePreview(youtube.id, currentSelection()?.start); });
   document.getElementById('open-youtube-external-btn')?.addEventListener('click', () => { if (youtube) void watchYoutube(youtube.id, currentSelection()?.start); });
   document.getElementById('source-monitor')?.addEventListener('click', () => { ($('preview-selected-btn') as HTMLButtonElement).click(); });
   document.getElementById('back-to-results')?.addEventListener('click', () => setInspectorOpen(false, true));
@@ -1199,30 +1220,31 @@ function observeResultCardThumbnailContainer(): void {
 }
 function renderPexelsSearchResults(): void {
   stopPreview(); const list = $('youtube-search-results'); list.replaceChildren(); searchButtons = [];
+  const source: StockProvider = provider === 'pixabay' ? 'pixabay' : 'pexels'; const label = stockLabel(source);
   for (const [index, item] of (pexelsSearch?.results ?? []).entries()) {
-    const kind = item.kind === 'photo' ? 'Photo' : 'Video'; const key = resultKeyFor('pexels', String(item.id), pexelsKind);
+    const kind = item.kind === 'photo' ? 'Photo' : 'Video'; const key = resultKeyFor(source, String(item.id), stockKind());
     const duration = item.kind === 'video' && item.duration !== null ? formatDuration(item.duration) : 'Still image';
     const metadata = [item.creator ? `Creator: ${item.creator}` : null, item.width && item.height ? `Dimensions: ${item.width}×${item.height}` : null, kind].filter(Boolean).join(' · ');
-    const selection: ResultSelection = { provider: 'pexels', resultId: String(item.id), source: item.sourceUrl, title: item.title, channel: item.creator, thumbnailDataUrl: item.thumbnailUrl, pexelsKind };
-    const row = document.createElement('div'); row.className = 'youtube-search-result source-row clipdock-result-card result-card'; row.dataset.resultId = String(item.id); row.dataset.resultKey = key; row.dataset.resultTitle = item.title; row.dataset.cardPhoto = String(item.kind === 'photo'); row.dataset.provider = 'pexels'; row.dataset.source = 'pexels'; row.setAttribute('aria-pressed', String(String(item.id) === outputSession.selected?.resultId)); row.setAttribute('aria-selected', String(outputSession.staged.has(key))); row.setAttribute('aria-label', sourceRowAriaLabel(`Pexels ${kind}`, item.title, duration, metadata));
+    const selection: ResultSelection = { provider: source, resultId: String(item.id), source: item.sourceUrl, title: item.title, channel: item.creator, thumbnailDataUrl: item.thumbnailUrl, pexelsKind: stockKind() };
+    const row = document.createElement('div'); row.className = 'youtube-search-result source-row clipdock-result-card result-card'; row.dataset.resultId = String(item.id); row.dataset.resultKey = key; row.dataset.resultTitle = item.title; row.dataset.cardPhoto = String(item.kind === 'photo'); row.dataset.provider = source; row.dataset.source = source; row.setAttribute('aria-pressed', String(String(item.id) === outputSession.selected?.resultId)); row.setAttribute('aria-selected', String(outputSession.staged.has(key))); row.setAttribute('aria-label', sourceRowAriaLabel(`${label} ${kind}`, item.title, duration, metadata));
     if (String(item.id) === outputSession.selected?.resultId) { row.classList.add('selected'); row.setAttribute('aria-current', 'true'); }
     const thumb = document.createElement('span'); thumb.className = 'youtube-thumb source-row-thumbnail result-card-thumbnail card-thumb'; thumb.dataset.field = 'thumbnail';
     appendResultThumbnail(thumb, item.thumbnailUrl, item.title);
     if (item.kind === 'video' && item.duration !== null) { const badge = document.createElement('span'); badge.className = 'youtube-duration source-row-duration'; badge.textContent = formatDuration(item.duration); badge.setAttribute('aria-label', `Duration: ${duration}`); badge.dataset.field = 'duration'; thumb.append(badge); }
     { const freeTag = document.createElement('span'); freeTag.className = 'lic'; freeTag.textContent = 'Free'; freeTag.setAttribute('aria-hidden', 'true'); thumb.append(freeTag); }
-    const details = document.createElement('button'); (details as HTMLButtonElement).type = 'button'; details.className = 'youtube-details source-row-details'; const title = document.createElement('span'); title.className = 'youtube-result-title source-row-title'; title.dataset.field = 'title'; title.textContent = item.title; const meta = document.createElement('span'); meta.className = 'youtube-result-meta source-row-source source-row-meta'; meta.dataset.field = 'source-metadata'; meta.textContent = `${item.creator ?? 'Pexels'} · Free on Pexels`; details.append(title, meta); row.append(thumb, details);
+    const details = document.createElement('button'); (details as HTMLButtonElement).type = 'button'; details.className = 'youtube-details source-row-details'; const title = document.createElement('span'); title.className = 'youtube-result-title source-row-title'; title.dataset.field = 'title'; title.textContent = item.title; const meta = document.createElement('span'); meta.className = 'youtube-result-meta source-row-source source-row-meta'; meta.dataset.field = 'source-metadata'; meta.textContent = `${item.creator ?? label} · Free on ${label}`; details.append(title, meta); row.append(thumb, details);
     const checkbox = appendResultSelection(row, key, item.title, selection); appendResultOutput(row, key, item.kind === 'photo');
     const open = (event: Event) => { if (searchBusy) return; outputSession.select({ key, resultId: String(item.id), thumbnailDataUrl: item.thumbnailUrl }); ($('youtube-url') as HTMLInputElement).value = ''; openInspectorForSelection((event as MouseEvent).detail === 0); applyDetailOutput(); renderPexelsSearchResults(); void loadPexels(item.id); };
     wireSearchResultRow(row, checkbox);
-    appendResultCardControls(row, key, selection, () => open({ detail: 1 } as unknown as Event), () => { if (previewSession.isManualFor(key)) stopPreview(); else { open({ detail: 1 } as unknown as Event); startPexelsPreview(item, key); } }, item.kind === 'video' && !!item.previewUrl, 'Pexels preview is unavailable for this result.', item.kind === 'photo');
-    decorateResultCard(row, key, frameNumber(index, pexelsSearch), 'PX', details, open, item.kind === 'photo');
+    appendResultCardControls(row, key, selection, () => open({ detail: 1 } as unknown as Event), () => { if (previewSession.isManualFor(key)) stopPreview(); else { open({ detail: 1 } as unknown as Event); startPexelsPreview(item, key); } }, item.kind === 'video' && !!item.previewUrl, `${label} preview is unavailable for this result.`, item.kind === 'photo');
+    decorateResultCard(row, key, frameNumber(index, pexelsSearch), source === 'pixabay' ? 'PB' : 'PX', details, open, item.kind === 'photo');
     searchButtons.push(row); list.append(row);
   }
-  setText('youtube-search-status', pexelsSearch ? (pexelsSearch.results.length ? `Pexels ${pexelsKind}s · page ${pexelsSearch.page}` : 'No Pexels results found.') : 'Connect Pexels and search.'); setSearchBusy(searchBusy); renderSelectionToolbar(); scheduleResultCardThumbnailHeights();
+  setText('youtube-search-status', pexelsSearch ? (pexelsSearch.results.length ? `${label} ${stockKind()}s · page ${pexelsSearch.page}` : `No ${label} results found.`) : `Connect ${label} and search.`); setSearchBusy(searchBusy); renderSelectionToolbar(); scheduleResultCardThumbnailHeights();
 }
 function renderSearchResults(): void {
   clearMetadataPrefetchTimers();
-  if (provider === 'pexels') { renderPexelsSearchResults(); return; }
+  if (isStock(provider)) { renderPexelsSearchResults(); return; }
   if (provider === 'social') {
     // Social has no search-result corpus: the existing pasted-link Inspector is the
     // explicit provider fallback and keeps its original load/download path intact.
@@ -1289,7 +1311,7 @@ function beginSearchTransition(): void {
   subtitleCues = []; selectedSubtitleCues.clear();
   document.getElementById('subtitle-results')?.replaceChildren();
   setInspectorLoading(false);
-  if (provider === 'pexels') renderPexelsMetadata();
+  if (isStock(provider)) renderPexelsMetadata();
   else if (provider === 'pinterest') renderPinterestMetadata();
   else if (provider === 'social') renderSocialMetadata();
   else renderMetadata();
@@ -1306,15 +1328,16 @@ async function searchPinterest(page: number): Promise<void> {
   finally { if (searchGuard.isCurrent(request)) setSearchBusy(false); }
 }
 async function searchPexels(page: number): Promise<void> {
-  if (!pexelsConnected) {
-    showYoutubeStatus('Connect a Pexels API key for this session.');
+  const source: StockProvider = provider === 'pixabay' ? 'pixabay' : 'pexels';
+  if (!stockConnected[source]) {
+    showYoutubeStatus(`Connect a ${stockLabel(source)} API key for this session.`);
     openSettings();
-    const setup = $('pexels-setup') as HTMLDetailsElement;
-    if (!setup.open) { setup.open = true; ($('pexels-api-key') as HTMLInputElement).focus(); }
+    const setup = $(`${source}-setup`) as HTMLDetailsElement;
+    if (!setup.open) { setup.open = true; ($(`${source}-api-key`) as HTMLInputElement).focus(); }
     return;
   }
   beginSearchTransition();
-  const request = searchGuard.next(); const query = ($('youtube-search-input') as HTMLInputElement).value; setSearchBusy(true); setText('youtube-search-status', 'Searching Pexels…'); try { const result = await window.clipdockAPI.searchPexels(pexelsKind, query, page); if (searchGuard.isStale(request) || provider !== 'pexels') return; pexelsSearch = result; clearResultSelection(); } catch (err) { if (searchGuard.isStale(request)) return; searchError = (err as Error).message; pexelsSearch = null; renderPexelsSearchResults(); setText('youtube-search-status', (err as Error).message); } finally { if (searchGuard.isCurrent(request)) setSearchBusy(false); } }
+  const request = searchGuard.next(); const query = ($('youtube-search-input') as HTMLInputElement).value; setSearchBusy(true); setText('youtube-search-status', `Searching ${stockLabel(source)}…`); try { const result = await stockApi(source).search(stockKind(), query, page); if (searchGuard.isStale(request) || provider !== source) return; pexelsSearch = result; clearResultSelection(); } catch (err) { if (searchGuard.isStale(request)) return; searchError = (err as Error).message; pexelsSearch = null; renderPexelsSearchResults(); setText('youtube-search-status', (err as Error).message); } finally { if (searchGuard.isCurrent(request)) setSearchBusy(false); } }
 function youtubeUrlFromSearch(input: string): string | null {
   if (input.length < 12 || input.length > 2_048) return null;
   let parsed: URL;
@@ -1352,7 +1375,7 @@ function clearResultSelection(): void {
   renderSearchResults();
 }
 function submitSourceSearch(): void {
-  if (provider === 'pexels') { void searchPexels(1); return; }
+  if (isStock(provider)) { void searchPexels(1); return; }
   if (provider === 'pinterest') {
     const directUrl = pinterestUrlFromSearch(($('youtube-search-input') as HTMLInputElement).value);
     if (directUrl) { clearResultSelection(); ($('pinterest-url') as HTMLInputElement).value = directUrl; void loadPinterest(directUrl); return; }
@@ -1377,14 +1400,14 @@ async function searchYoutube(page: number): Promise<void> {
 // Shared pager: Previous/Next resolve against the active provider's page and rely on the
 // same per-search generation suppression, so a stale page can never render.
 function searchPageRelative(delta: number): void {
-  if (provider === 'pexels' && pexelsSearch) void searchPexels(pexelsSearch.page + delta);
+  if (isStock(provider) && pexelsSearch) void searchPexels(pexelsSearch.page + delta);
   else if (provider === 'pinterest' && pinterestSearch) void searchPinterest(pinterestSearch.page + delta);
   else if (searchPage) void searchYoutube(searchPage.page + delta);
 }
 // Edge code over the clip detail: the frame number when the clip came from the sheet,
 // LINK when it was pasted.
 function renderInspectorTitle(source: Provider, _id: string, label: string = providerLabel(source)): void {
-  const page = source === 'youtube' ? searchPage : source === 'pexels' ? pexelsSearch : source === 'pinterest' ? pinterestSearch : null;
+  const page = source === 'youtube' ? searchPage : isStock(source) ? pexelsSearch : source === 'pinterest' ? pinterestSearch : null;
   const results = (page?.results ?? []) as Array<{ id: string | number }>;
   const index = !outputSession.selected ? -1 : results.findIndex((item) => String(item.id) === outputSession.selected?.resultId);
   const frame = index >= 0 ? `FRAME ${frameNumber(index, page)}` : 'LINK';
@@ -1400,10 +1423,11 @@ function renderPexelsMetadata(): void {
   const title = $('youtube-title'); title.classList.add('source-row-title'); title.textContent = pexels.title;
   const source = $('youtube-channel'); source.classList.add('source-row-source'); source.textContent = pexels.creator ? `${pexels.kind === 'photo' ? 'Photo' : 'Video'} by ${pexels.creator}` : 'Creator unavailable';
   const duration = $('youtube-duration'); duration.classList.add('source-row-duration'); duration.textContent = pexels.kind === 'video' ? formatDuration(pexels.duration) : `${pexels.width ?? '-'}×${pexels.height ?? '-'}`;
-  renderInspectorTitle('pexels', String(pexels.id));
-  setVerifiedMetadata('Verified metadata · Pexels');
+  const stock: StockProvider = provider === 'pixabay' ? 'pixabay' : 'pexels';
+  renderInspectorTitle(stock, String(pexels.id));
+  setVerifiedMetadata(`Verified metadata · ${stockLabel(stock)}`);
   const attribution = $('pexels-attribution'); attribution.classList.add('source-row-attribution');
-  const credit = button(`${pexels.kind === 'photo' ? 'Photo' : 'Video'} by ${pexels.creator ?? 'creator'} on Pexels`, () => { void window.clipdockAPI.openPexelsExternal(pexels!.sourceUrl); });
+  const credit = button(`${pexels.kind === 'photo' ? 'Photo' : 'Video'} by ${pexels.creator ?? 'creator'} on ${stockLabel(stock)}`, () => { void stockApi(stock).open(pexels!.sourceUrl); });
   credit.className = 'link-button';
   attribution.replaceChildren(credit);
   attribution.classList.remove('hidden');
@@ -1493,7 +1517,7 @@ async function loadPinterest(url = (document.getElementById('pinterest-url') as 
 }
 async function loadPexels(id: number): Promise<void> {
   if (searchBusy) { showYoutubeStatus('Wait for the current search to finish.'); return; }
- if (!inspectorOpen) openInspectorForSelection(false); stopPreview(); const request = metadataSession.begin(); previewSession.invalidate(); pexels = null; renderPexelsMetadata(); setInspectorLoading(true); updateControls(); showYoutubeStatus('Loading Pexels media…'); try { const result = await window.clipdockAPI.loadPexels(pexelsKind, id); if (metadataSession.isStale(request) || provider !== 'pexels') return; pexels = result; setInspectorLoading(false); renderPexelsMetadata(); showYoutubeStatus('Choose a source size and download.'); } catch (err) { if (metadataSession.isStale(request)) return; stopPreview(); setInspectorLoading(false); renderPexelsMetadata(); showYoutubeStatus((err as Error).message); } finally { if (metadataSession.finish(request)) updateControls(); } }
+ if (!inspectorOpen) openInspectorForSelection(false); stopPreview(); const request = metadataSession.begin(); previewSession.invalidate(); pexels = null; renderPexelsMetadata(); setInspectorLoading(true); updateControls(); const source: StockProvider = provider === 'pixabay' ? 'pixabay' : 'pexels'; showYoutubeStatus(`Loading ${stockLabel(source)} media…`); try { const result = await stockApi(source).load(stockKind(), id); if (metadataSession.isStale(request) || provider !== source) return; pexels = result; setInspectorLoading(false); renderPexelsMetadata(); showYoutubeStatus('Choose a source size and download.'); } catch (err) { if (metadataSession.isStale(request)) return; stopPreview(); setInspectorLoading(false); renderPexelsMetadata(); showYoutubeStatus((err as Error).message); } finally { if (metadataSession.finish(request)) updateControls(); } }
 function renderPlacementWarning(): void {
   const warning = document.getElementById('timeline-placement-warning');
   const intent = document.getElementById('youtube-intent') as HTMLSelectElement | null;
@@ -1570,7 +1594,7 @@ function renderMediaMode(): void {
   $('video-controls').classList.toggle('hidden', audio || isPinterest);
   $('audio-controls').classList.toggle('hidden', !audio);
   document.getElementById('pinterest-original-note')?.classList.toggle('hidden', !isPinterest || !pinterest?.items.some((item) => item.kind === 'image'));
-  ($('youtube-quality') as HTMLSelectElement).disabled = audio || !(provider === 'pexels' ? pexels : provider === 'social' ? social : provider === 'pinterest' ? pinterest : youtube) || metadataSession.busy;
+  ($('youtube-quality') as HTMLSelectElement).disabled = audio || !(isStock(provider) ? pexels : provider === 'social' ? social : provider === 'pinterest' ? pinterest : youtube) || metadataSession.busy;
   const subtitleOn = ($('youtube-subtitles') as HTMLInputElement).checked;
   ($('youtube-subtitle-language') as HTMLSelectElement).disabled = !subtitleOn || metadataSession.busy;
   const audioToggle = document.getElementById('audio-only-toggle') as HTMLInputElement | null;
@@ -1783,7 +1807,7 @@ function setInspectorLoading(loading: boolean): void {
     return;
   }
   const id = outputSession.selected?.resultId;
-  const row = provider === 'youtube' ? searchPage?.results.find(item => item.id === id) : provider === 'pexels' ? pexelsSearch?.results.find(item => String(item.id) === id) : provider === 'pinterest' ? pinterestSearch?.results.find(item => item.id === id) : null;
+  const row = provider === 'youtube' ? searchPage?.results.find(item => item.id === id) : isStock(provider) ? pexelsSearch?.results.find(item => String(item.id) === id) : provider === 'pinterest' ? pinterestSearch?.results.find(item => item.id === id) : null;
   $('youtube-metadata').classList.toggle('hidden', !row);
   if (row) {
     $('youtube-title').textContent = row.title;
@@ -2003,7 +2027,7 @@ function renderQueue(): void {
     const img = document.createElement('img'); img.className = 'operation-thumbnail source-row-thumbnail'; img.dataset.field = 'source-thumbnail'; img.alt = item.title; img.src = item.thumbnailDataUrl ?? IMAGE_PLACEHOLDER;
     const details = document.createElement('div'); details.className = 'download-details operation-details';
     const title = document.createElement('p'); title.className = 'value operation-source'; title.dataset.field = 'source-title'; title.textContent = item.title;
-    const meta = document.createElement('p'); meta.className = 'hint operation-meta'; meta.dataset.field = 'operation'; const sourceLabel = item.provider === 'social' ? socialPlatformLabel(item.platform ?? null) : item.provider === 'pinterest' ? `${item.pinterestItem?.kind === 'image' ? 'Image' : 'Video'} · ${item.pinterestItem?.kind === 'image' ? 'Original' : profileLabel(item.profile)}` : item.provider === 'pexels' ? `${item.pexelsAsset?.kind === 'photo' ? 'Photo' : profileLabel(item.profile)} · ${item.quality}` : item.options.mediaMode === 'audio' ? item.options.audioFormat === 'm4a' ? 'AAC (M4A)' : item.options.audioFormat.toUpperCase() : `${profileLabel(item.profile)} · ${item.quality}`; meta.textContent = `${sourceLabel} · ${intentLabel(item.intent)} · Source: ${source}${item.channel ? ` · Creator: ${item.channel}` : ''}`;
+    const meta = document.createElement('p'); meta.className = 'hint operation-meta'; meta.dataset.field = 'operation'; const sourceLabel = item.provider === 'social' ? socialPlatformLabel(item.platform ?? null) : item.provider === 'pinterest' ? `${item.pinterestItem?.kind === 'image' ? 'Image' : 'Video'} · ${item.pinterestItem?.kind === 'image' ? 'Original' : profileLabel(item.profile)}` : isStock(item.provider) ? `${item.pexelsAsset?.kind === 'photo' ? 'Photo' : profileLabel(item.profile)} · ${item.quality}` : item.options.mediaMode === 'audio' ? item.options.audioFormat === 'm4a' ? 'AAC (M4A)' : item.options.audioFormat.toUpperCase() : `${profileLabel(item.profile)} · ${item.quality}`; meta.textContent = `${sourceLabel} · ${intentLabel(item.intent)} · Source: ${source}${item.channel ? ` · Creator: ${item.channel}` : ''}`;
     const status = document.createElement('p'); status.className = item.transferError || item.actionError ? 'message err queue-state operation-status' : 'message queue-state operation-status'; status.dataset.state = item.status; status.dataset.field = 'status'; status.textContent = queueStatusText(item);
     const statusLine = document.createElement('div'); statusLine.className = 'status-line';
     const chip = queueStateChip(item); if (chip) statusLine.append(chip);
@@ -2013,7 +2037,7 @@ function renderQueue(): void {
     if (item.fileName) { const fileField = document.createElement('p'); fileField.className = 'hint operation-file'; fileField.dataset.field = 'file'; fileField.textContent = `File: ${item.fileName}`; details.append(fileField); }
     if (item.subtitle) { const subtitle = button(`SRT: ${item.subtitle.fileName}`, () => undefined); subtitle.className = 'subtitle-artifact operation-artifact'; subtitle.dataset.field = 'subtitle-artifact'; subtitle.dataset.cardId = item.subtitle.cardId; subtitle.setAttribute('aria-label', `Subtitle artifact: ${item.subtitle.fileName}`); subtitle.draggable = !item.fileDeleted && !dragReason; subtitle.disabled = !!item.fileDeleted; if (dragReason) { subtitle.title = dragReason; subtitle.setAttribute('aria-label', `SRT: ${item.subtitle.fileName}. ${dragReason}`); } if (subtitle.draggable) subtitle.addEventListener('dragstart', (event) => { if (!item.fileDeleted) startCardDrag(event, item.subtitle!.cardId); else event.preventDefault(); }); details.append(subtitle); }
     if (item.warning) { const warning = document.createElement('p'); warning.className = 'warning operation-warning'; warning.dataset.field = 'warning'; warning.textContent = item.warning; details.append(warning); }
-    if (item.status === 'completed' && item.provider === 'pexels' && item.pexelsAsset) { const credit = button(`${item.pexelsAsset.kind === 'photo' ? 'Photo' : 'Video'} by ${item.pexelsAsset.creator ?? 'creator'} on Pexels`, () => { void window.clipdockAPI.openPexelsExternal(item.pexelsAsset!.sourceUrl); }); credit.className = 'link-button pexels-credit operation-attribution'; credit.dataset.field = 'attribution'; details.append(credit); }
+    if (item.status === 'completed' && isStock(item.provider) && item.pexelsAsset) { const stock = item.provider; const credit = button(`${item.pexelsAsset.kind === 'photo' ? 'Photo' : 'Video'} by ${item.pexelsAsset.creator ?? 'creator'} on ${stockLabel(stock)}`, () => { void stockApi(stock).open(item.pexelsAsset!.sourceUrl); }); credit.className = 'link-button pexels-credit operation-attribution'; credit.dataset.field = 'attribution'; details.append(credit); }
     const actions = document.createElement('div'); actions.className = 'dock-actions operation-actions'; actions.setAttribute('role', 'group'); actions.setAttribute('aria-label', `Actions for ${item.title}`);
     if (item.queueId === downloadQueue.activeId) {
       if (item.status === 'downloading' || item.status === 'preparing') { const stop = button('Stop', () => stopQueueItem(item)); stop.dataset.icon = 'stop'; stop.disabled = !!item.stopping; actions.append(stop); }
@@ -2054,7 +2078,7 @@ function renderQueue(): void {
 }
 async function loadStagedMetadata(stage: StagedSelection): Promise<YoutubeMetadata | PexelsAsset | SocialMetadata | PinterestMetadata> {
   if (stage.provider === 'youtube') return window.clipdockAPI.loadYoutube(stage.source);
-  if (stage.provider === 'pexels') return window.clipdockAPI.loadPexels(stage.pexelsKind ?? 'video', Number(stage.resultId));
+  if (isStock(stage.provider)) return stockApi(stage.provider).load(stage.pexelsKind ?? 'video', Number(stage.resultId));
   if (stage.provider === 'social') return window.clipdockAPI.loadSocial(stage.source);
   return window.clipdockAPI.loadPinterest(stage.source);
 }
@@ -2070,7 +2094,7 @@ function enqueueStagedSelection(stage: StagedSelection, metadata: QueueMetadata,
   // name an unrelated asset's Small rendition while this output requests Best.
   // Resolve against capabilities before the snapshot session records this as
   // its preference, so an unavailable request can use the live supported one.
-  const quality = stage.provider === 'pexels' ? requested.quality : outputSession.resolveQuality(stage.provider, requested.quality, choices);
+  const quality = isStock(stage.provider) ? requested.quality : outputSession.resolveQuality(stage.provider, requested.quality, choices);
   snapshotSession.edit('defaults', { ...requested, quality });
   const output = snapshotSession.output(undefined, context);
   return downloadQueue.add({ provider: stage.provider, output, metadata, source: stage.source, thumbnailDataUrl: stage.thumbnailDataUrl }, mode).added;
@@ -2114,7 +2138,7 @@ async function enqueueSelected(): Promise<void> {
 }
 function enqueue(intent: DownloadIntent): void {
   if (linkPending()) { showYoutubeStatus('Press Load to use this link.'); return; }
-  const metadata = provider === 'pexels' ? pexels : provider === 'social' ? social : provider === 'pinterest' ? pinterest : youtube;
+  const metadata = isStock(provider) ? pexels : provider === 'social' ? social : provider === 'pinterest' ? pinterest : youtube;
   if (!metadata) return;
   try {
     const output = { ...detailOutput(), intent, ...(provider === 'youtube' ? { selectionPlan: currentSelectionPlan() } : {}) };
@@ -2123,6 +2147,7 @@ function enqueue(intent: DownloadIntent): void {
   } catch (error) { showYoutubeStatus((error as Error).message); }
 }
 function handlePexelsEvent(event: PexelsEvent): void { downloadQueue.event('pexels', event); }
+function handlePixabayEvent(event: PexelsEvent): void { downloadQueue.event('pixabay', event); }
 function captureBrowserState(): BrowserState {
   return { query: ($('youtube-search-input') as HTMLInputElement).value, youtubeSearch: searchPage, youtube, social, socialUrl: (document.getElementById('social-url') as HTMLInputElement | null)?.value ?? '', pinterest, pinterestUrl: (document.getElementById('pinterest-url') as HTMLInputElement | null)?.value ?? '', pinterestSearch, pexelsSearch: pexelsSearch, pexels };
 }
@@ -2130,10 +2155,10 @@ function saveBrowserState(): void {
   if (provider === 'youtube') youtubeState = captureBrowserState();
   else if (provider === 'social') socialState = captureBrowserState();
   else if (provider === 'pinterest') pinterestState = captureBrowserState();
-  else pexelsStates.set(pexelsKind, captureBrowserState());
+  else pexelsStates.set(`${provider}:${stockKind()}`, captureBrowserState());
 }
 function restoreBrowserState(): void {
-  const saved = provider === 'youtube' ? youtubeState : provider === 'social' ? socialState : provider === 'pinterest' ? pinterestState : pexelsStates.get(pexelsKind);
+  const saved = provider === 'youtube' ? youtubeState : provider === 'social' ? socialState : provider === 'pinterest' ? pinterestState : pexelsStates.get(`${provider}:${stockKind()}`);
   searchPage = saved?.youtubeSearch ?? null; youtube = saved?.youtube ?? null; social = saved?.social ?? null; pinterest = saved?.pinterest ?? null; pinterestSearch = saved?.pinterestSearch ?? null; socialPlatform = social?.platform ?? detectSocialPlatform(saved?.socialUrl ?? ''); pexelsSearch = saved?.pexelsSearch ?? null; pexels = saved?.pexels ?? null;
   ($('youtube-search-input') as HTMLInputElement).value = saved?.query ?? '';
   const socialInput = document.getElementById('social-url') as HTMLInputElement | null; if (socialInput) socialInput.value = saved?.socialUrl ?? '';
@@ -2141,7 +2166,7 @@ function restoreBrowserState(): void {
   resetSourceSelection(youtube?.id ?? '');
   $('pexels-attribution').classList.toggle('hidden', !pexels);
   setInspectorLoading(false); renderMediaMode(); renderSearchResults();
-  if (provider === 'pexels') renderPexelsMetadata(); else if (provider === 'social') { renderSocialPlatform(socialPlatform); renderSocialMetadata(); } else if (provider === 'pinterest') renderPinterestMetadata(); else renderMetadata();
+  if (isStock(provider)) renderPexelsMetadata(); else if (provider === 'social') { renderSocialPlatform(socialPlatform); renderSocialMetadata(); } else if (provider === 'pinterest') renderPinterestMetadata(); else renderMetadata();
   applyDetailOutput();
   updateControls();
 }
@@ -2150,22 +2175,27 @@ function setProvider(next: Provider): void {
   if (inspectorOpen) setInspectorOpen(false);
   saveBrowserState();
   writePreference('source', next);
-  if (provider === 'pexels') void window.clipdockAPI.cancelPexelsRequests();
+  if (isStock(provider)) void stockApi(provider).cancelRequests();
   metadataSession.reset(); searchGuard.invalidate(); subtitleGuard.invalidate(); searchBusy = false;
   provider = next; searchError = null;
-  for (const [id, value] of [['provider-youtube', 'youtube'], ['provider-pinterest', 'pinterest'], ['provider-pexels', 'pexels'], ['provider-social', 'social']] as const) { const button = document.getElementById(id) as HTMLButtonElement | null; if (!button) continue; const selected = next === value; button.setAttribute('aria-pressed', String(selected)); button.tabIndex = selected ? 0 : -1; }
+  if (isStock(next)) lastStock = next;
+  for (const [id, value] of [['provider-youtube', 'youtube'], ['provider-pinterest', 'pinterest'], ['provider-pexels', 'pexels'], ['provider-social', 'social']] as const) { const button = document.getElementById(id) as HTMLButtonElement | null; if (!button) continue; const selected = value === 'pexels' ? isStock(next) : next === value; button.setAttribute('aria-pressed', String(selected)); button.tabIndex = selected ? 0 : -1; }
   $('pexels-kind-switch').classList.toggle('hidden', next !== 'pexels');
+  $('stock-source-switch').classList.toggle('hidden', !isStock(next));
+  for (const source of ['pexels', 'pixabay'] as const) $(`stock-source-${source}`).setAttribute('aria-pressed', String(next === source));
   $('youtube-paste-url').classList.toggle('hidden', next !== 'youtube');
   $('social-url-panel').classList.toggle('hidden', next !== 'social');
   document.getElementById('pinterest-url-panel')?.classList.toggle('hidden', next !== 'pinterest');
   $('youtube-search-form').classList.toggle('hidden', next === 'social');
   document.querySelector('.feed-toolbar')?.classList.toggle('hidden', next === 'social');
   $('youtube-search-results').classList.toggle('hidden', next === 'social');
-  $('pexels-credit').classList.toggle('hidden', next !== 'pexels');
+  $('pexels-credit').classList.toggle('hidden', !isStock(next));
+  // Pixabay requires naming the result source wherever results are shown.
+  if (isStock(next)) { setOptionalText('stock-credit-lead', next === 'pixabay' ? 'Results from' : 'Media provided by'); setOptionalText('pexels-link', stockLabel(next)); }
   // The feed toolbar's single live status line carries provider context.
-  ($('youtube-search-input') as HTMLInputElement).placeholder = next === 'pexels' ? 'Search Pexels' : next === 'pinterest' ? 'Search Pinterest or paste a Pin URL' : 'Search permitted sources';
-  $('metadata-verified').textContent = next === 'pexels' ? 'Pexels' : next === 'social' ? 'Paste link' : next === 'pinterest' ? 'Pinterest' : 'Verified metadata';
-  outputSession.select({ provider: next, kind: pexelsKind });
+  ($('youtube-search-input') as HTMLInputElement).placeholder = isStock(next) ? `Search ${stockLabel(next)}` : next === 'pinterest' ? 'Search Pinterest or paste a Pin URL' : 'Search permitted sources';
+  $('metadata-verified').textContent = isStock(next) ? stockLabel(next) : next === 'social' ? 'Paste link' : next === 'pinterest' ? 'Pinterest' : 'Verified metadata';
+  outputSession.select({ provider: next, kind: stockKind() });
   restoreBrowserState();
   renderSelectionToolbar();
 }
@@ -2180,41 +2210,42 @@ function setPexelsKind(next: PexelsKind): void {
   void window.clipdockAPI.cancelPexelsRequests();
   restoreBrowserState();
 }
-async function retainPexelsConnection(error: string): Promise<void> {
+async function retainPexelsConnection(error: string, source: StockProvider = 'pexels'): Promise<void> {
   let status: PexelsConnectionStatus | null = null;
-  try { status = await window.clipdockAPI.pexelsKeyStatus(); pexelsConnected = status.connected; } catch { /* Keep the last known state. */ }
-  pexelsConnecting = false;
-  renderPexelsConnection(status, error);
-  if (error) setPexelsSetupOpen(true);
+  try { status = await stockApi(source).status(); stockConnected[source] = status.connected; } catch { /* Keep the last known state. */ }
+  stockConnecting[source] = false;
+  renderPexelsConnection(status, error, source);
+  if (error) setPexelsSetupOpen(true, source);
 }
-async function connectPexels(): Promise<void> {
-  const input = $('pexels-api-key') as HTMLInputElement; const key = input.value;
-  pexelsConnecting = true; renderPexelsConnection(null);
+async function connectPexels(source: StockProvider = 'pexels'): Promise<void> {
+  const input = $(`${source}-api-key`) as HTMLInputElement; const key = input.value;
+  stockConnecting[source] = true; renderPexelsConnection(null, '', source);
   try {
-    const status = await window.clipdockAPI.setPexelsKey(key);
-    input.value = ''; pexelsConnected = status.connected; pexelsConnecting = false; renderPexelsConnection(status);
+    const status = await stockApi(source).set(key);
+    input.value = ''; stockConnected[source] = status.connected; stockConnecting[source] = false; renderPexelsConnection(status, '', source);
     // Connected: collapse setup and return focus to its still-visible summary.
-    if (status.connected) { setPexelsSetupOpen(false); ($('pexels-setup-summary') as HTMLElement).focus(); }
+    if (status.connected) { setPexelsSetupOpen(false, source); ($(`${source}-setup-summary`) as HTMLElement).focus(); }
   } catch {
     input.value = '';
-    await retainPexelsConnection('The new Pexels API key was rejected. Your existing connection was kept.');
+    await retainPexelsConnection(`The new ${stockLabel(source)} API key was rejected. Your existing connection was kept.`, source);
   }
 }
-function clearPexelsState(): void {
-  pexelsStates.clear(); pexels = null; pexelsSearch = null; outputSession.select({ clear: 'pexels' });
-  if (provider === 'pexels') { metadataSession.reset(); searchGuard.invalidate(); searchBusy = false; restoreBrowserState(); }
+function clearPexelsState(source: StockProvider = 'pexels'): void {
+  for (const key of [...pexelsStates.keys()]) if (key.startsWith(`${source}:`)) pexelsStates.delete(key);
+  outputSession.select({ clear: source });
+  if (provider === source) { pexels = null; pexelsSearch = null; metadataSession.reset(); searchGuard.invalidate(); searchBusy = false; restoreBrowserState(); }
 }
-async function disconnectPexels(): Promise<void> {
-  pexelsConnecting = true; renderPexelsConnection(null);
+async function disconnectPexels(source: StockProvider = 'pexels'): Promise<void> {
+  stockConnecting[source] = true; renderPexelsConnection(null, '', source);
   try {
-    const status = await window.clipdockAPI.clearPexelsKey();
-    pexelsConnected = status.connected; pexelsConnecting = false;
-    if (!status.connected) clearPexelsState();
-    renderPexelsConnection(status);
+    const status = await stockApi(source).clear();
+    stockConnected[source] = status.connected; stockConnecting[source] = false;
+    if (!status.connected) clearPexelsState(source);
+    renderPexelsConnection(status, '', source);
     // Disconnected: setup is required again, so keep the disclosure open.
-    if (!status.connected) setPexelsSetupOpen(true);
+    if (!status.connected) setPexelsSetupOpen(true, source);
   } catch {
-    await retainPexelsConnection('Could not disconnect Pexels. The saved credential was not removed.');
+    await retainPexelsConnection(`Could not disconnect ${stockLabel(source)}. The saved credential was not removed.`, source);
   }
 }
 function handleYoutubeEvent(event: YoutubeEvent): void { downloadQueue.event('youtube', event); }
@@ -2232,7 +2263,7 @@ function applyRememberedPreferences(): void {
   renderCommonOutputControls();
   applyDetailOutput();
   const source = readPreference('source');
-  if (source === 'youtube' || source === 'pexels' || source === 'social' || source === 'pinterest') setProvider(source);
+  if (source === 'youtube' || source === 'pexels' || source === 'pixabay' || source === 'social' || source === 'pinterest') setProvider(source);
 }
 
 // Focus inside a menu that is closing returns to its trigger rather than to the page body.
@@ -2302,7 +2333,7 @@ function historyFilters(): { query: string; provider: HistoryProviderFilter; ava
   const availabilityRaw = (document.getElementById('history-availability-filter') as HTMLSelectElement | null)?.value ?? '';
   return {
     query,
-    provider: providerRaw === 'youtube' || providerRaw === 'pexels' || providerRaw === 'social' || providerRaw === 'pinterest' ? providerRaw : 'all',
+    provider: providerRaw === 'youtube' || providerRaw === 'pexels' || providerRaw === 'pixabay' || providerRaw === 'social' || providerRaw === 'pinterest' ? providerRaw : 'all',
     availability: availabilityRaw === 'available' || availabilityRaw === 'missing' ? availabilityRaw : 'all',
   };
 }
@@ -2565,6 +2596,7 @@ window.addEventListener('DOMContentLoaded', () => {
   clickButtonOnPlainEnter('social-url', 'load-social-btn');
   if (document.getElementById('pinterest-url') && document.getElementById('load-pinterest-btn')) clickButtonOnPlainEnter('pinterest-url', 'load-pinterest-btn');
   clickButtonOnPlainEnter('pexels-api-key', 'pexels-connect-btn');
+  clickButtonOnPlainEnter('pixabay-api-key', 'pixabay-connect-btn');
   document.getElementById('search-subtitles-btn')?.addEventListener('click', () => { void searchSubtitles(); });
   document.getElementById('subtitle-search-query')?.addEventListener('input', renderSubtitleCues);
   document.getElementById('range-full-btn')?.addEventListener('click', () => { resetSourceSelection(youtube?.id ?? '', false); renderSelection(); renderSubtitleCues(); renderRangeUi(); commitRangeEdit(); });
@@ -2616,14 +2648,14 @@ window.addEventListener('DOMContentLoaded', () => {
     for (const [id, value] of providerButtons) {
       const button = document.getElementById(id) as HTMLButtonElement | null;
       if (!button) continue;
-      button.addEventListener('click', () => setProvider(value));
-      button.addEventListener('keydown', (event) => { const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End']; if (!keys.includes(event.key)) return; const current = providerButtons.findIndex(([providerId]) => providerId === id); const target = event.key === 'Home' ? 0 : event.key === 'End' ? providerButtons.length - 1 : event.key === 'ArrowRight' || event.key === 'ArrowDown' ? (current + 1) % providerButtons.length : (current - 1 + providerButtons.length) % providerButtons.length; event.preventDefault(); const [targetId, targetProvider] = providerButtons[target]; setProvider(targetProvider); ($(targetId) as HTMLButtonElement).focus(); });
+      button.addEventListener('click', () => setProvider(value === 'pexels' ? lastStock : value));
+      button.addEventListener('keydown', (event) => { const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End']; if (!keys.includes(event.key)) return; const current = providerButtons.findIndex(([providerId]) => providerId === id); const target = event.key === 'Home' ? 0 : event.key === 'End' ? providerButtons.length - 1 : event.key === 'ArrowRight' || event.key === 'ArrowDown' ? (current + 1) % providerButtons.length : (current - 1 + providerButtons.length) % providerButtons.length; event.preventDefault(); const [targetId, targetProvider] = providerButtons[target]; setProvider(targetProvider === 'pexels' ? lastStock : targetProvider); ($(targetId) as HTMLButtonElement).focus(); });
     }
-    $('pexels-photo-kind').addEventListener('click', () => setPexelsKind('photo')); $('pexels-video-kind').addEventListener('click', () => { void setPexelsKind('video'); }); $('pexels-connect-btn').addEventListener('click', () => { void connectPexels(); }); $('pexels-disconnect-btn').addEventListener('click', () => { void disconnectPexels(); }); $('pexels-key-link').addEventListener('click', () => { void window.clipdockAPI.openPexelsExternal('https://www.pexels.com/api/'); }); $('pexels-link').addEventListener('click', () => { void window.clipdockAPI.openPexelsExternal('https://www.pexels.com/'); });
+    $('pexels-photo-kind').addEventListener('click', () => setPexelsKind('photo')); $('pexels-video-kind').addEventListener('click', () => { void setPexelsKind('video'); }); for (const source of ['pexels', 'pixabay'] as const) { $(`stock-source-${source}`).addEventListener('click', () => setProvider(source)); $(`${source}-connect-btn`).addEventListener('click', () => { void connectPexels(source); }); $(`${source}-disconnect-btn`).addEventListener('click', () => { void disconnectPexels(source); }); $(`${source}-key-link`).addEventListener('click', () => { void stockApi(source).open(stockApi(source).keyPage); }); } $('pexels-link').addEventListener('click', () => { const source = provider === 'pixabay' ? 'pixabay' : 'pexels'; void stockApi(source).open(stockApi(source).home); });
     $('load-social-btn').addEventListener('click', () => { clearResultSelection(); void loadSocial(); });
     $('social-url').addEventListener('input', () => { onLinkInput(); socialPlatform = detectSocialPlatform(($('social-url') as HTMLInputElement).value); renderSocialPlatform(socialPlatform); });
-    window.clipdockAPI.onPexelsEvent(handlePexelsEvent); window.clipdockAPI.onSocialEvent(handleSocialEvent); window.clipdockAPI.onPinterestEvent?.(handlePinterestEvent);
-    void window.clipdockAPI.pexelsKeyStatus().then((status) => { pexelsConnected = status.connected; renderPexelsConnection(status); }).catch(() => { renderPexelsConnection(null, 'Could not check Pexels connection.'); setPexelsSetupOpen(true); });
+    window.clipdockAPI.onPexelsEvent(handlePexelsEvent); window.clipdockAPI.onPixabayEvent(handlePixabayEvent); window.clipdockAPI.onSocialEvent(handleSocialEvent); window.clipdockAPI.onPinterestEvent?.(handlePinterestEvent);
+    for (const source of ['pexels', 'pixabay'] as const) void stockApi(source).status().then((status) => { stockConnected[source] = status.connected; renderPexelsConnection(status, '', source); }).catch(() => { renderPexelsConnection(null, `Could not check ${stockLabel(source)} connection.`, source); setPexelsSetupOpen(true, source); });
   }
   document.getElementById('open-workspace-btn')?.addEventListener('click', () => { void openWorkspace(); });
   document.getElementById('open-downloads-folder-btn')?.addEventListener('click', () => { void openWorkspace(); });

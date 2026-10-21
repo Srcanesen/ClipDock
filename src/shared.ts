@@ -60,8 +60,8 @@ export type YoutubeChapter = { start: number; end: number; title: string };
 export type SubtitleCue = { start: number; end: number; text: string };
 export type YoutubeMetadata = { id: string; title: string; duration: number | null; channel: string | null; thumbnailUrl: string | null; heights: number[]; formatSummary: string[]; chapters: YoutubeChapter[] };
 export type HistorySelection = { start: number; end: number; label: string } | null;
-export type HistoryAutomation = { provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; selection: HistorySelection; chapters: YoutubeChapter[] };
-export type HistoryRecord = { id: string; provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; available: boolean; /** Optional companion subtitle persisted by main; safe metadata only, never a path. */ subtitle?: { fileName: string; bytes: number; available: boolean }; /** Main-enriched opaque cardId bound for native drag. Present only when the record's file resolves and a card is registered; the absolute path never crosses IPC. */ cardId?: string };
+export type HistoryAutomation = { provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; selection: HistorySelection; chapters: YoutubeChapter[] };
+export type HistoryRecord = { id: string; provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; available: boolean; /** Optional companion subtitle persisted by main; safe metadata only, never a path. */ subtitle?: { fileName: string; bytes: number; available: boolean }; /** Main-enriched opaque cardId bound for native drag. Present only when the record's file resolves and a card is registered; the absolute path never crosses IPC. */ cardId?: string };
 export type YoutubeSearchItem = { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; channelVerified: boolean };
 export type ThumbnailDiagnostic = { failed: number; total: number; reason: string; node: string };
 export type YoutubeSearchPage = { query: string; page: number; pageSize: 10; results: YoutubeSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: ThumbnailDiagnostic };
@@ -129,6 +129,17 @@ export interface ClipdockApi {
   cancelPexelsRequests(): Promise<boolean>;
   onPexelsEvent(callback: (event: PexelsEvent) => void): () => void;
   openPexelsExternal(url: string): Promise<boolean>;
+  /** Pixabay is video-only; its methods mirror Pexels and reject the photo kind. */
+  pixabayKeyStatus(): Promise<PexelsConnectionStatus>;
+  setPixabayKey(key: string): Promise<PexelsConnectionStatus>;
+  clearPixabayKey(): Promise<PexelsConnectionStatus>;
+  searchPixabay(kind: 'video', query: string, page: number): Promise<PexelsPage>;
+  loadPixabay(kind: 'video', id: number): Promise<PexelsAsset>;
+  downloadPixabay(asset: PexelsAsset, fileId: string, profile: MediaProfile, jobId: string): Promise<DownloadArtifact & { warning?: string }>;
+  cancelPixabay(jobId: string): Promise<boolean>;
+  cancelPixabayRequests(): Promise<boolean>;
+  onPixabayEvent(callback: (event: PexelsEvent) => void): () => void;
+  openPixabayExternal(url: string): Promise<boolean>;
   /** Open a validated YouTube watch URL in the system browser. */
   openYoutubeExternal(videoId: string, startSeconds?: number): Promise<boolean>;
   /** Create the single main-owned YouTube player over validated renderer DIP bounds. */

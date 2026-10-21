@@ -46,7 +46,7 @@ export interface Transfer {
   importToMediaPool(filePath: string, targetBin: TargetBin): Promise<TransferResult>;
   addToTimeline(filePath: string, targetBin: TargetBin, placement: TimelinePlacement, automation?: TimelineAutomation): Promise<TransferResult>;
 }
-export type TimelineAutomation = { provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; selection: { start: number; end: number; label: string } | null; chapters: Array<{ start: number; end: number; title: string }> };
+export type TimelineAutomation = { provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; selection: { start: number; end: number; label: string } | null; chapters: Array<{ start: number; end: number; title: string }> };
 
 // Duck-typed Resolve scripting surface (mirrors status-provider's approach: the
 // native module returns plain objects; we cast narrowly where we call).
@@ -329,7 +329,7 @@ async function applyAutomation(project: unknown, timeline: unknown, clip: unknow
   if (changed) return 'destination-changed';
   if (!automation) return null;
   let warning: AutomationWarning = null;
-  const colorName = automation.provider === 'pexels' ? 'Teal' : automation.provider === 'social' ? 'Blue' : automation.selection ? 'Yellow' : 'Orange';
+  const colorName = automation.provider === 'pexels' ? 'Teal' : automation.provider === 'pixabay' ? 'Green' : automation.provider === 'social' ? 'Blue' : automation.selection ? 'Yellow' : 'Orange';
   try { const color = (clip as ClipLike).SetClipColor; if (typeof color !== 'function' || await color.call(clip, colorName) === false) warning = 'unavailable'; } catch { warning = 'unavailable'; }
   if (automation.provider !== 'youtube' || automation.chapters.length === 0) return await check() ? 'destination-changed' : warning;
   // AddMarker takes Resolve's marker palette, which lacks clip colours such as Orange.

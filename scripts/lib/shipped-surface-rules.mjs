@@ -155,7 +155,7 @@ export const SHIPPED_SURFACE_RULES = [
         const html = read(root, file);
         const policy = html.match(/<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]+)"/)?.[1] ?? '';
         const images = policy.split(';').map(value => value.trim()).filter(value => value.startsWith('img-src '));
-        requireInvariant(images.length === 1 && images[0] === "img-src 'self' data: https://i.ytimg.com https://images.pexels.com https://i.pinimg.com", `${file}: unexpected image CSP`);
+        requireInvariant(images.length === 1 && images[0] === "img-src 'self' data: https://i.ytimg.com https://images.pexels.com https://i.pinimg.com https://cdn.pixabay.com", `${file}: unexpected image CSP`);
         const ids = [...html.matchAll(/\bid\s*=\s*["']([^"']+)["']/g)].map((match) => match[1]);
         requireInvariant(new Set(ids).size === ids.length, `${file}: duplicate id`);
         for (const id of REQUIRED_HTML_IDS_FLAT) requireInvariant(ids.includes(id), `${file}: missing #${id}`);

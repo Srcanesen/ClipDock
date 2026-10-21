@@ -32,7 +32,9 @@ import { YtdlpWorker } from './ytdlp';
 import { GalleryDlWorker } from './gallerydl';
 import { createMediaPrep } from './media-prep';
 import { PexelsClient, safePexelsExternal } from './pexels';
-import { MacKeychainPexelsCredentialStore, PexelsCredentialStore, type PexelsCredentialPersistence } from './pexels-credential';
+import { PixabayClient, safePixabayExternal } from './pixabay';
+import type { StockClient } from './stock';
+import { MacKeychainPexelsCredentialStore, PexelsCredentialStore, PEXELS_CREDENTIAL, PIXABAY_CREDENTIAL, type CredentialSource, type PexelsCredentialPersistence } from './pexels-credential';
 import { cleanupWorkspaceAsync, inspectWorkspaceAsync } from './workspace';
 import { DownloadHistory, safeHistorySource } from './history';
 import { MEDIA_EXTENSIONS } from './media-extensions';
@@ -115,9 +117,14 @@ function createSensitiveIpcHandler(requireSender: (event: unknown) => void, oper
   return sensitiveHandler(requireSender, (event, ...args) => engineHost.run(() => operation(event, ...args), readiness));
 }
 
-const pexelsCredentials: PexelsCredentialPersistence = process.platform === 'darwin'
-  ? new MacKeychainPexelsCredentialStore()
-  : new PexelsCredentialStore(path.join(app.getPath('userData'), 'pexels-credential.json'), safeStorage);
+type StockProvider = 'pexels' | 'pixabay';
+const credentialStore = (source: CredentialSource, file: string): PexelsCredentialPersistence => process.platform === 'darwin'
+  ? new MacKeychainPexelsCredentialStore(undefined, undefined, source)
+  : new PexelsCredentialStore(path.join(app.getPath('userData'), file), safeStorage);
+const stockCredentials: Record<StockProvider, PexelsCredentialPersistence> = {
+  pexels: credentialStore(PEXELS_CREDENTIAL, 'pexels-credential.json'),
+  pixabay: credentialStore(PIXABAY_CREDENTIAL, 'pixabay-credential.json'),
+};
 let currentProjectName: string | null = null;
 let currentProjectReadAt: number | null = null;
 const busy = () => engineHost.isBusy();
@@ -165,6 +172,7 @@ const engineHost = createEngineHost({
     youtube: (engines, sessionDir) => new YtdlpWorker(engines.ytdlpPath, undefined, undefined, { ...engines, sessionDir }),
     pinterest: (engines, sessionDir) => new GalleryDlWorker(engines.galleryDlPath, undefined, { ffmpegPath: engines.ffmpegPath, sessionDir }),
     pexels: sessionDir => new PexelsClient(sessionDir),
+    pixabay: sessionDir => new PixabayClient(sessionDir),
     mediaPrep: engines => createMediaPrep(engines),
   },
   registerSubtitle: (filePath, fileName) => ({cardId: ledger.registerSubtitle(filePath, engineHost.operationRoot()), fileName}),
@@ -173,9 +181,10 @@ const engineHost = createEngineHost({
     social: () => sendProviderEvent(event, IPC_CHANNELS.socialEvent, update),
     pinterest: () => sendProviderEvent(event, IPC_CHANNELS.pinterestEvent, update),
     pexels: () => sendProviderEvent(event, IPC_CHANNELS.pexelsEvent, update),
+    pixabay: () => sendProviderEvent(event, IPC_CHANNELS.pixabayEvent, update),
   })[provider](),
-  restoreCredential: restorePexelsCredential,
-  disposeCredential: () => pexelsCredentials.dispose?.(),
+  restoreCredential: restoreStockCredential,
+  disposeCredential: async () => { await Promise.all([stockCredentials.pexels.dispose?.(), stockCredentials.pixabay.dispose?.()]); },
 });
 
 // History can consult the root while loading legacy records; capture it first.
@@ -247,7 +256,7 @@ function registerTransferEventHandlers(): void {
 /** Descriptor facts belong to Electron; worker roles and admission belong to the host. */
 function registerProviderHandlers(): void {
   const youtube = engineHost.provider('youtube'), social = engineHost.provider('social');
-  const pinterest = engineHost.provider('pinterest'), pexels = engineHost.provider('pexels');
+  const pinterest = engineHost.provider('pinterest'), pexels = engineHost.provider('pexels'), pixabay = engineHost.provider('pixabay');
   const providers = [
     {cancel: IPC_CHANNELS.cancelYoutube, host: youtube, routes: [
       [IPC_CHANNELS.searchYoutube, (_event: unknown, query: unknown, page: unknown) => youtube.search(query, page)],
@@ -271,6 +280,12 @@ function registerProviderHandlers(): void {
       [IPC_CHANNELS.loadPexels, (_event: unknown, kind: unknown, id: unknown) => pexels.load(kind, id)],
       [IPC_CHANNELS.downloadPexels, pexels.download],
       [IPC_CHANNELS.cancelPexelsRequests, () => pexels.abortRequests()],
+    ]},
+    {cancel: IPC_CHANNELS.cancelPixabay, host: pixabay, routes: [
+      [IPC_CHANNELS.searchPixabay, (_event: unknown, kind: unknown, query: unknown, page: unknown) => pixabay.search(kind, query, page)],
+      [IPC_CHANNELS.loadPixabay, (_event: unknown, kind: unknown, id: unknown) => pixabay.load(kind, id)],
+      [IPC_CHANNELS.downloadPixabay, pixabay.download],
+      [IPC_CHANNELS.cancelPixabayRequests, () => pixabay.abortRequests()],
     ]},
   ] satisfies Array<{cancel: string; host: {cancel(jobId: unknown): boolean}; routes: Array<[string, (event: unknown, ...args: unknown[]) => unknown]>}>;
   for (const provider of providers) {
@@ -364,34 +379,51 @@ function registerYoutubePreviewHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.setYoutubePreviewBounds, async (event, bounds: unknown) => { requireClipdockSender(event); return applyYoutubePreviewBounds(bounds); });
 }
 
-async function restorePexelsCredential(pexels: Pick<PexelsClient, 'restoreStatus' | 'restoreKey'>): Promise<void> {
-  const restored = await pexelsCredentials.load();
-  if (!restored.key) { pexels.restoreStatus(restored.message); return; }
-  if (pexels.restoreKey(restored.key, true, restored.message)) return;
+async function restoreStockCredential(provider: StockProvider, client: Pick<StockClient, 'restoreStatus' | 'restoreKey'>): Promise<void> {
+  const credentials = stockCredentials[provider];
+  const restored = await credentials.load();
+  if (!restored.key) { client.restoreStatus(restored.message); return; }
+  if (client.restoreKey(restored.key, true, restored.message)) return;
   try {
-    await pexelsCredentials.clear();
-    pexels.restoreStatus('Disconnected. Saved credential was invalid and removed.');
+    await credentials.clear();
+    client.restoreStatus('Disconnected. Saved credential was invalid and removed.');
   } catch {
-    pexels.restoreStatus('Disconnected. Saved credential was invalid but could not be removed.');
+    client.restoreStatus('Disconnected. Saved credential was invalid but could not be removed.');
   }
 }
 
-function registerPexelsHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.pexelsKeyStatus, createSensitiveIpcHandler(requireTrustedSender, () => engineHost.credential(pexels => pexels.status())));
-  ipcMain.handle(IPC_CHANNELS.setPexelsKey, createSensitiveIpcHandler(requireTrustedSender, (_event, key: unknown) => engineHost.credential(async pexels => {
-    const validated = await pexels.validateKey(key);
-    const previous = pexels.status();
-    const persisted = await pexelsCredentials.save(validated).catch(() => false);
-    if (!persisted && previous.connected && previous.persisted) throw new Error('Could not save the new Pexels credential securely. Your existing connection was kept.');
-    return pexels.setKey(validated, persisted);
-  })));
-  ipcMain.handle(IPC_CHANNELS.clearPexelsKey, createSensitiveIpcHandler(requireTrustedSender, () => engineHost.credential(async pexels => {
-    try { await pexelsCredentials.clear(); }
-    catch { throw new Error('Could not disconnect Pexels because the saved credential was not removed.'); }
-    pexels.clearKey();
-    return pexels.status();
-  })));
-  ipcMain.handle(IPC_CHANNELS.openPexelsExternal, createSensitiveIpcHandler(requireTrustedSender, async (_event, url: unknown) => { const safe = safePexelsExternal(url); if (!safe) return false; try { await shell.openExternal(safe); return true; } catch { return false; } }));
+/** Each stock provider has its own key, Keychain item and IPC channels; the flows are identical. */
+function stockHandlers(provider: StockProvider, label: string, safeExternal: (url: unknown) => string | null) {
+  const credentials = stockCredentials[provider];
+  return {
+    status: createSensitiveIpcHandler(requireTrustedSender, () => engineHost.credential(provider, client => client.status())),
+    set: createSensitiveIpcHandler(requireTrustedSender, (_event, key: unknown) => engineHost.credential(provider, async client => {
+      const validated = await client.validateKey(key);
+      const previous = client.status();
+      const persisted = await credentials.save(validated).catch(() => false);
+      if (!persisted && previous.connected && previous.persisted) throw new Error(`Could not save the new ${label} credential securely. Your existing connection was kept.`);
+      return client.setKey(validated, persisted);
+    })),
+    clear: createSensitiveIpcHandler(requireTrustedSender, () => engineHost.credential(provider, async client => {
+      try { await credentials.clear(); }
+      catch { throw new Error(`Could not disconnect ${label} because the saved credential was not removed.`); }
+      client.clearKey();
+      return client.status();
+    })),
+    open: createSensitiveIpcHandler(requireTrustedSender, async (_event, url: unknown) => { const safe = safeExternal(url); if (!safe) return false; try { await shell.openExternal(safe); return true; } catch { return false; } }),
+  };
+}
+
+function registerStockHandlers(): void {
+  const pexels = stockHandlers('pexels', 'Pexels', safePexelsExternal), pixabay = stockHandlers('pixabay', 'Pixabay', safePixabayExternal);
+  ipcMain.handle(IPC_CHANNELS.pexelsKeyStatus, pexels.status);
+  ipcMain.handle(IPC_CHANNELS.setPexelsKey, pexels.set);
+  ipcMain.handle(IPC_CHANNELS.clearPexelsKey, pexels.clear);
+  ipcMain.handle(IPC_CHANNELS.openPexelsExternal, pexels.open);
+  ipcMain.handle(IPC_CHANNELS.pixabayKeyStatus, pixabay.status);
+  ipcMain.handle(IPC_CHANNELS.setPixabayKey, pixabay.set);
+  ipcMain.handle(IPC_CHANNELS.clearPixabayKey, pixabay.clear);
+  ipcMain.handle(IPC_CHANNELS.openPixabayExternal, pixabay.open);
 }
 
 function registerWorkspaceHandlers(): void {
@@ -534,7 +566,7 @@ app.whenReady().then(() => {
       registerYoutubePreviewHandlers();
       registerTransferEventHandlers();
       registerProviderHandlers();
-      registerPexelsHandlers();
+      registerStockHandlers();
       registerWorkspaceHandlers();
       registerHistoryHandlers();
       registerFolderHandlers();

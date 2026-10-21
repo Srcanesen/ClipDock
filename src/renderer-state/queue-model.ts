@@ -1,4 +1,4 @@
-import { normalizeSourceOutput, resolvePexelsRendition, renditionHeight, resolveSourceSelection, transitionSourceSelection, type OutputDefaults } from './output-model';
+import { isStock, normalizeSourceOutput, resolvePexelsRendition, renditionHeight, resolveSourceSelection, transitionSourceSelection, type OutputDefaults } from './output-model';
 
 export type TargetBin = 'active' | 'clipdock';
 export type TimelinePlacement = 'end' | 'playhead';
@@ -11,7 +11,7 @@ export type YoutubeSelection = { start: number; end: number; label: string } | n
 export type DownloadOptions = { mediaMode: MediaMode; audioFormat: AudioFormat; subtitles: boolean; subtitleLanguage: SubtitleLanguage; selection?: YoutubeSelection };
 export type DownloadIntent = 'download' | 'import' | 'playhead' | 'end';
 export type SocialPlatform = 'instagram' | 'twitter' | 'facebook';
-export type Provider = 'youtube' | 'pexels' | 'social' | 'pinterest';
+export type Provider = 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest';
 export type PinterestMediaKind = 'image' | 'video';
 export interface PinterestItem { index: number; kind: PinterestMediaKind; title: string; creator: string | null; extension: string; }
 export interface PinterestMetadata { pinId: string; source: string; title: string; creator: string | null; kind: PinterestMediaKind | 'carousel'; items: PinterestItem[]; thumbnailUrl: string | null; }
@@ -61,11 +61,11 @@ export interface QueueItem {
   handingOff?: boolean;
 }
 
-// Key format is provider identity: `provider:id` except Pexels which includes kind
+// Key format is provider identity: `provider:id` except stock sources which include kind
 // (`pexels:kind:id`) so photo/video pages cannot move a selection onto the wrong kind.
 // This string is the identity for stagedSelections and cardRendererStates.
 export function resultKeyFor(providerValue: Provider, id: string, kind: PexelsKind = 'video'): string {
-  return `${providerValue}:${providerValue === 'pexels' ? `${kind}:` : ''}${id}`;
+  return `${providerValue}:${isStock(providerValue) ? `${kind}:` : ''}${id}`;
 }
 
 function fingerprint(
@@ -168,11 +168,11 @@ export class DownloadQueue {
       const item: QueueItem = { queueId: this.adapter.newId(), jobId: this.adapter.newId(), provider: 'social', platform: metadata.platform, url: metadata.source, videoId: metadata.id, title: metadata.title, channel: metadata.channel, thumbnailDataUrl: metadata.thumbnailDataUrl ?? thumbnailDataUrl, quality: settings.quality as YoutubeQuality, profile: settings.profile, options: { mediaMode: 'video', audioFormat: 'm4a', subtitles: false, subtitleLanguage: 'en' }, targetBin: settings.targetBin, placement: placementForIntent(settings.intent), intent: settings.intent, status: 'queued', percent: null, speedBytesPerSecond: null, etaSeconds: null, message: 'Queued.' };
       insert(item); return;
     }
-    if (provider === 'pexels' && 'files' in metadata) {
+    if (isStock(provider) && 'files' in metadata) {
       const file = resolvePexelsRendition(metadata.kind, metadata.files, settings.quality);
-      if (!file) throw new Error('Pexels returned no supported source rendition.');
+      if (!file) throw new Error(`${provider === 'pixabay' ? 'Pixabay' : 'Pexels'} returned no supported source rendition.`);
       const height = renditionHeight(file);
-      const item: QueueItem = { queueId: this.adapter.newId(), jobId: this.adapter.newId(), provider: 'pexels', pexelsAsset: metadata, pexelsFileId: file.id, url: metadata.sourceUrl, videoId: String(metadata.id), title: metadata.title, channel: metadata.creator, thumbnailDataUrl: metadata.thumbnailUrl ?? thumbnailDataUrl, quality: (metadata.kind === 'photo' ? 'original' : height ? `${height}p` : 'best') as QueueItem['quality'], profile: metadata.kind === 'photo' ? 'original' : settings.profile, options: { mediaMode: 'video', audioFormat: 'm4a', subtitles: false, subtitleLanguage: 'en' }, targetBin: settings.targetBin, placement: placementForIntent(settings.intent), intent: settings.intent, status: 'queued', percent: null, speedBytesPerSecond: null, etaSeconds: null, message: 'Queued.' };
+      const item: QueueItem = { queueId: this.adapter.newId(), jobId: this.adapter.newId(), provider, pexelsAsset: metadata, pexelsFileId: file.id, url: metadata.sourceUrl, videoId: String(metadata.id), title: metadata.title, channel: metadata.creator, thumbnailDataUrl: metadata.thumbnailUrl ?? thumbnailDataUrl, quality: (metadata.kind === 'photo' ? 'original' : height ? `${height}p` : 'best') as QueueItem['quality'], profile: metadata.kind === 'photo' ? 'original' : settings.profile, options: { mediaMode: 'video', audioFormat: 'm4a', subtitles: false, subtitleLanguage: 'en' }, targetBin: settings.targetBin, placement: placementForIntent(settings.intent), intent: settings.intent, status: 'queued', percent: null, speedBytesPerSecond: null, etaSeconds: null, message: 'Queued.' };
       insert(item); return;
     }
     if (provider === 'pinterest' && 'items' in metadata) {
@@ -259,7 +259,7 @@ export class DownloadQueue {
       if (provider !== 'youtube') { item.cardId = event.cardId; item.fileName = event.fileName; }
       item.subtitle = event.subtitle; item.warning = event.warning;
     }
-    if (event.state !== 'completed' || provider === 'pexels') item.message = event.message;
+    if (event.state !== 'completed' || isStock(provider)) item.message = event.message;
     item.percent = Number.isFinite(event.percent) ? Math.max(0, Math.min(100, event.percent!)) : null;
     item.speedBytesPerSecond = item.status === 'downloading' && Number.isFinite(event.speedBytesPerSecond) && event.speedBytesPerSecond! >= 0 ? event.speedBytesPerSecond! : null;
     item.etaSeconds = item.status === 'downloading' && Number.isFinite(event.etaSeconds) && event.etaSeconds! >= 0 ? Math.min(604800, event.etaSeconds!) : null;

@@ -6,20 +6,22 @@ import { awaitEngineShutdown } from './provider-platform';
 import { createPinterestMetadataSnapshotStore, createProviderDownloadHandlers, ManagedOperations, type ProviderDownloadDependencies, type ProviderDownloadHandlers, type discoverEnginePaths } from './main-process';
 import type { YtdlpWorker } from './ytdlp';
 import type { GalleryDlWorker } from './gallerydl';
-import type { PexelsClient } from './pexels';
+import type { StockClient } from './stock';
 import type { createMediaPrep } from './media-prep';
 
 type Engines = Awaited<ReturnType<typeof discoverEnginePaths>>;
 type YoutubeWorker = Pick<YtdlpWorker, 'search' | 'metadata' | 'prefetchMetadata' | 'metadataSocial' | 'thumbnailSocial' | 'subtitles' | 'download' | 'downloadSocial' | 'cancel' | 'isActive' | 'dispose' | 'setSessionDir'>;
 type PinterestWorker = Pick<GalleryDlWorker, 'search' | 'metadata' | 'download' | 'cancel' | 'isActive' | 'dispose' | 'setSessionDir'>;
-type PexelsWorker = Pick<PexelsClient, 'search' | 'load' | 'download' | 'cancel' | 'isDownloading' | 'dispose' | 'setRoot' | 'abortApiRequests' | 'status' | 'validateKey' | 'setKey' | 'clearKey' | 'restoreKey' | 'restoreStatus'>;
+type StockWorker = Pick<StockClient, 'search' | 'load' | 'download' | 'cancel' | 'isDownloading' | 'dispose' | 'setRoot' | 'abortApiRequests' | 'status' | 'validateKey' | 'setKey' | 'clearKey' | 'restoreKey' | 'restoreStatus'>;
 type MediaPrep = ReturnType<typeof createMediaPrep>;
-type ProviderName = 'youtube' | 'social' | 'pinterest' | 'pexels';
+type StockProvider = 'pexels' | 'pixabay';
+type ProviderName = 'youtube' | 'social' | 'pinterest' | StockProvider;
 interface LifecycleWorker { isActive(): boolean; dispose(): void | Promise<void>; }
 export interface EngineWorkerFactory {
   youtube(engines: Engines, sessionDir: string): YoutubeWorker;
   pinterest(engines: Engines, sessionDir: string): PinterestWorker;
-  pexels(sessionDir: string): PexelsWorker;
+  pexels(sessionDir: string): StockWorker;
+  pixabay(sessionDir: string): StockWorker;
   mediaPrep(engines: Engines): MediaPrep;
 }
 interface EngineHostDependencies {
@@ -29,7 +31,7 @@ interface EngineHostDependencies {
   completion: ProviderDownloadDependencies['completion'];
   registerSubtitle: ProviderDownloadDependencies['registerSubtitle'];
   emit(provider: ProviderName, event: unknown, update: unknown): void;
-  restoreCredential(client: PexelsWorker): Promise<void>;
+  restoreCredential(provider: StockProvider, client: StockWorker): Promise<void>;
   disposeCredential?(): void | Promise<void>;
 }
 const shuttingDown = () => new Error('Download services are shutting down.');
@@ -52,7 +54,8 @@ export function createEngineHost(deps: EngineHostDependencies) {
   let downloads: ProviderDownloadHandlers | undefined;
   let engines: Engines;
   let workers: ReturnType<typeof createWorkers>;
-  let credentialRestore = Promise.resolve();
+  // One restore per provider: a slow Keychain read for one never delays the other.
+  let credentialRestore: Record<StockProvider, Promise<void>> = {pexels: Promise.resolve(), pixabay: Promise.resolve()};
   let restoringCredential = false;
   let credentialShutdown: Promise<void> | undefined;
   let finish!: () => void;
@@ -84,6 +87,7 @@ export function createEngineHost(deps: EngineHostDependencies) {
       next => workers.social.setSessionDir(next.providerPath('social')),
       next => workers.pinterest.setSessionDir(next.providerPath('pinterest')),
       next => workers.pexels.setRoot(next.providerPath('pexels')),
+      next => workers.pixabay.setRoot(next.providerPath('pixabay')),
     ], persist);
     folderError = undefined;
     displayedFallback = root.verify();
@@ -100,12 +104,15 @@ export function createEngineHost(deps: EngineHostDependencies) {
     };
     const mediaPrep = deps.workers.mediaPrep(engines);
     lifecycle.push(mediaPrep);
-    const pexels = deps.workers.pexels(path.join(deps.runtimeRoot, 'pexels'));
-    lifecycle.splice(lifecycle.length - 1, 0, {isActive: () => pexels.isDownloading(), dispose: () => {
-      pexels.abortApiRequests?.();
-      return restoringCredential || credentials.size ? drainCredentials().then(() => pexels.dispose()) : pexels.dispose();
-    }});
-    return {...roles, mediaPrep, pexels};
+    const stock = (name: StockProvider) => {
+      const client = deps.workers[name](path.join(deps.runtimeRoot, name));
+      lifecycle.splice(lifecycle.length - 1, 0, {isActive: () => client.isDownloading(), dispose: () => {
+        client.abortApiRequests?.();
+        return restoringCredential || credentials.size ? drainCredentials().then(() => client.dispose()) : client.dispose();
+      }});
+      return client;
+    };
+    return {...roles, mediaPrep, pexels: stock('pexels'), pixabay: stock('pixabay')};
   }
   async function start(discovered: Promise<Engines>): Promise<void> {
     if (started || disposed) return;
@@ -122,9 +129,12 @@ export function createEngineHost(deps: EngineHostDependencies) {
         social: {worker: workers.social, emit: (event, update) => deps.emit('social', event, update)},
         pinterest: {worker: workers.pinterest, snapshots, emit: (event, update) => deps.emit('pinterest', event, update)},
         pexels: {worker: workers.pexels, emit: (event, update) => deps.emit('pexels', event, update)},
+        pixabay: {worker: workers.pixabay, emit: (event, update) => deps.emit('pixabay', event, update)},
       });
       restoringCredential = true;
-      credentialRestore = deps.restoreCredential(workers.pexels).catch(() => { /* Status remains disconnected. */ }).finally(() => { restoringCredential = false; });
+      const restore = (name: StockProvider) => deps.restoreCredential(name, workers[name]).catch(() => { /* Status remains disconnected. */ });
+      credentialRestore = {pexels: restore('pexels'), pixabay: restore('pixabay')};
+      void Promise.all(Object.values(credentialRestore)).finally(() => { restoringCredential = false; });
     } catch (error) {
       startupError = new Error(`Download services could not start: ${error instanceof Error ? error.message : 'Initialization failed.'}`);
     } finally { finish(); }
@@ -132,15 +142,15 @@ export function createEngineHost(deps: EngineHostDependencies) {
   function drainCredentials(): Promise<void> {
     return credentialShutdown ??= (async () => {
       await deps.disposeCredential?.();
-      await credentialRestore;
+      await Promise.all(Object.values(credentialRestore));
       await Promise.allSettled([...credentials]);
     })();
   }
-  function credential<T>(operation: (client: PexelsWorker) => T | Promise<T>): Promise<T> {
+  function credential<T>(provider: StockProvider, operation: (client: StockWorker) => T | Promise<T>): Promise<T> {
     const pending = run(async () => {
-      await credentialRestore;
+      await credentialRestore[provider];
       assertActive();
-      return operation(workers.pexels);
+      return operation(workers[provider]);
     });
     credentials.add(pending);
     void pending.finally(() => credentials.delete(pending)).catch(() => {});
@@ -183,11 +193,17 @@ export function createEngineHost(deps: EngineHostDependencies) {
       await ready();
       const root = activeRoot();
       if (folderError) throw new Error(folderError);
-      // The four handlers differ only in arity; all accept untrusted IPC values.
+      // The handlers differ only in arity; all accept untrusted IPC values.
       const handler: (event: unknown, ...args: unknown[]) => ReturnType<ProviderDownloadHandlers[ProviderName]> = downloads![name];
       return operationRoot.run(root, () => handler(args[0], ...args.slice(1)));
     });
   }
+  const stockProvider = <N extends StockProvider>(name: N) => ({
+    search: (kind: unknown, query: unknown, page: unknown) => run(() => workers[name].search(kind, query, page)),
+    load: (kind: unknown, id: unknown) => run(() => workers[name].load(kind, id)),
+    abortRequests: () => run(() => workers[name].abortApiRequests()),
+    download: download(name), cancel,
+  });
   const providers = {
     youtube: {
       search: (query: unknown, page: unknown) => run(() => workers.youtubeSearch.search(query, page)),
@@ -206,12 +222,8 @@ export function createEngineHost(deps: EngineHostDependencies) {
       load: (url: unknown) => run(async () => { const metadata = await workers.pinterestMetadata.metadata(url); snapshots.remember(metadata); return metadata; }),
       download: download('pinterest'), cancel,
     },
-    pexels: {
-      search: (kind: unknown, query: unknown, page: unknown) => run(() => workers.pexels.search(kind, query, page)),
-      load: (kind: unknown, id: unknown) => run(() => workers.pexels.load(kind, id)),
-      abortRequests: () => run(() => workers.pexels.abortApiRequests()),
-      download: download('pexels'), cancel,
-    },
+    pexels: stockProvider('pexels'),
+    pixabay: stockProvider('pixabay'),
   };
   return {
     start, ready, run, activeRoot, changeFolder,

@@ -65,14 +65,14 @@ export class ManagedRoot {
       return safe && this.contains(safe) ? safe : null;
     } catch { return null; }
   }
-  providerPath(name: 'youtube' | 'social' | 'pinterest' | 'pexels'): string {
+  providerPath(name: 'youtube' | 'social' | 'pinterest' | 'pexels' | 'pixabay'): string {
     const provider = join(this.verify(), name);
     if (canonicalRoot(provider) !== provider) throw failure();
     return provider;
   }
   /** Recreate pruned provider directories without recapturing the managed root's identity. */
   ensureProviderDirectories(): void {
-    for (const name of ['youtube', 'social', 'pinterest', 'pexels'] as const) {
+    for (const name of ['youtube', 'social', 'pinterest', 'pexels', 'pixabay'] as const) {
       ensureDirectory(AnchoredDir.capture(this.verify(), this), name);
     }
     this.verify();
@@ -81,7 +81,7 @@ export class ManagedRoot {
     const root = ManagedRoot.capture(claim ? folder : prepareDirectory(folder).verify());
     claim?.(root);
     root.ensureProviderDirectories();
-    for (const name of ['youtube', 'social', 'pinterest', 'pexels'] as const) {
+    for (const name of ['youtube', 'social', 'pinterest', 'pexels', 'pixabay'] as const) {
       const directory = root.providerPath(name);
       // Write and re-check a byte: a volume whose file identity changes on write cannot be managed.
       const probe = openExclusive(AnchoredDir.capture(directory, root), `.clipdock-write-test-${randomUUID()}.tmp`);
@@ -100,7 +100,7 @@ export class ManagedRootSelection {
   current(): ManagedRoot { if (this.transitionFailed || !this.active) throw failure(); this.active.verify(); return this.active; }
   change(next: ManagedRoot, consumers: ReadonlyArray<(root: ManagedRoot) => void>, persist: (root: ManagedRoot) => void = () => {}): void {
     next.verify();
-    for (const name of ['youtube', 'social', 'pinterest', 'pexels'] as const) next.providerPath(name);
+    for (const name of ['youtube', 'social', 'pinterest', 'pexels', 'pixabay'] as const) next.providerPath(name);
     const previous = this.active;
     const attempted: Array<(root: ManagedRoot) => void> = [];
     try {

@@ -4,7 +4,7 @@ Domain terms used in code, tests and reviews. Use these names for modules and in
 
 ## Results and output
 
-**Result**: one item returned by a provider search or a pasted URL (YouTube, social, Pinterest, Pexels).
+**Result**: one item returned by a provider search or a pasted URL (YouTube, social, Pinterest, Pexels, Pixabay).
 
 **Staged selection**: a result the user has picked for download but not yet queued.
 
@@ -20,7 +20,7 @@ Domain terms used in code, tests and reviews. Use these names for modules and in
 
 ## Download jobs
 
-**Provider**: a media source with its own engine: yt-dlp (YouTube and social), gallery-dl (Pinterest), the Pexels API.
+**Provider**: a media source with its own engine: yt-dlp (YouTube and social), gallery-dl (Pinterest), the stock-media APIs (Pexels, Pixabay video-only) through one stock client.
 
 **Provider job**: one admitted unit of provider work (metadata, search or download, plus media preparation). It has one cancellation scope, owns the files it creates until it publishes them, and ends with exactly one terminal outcome: completed, failed or cancelled.
 

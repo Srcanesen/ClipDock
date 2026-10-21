@@ -1,4 +1,4 @@
-// Main-process-only encrypted Pexels credential persistence. The renderer never imports this module.
+// Main-process-only encrypted stock-provider (Pexels, Pixabay) credential persistence. The renderer never imports this module.
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
@@ -23,7 +23,13 @@ export interface PexelsCredentialPersistence {
 }
 
 export const PEXELS_KEYCHAIN_SERVICE = 'com.clipdock.pexels';
+export const PIXABAY_KEYCHAIN_SERVICE = 'com.clipdock.pixabay';
 export const PEXELS_KEYCHAIN_ACCOUNT = 'api-key';
+
+/** Each provider owns its Keychain item and its own transaction lock. */
+export type CredentialSource = { service: string; label: string; lockPath: string };
+export const PEXELS_CREDENTIAL: CredentialSource = { service: PEXELS_KEYCHAIN_SERVICE, label: 'Pexels', lockPath: join(tmpdir(), 'ClipDock', 'pexels-keychain.lock') };
+export const PIXABAY_CREDENTIAL: CredentialSource = { service: PIXABAY_KEYCHAIN_SERVICE, label: 'Pixabay', lockPath: join(tmpdir(), 'ClipDock', 'pixabay-keychain.lock') };
 
 export const isValidPexelsKey = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(value);
@@ -90,13 +96,11 @@ const KEYCHAIN_OUTPUT_LIMIT = 8 * 1024;
 const KEYCHAIN_NOT_FOUND = 44;
 const KEYCHAIN_COMMAND_ERROR = 'Secure credential storage is unavailable.';
 const KEYCHAIN_LOAD_ERROR = 'Disconnected. Saved credential could not be read.';
-const KEYCHAIN_SAVE_ERROR = 'Could not save the Pexels credential securely.';
-const KEYCHAIN_CLEAR_ERROR = 'Could not remove the saved Pexels credential securely.';
-const KEYCHAIN_TIMEOUT_ERROR = 'Secure Pexels credential storage timed out.';
-const KEYCHAIN_LOCK_PATH = join(tmpdir(), 'ClipDock', 'pexels-keychain.lock');
+// Command failures never surface: every caller maps them to its own message.
+const KEYCHAIN_TIMEOUT_ERROR = 'Secure credential storage timed out.';
 const KEYCHAIN_LOCK_ACQUIRE_TIMEOUT_MS = 90_000;
 const KEYCHAIN_LOCK_RETRY_MS = 25;
-const KEYCHAIN_LOCK_ERROR = 'Secure Pexels credential storage is unavailable.';
+const KEYCHAIN_LOCK_ERROR = 'Secure credential storage is unavailable.';
 
 function isContainedPath(parent: string, child: string): boolean {
   const remainder = relative(parent, child);
@@ -199,6 +203,8 @@ function runKeychainCommand(spawnCommand: KeychainSpawn, args: string[], input?:
 
 export class MacKeychainPexelsCredentialStore implements PexelsCredentialPersistence {
   private readonly lockPath: string;
+  private readonly saveError: string;
+  private readonly clearError: string;
   private readonly cancellation = new AbortController();
   private readonly pending = new Set<Promise<unknown>>();
 
@@ -207,8 +213,10 @@ export class MacKeychainPexelsCredentialStore implements PexelsCredentialPersist
     await Promise.allSettled([...this.pending]);
   }
 
-  constructor(private readonly spawnCommand: KeychainSpawn = defaultKeychainSpawn, lockPath: string = KEYCHAIN_LOCK_PATH) {
-    this.lockPath = resolve(lockPath);
+  constructor(private readonly spawnCommand: KeychainSpawn = defaultKeychainSpawn, lockPath?: string, private readonly source: CredentialSource = PEXELS_CREDENTIAL) {
+    this.lockPath = resolve(lockPath ?? source.lockPath);
+    this.saveError = `Could not save the ${source.label} credential securely.`;
+    this.clearError = `Could not remove the saved ${source.label} credential securely.`;
   }
 
   async load(): Promise<CredentialLoad> {
@@ -239,18 +247,18 @@ export class MacKeychainPexelsCredentialStore implements PexelsCredentialPersist
         try {
           previous = await this.#readPrior();
         } catch {
-          throw new Error(KEYCHAIN_SAVE_ERROR);
+          throw new Error(this.saveError);
         }
         try {
-          if (!await this.#writeAndVerify(key)) throw new Error(KEYCHAIN_SAVE_ERROR);
+          if (!await this.#writeAndVerify(key)) throw new Error(this.saveError);
           return true;
         } catch {
           await this.#rollback(previous);
-          throw new Error(KEYCHAIN_SAVE_ERROR);
+          throw new Error(this.saveError);
         }
       });
     } catch {
-      throw new Error(KEYCHAIN_SAVE_ERROR);
+      throw new Error(this.saveError);
     }
   }
 
@@ -258,7 +266,7 @@ export class MacKeychainPexelsCredentialStore implements PexelsCredentialPersist
     try {
       await this.#withLock(() => this.#clearUnlocked());
     } catch {
-      throw new Error(KEYCHAIN_CLEAR_ERROR);
+      throw new Error(this.clearError);
     }
   }
 
@@ -276,9 +284,9 @@ export class MacKeychainPexelsCredentialStore implements PexelsCredentialPersist
     try {
       result = await this.#deleteStored();
     } catch {
-      throw new Error(KEYCHAIN_CLEAR_ERROR);
+      throw new Error(this.clearError);
     }
-    if (result.code !== 0 && result.code !== KEYCHAIN_NOT_FOUND) throw new Error(KEYCHAIN_CLEAR_ERROR);
+    if (result.code !== 0 && result.code !== KEYCHAIN_NOT_FOUND) throw new Error(this.clearError);
   }
 
   async #readPrior(): Promise<string | null> {
@@ -286,16 +294,16 @@ export class MacKeychainPexelsCredentialStore implements PexelsCredentialPersist
     try {
       result = await this.#findStored();
     } catch {
-      throw new Error(KEYCHAIN_SAVE_ERROR);
+      throw new Error(this.saveError);
     }
     if (result.code === KEYCHAIN_NOT_FOUND) return null;
-    if (result.code !== 0) throw new Error(KEYCHAIN_SAVE_ERROR);
+    if (result.code !== 0) throw new Error(this.saveError);
     const prior = result.stdout.trim();
     if (isValidPexelsKey(prior)) return prior;
     try {
       await this.#clearUnlocked();
     } catch {
-      throw new Error(KEYCHAIN_SAVE_ERROR);
+      throw new Error(this.saveError);
     }
     return null;
   }
@@ -328,12 +336,12 @@ export class MacKeychainPexelsCredentialStore implements PexelsCredentialPersist
   }
 
   #findStored(timeoutMs = KEYCHAIN_TIMEOUT_MS, signal = this.cancellation.signal): Promise<KeychainResult> {
-    return this.#run(['find-generic-password', '-s', PEXELS_KEYCHAIN_SERVICE, '-a', PEXELS_KEYCHAIN_ACCOUNT, '-w'], undefined, timeoutMs, signal);
+    return this.#run(['find-generic-password', '-s', this.source.service, '-a', PEXELS_KEYCHAIN_ACCOUNT, '-w'], undefined, timeoutMs, signal);
   }
 
   async #addStored(key: string, timeoutMs = KEYCHAIN_TIMEOUT_MS, signal = this.cancellation.signal): Promise<KeychainResult> {
-    if (!isValidPexelsKey(key)) throw new Error(KEYCHAIN_SAVE_ERROR);
-    return this.#run(['-i'], `add-generic-password -U -s ${PEXELS_KEYCHAIN_SERVICE} -a ${PEXELS_KEYCHAIN_ACCOUNT} -w ${key}\n`, timeoutMs, signal);
+    if (!isValidPexelsKey(key)) throw new Error(this.saveError);
+    return this.#run(['-i'], `add-generic-password -U -s ${this.source.service} -a ${PEXELS_KEYCHAIN_ACCOUNT} -w ${key}\n`, timeoutMs, signal);
   }
 
   async #writeAndVerify(key: string, timeoutMs = KEYCHAIN_TIMEOUT_MS, signal = this.cancellation.signal): Promise<boolean> {
@@ -347,7 +355,7 @@ export class MacKeychainPexelsCredentialStore implements PexelsCredentialPersist
   }
 
   #deleteStored(timeoutMs = KEYCHAIN_TIMEOUT_MS, signal = this.cancellation.signal): Promise<KeychainResult> {
-    return this.#run(['delete-generic-password', '-s', PEXELS_KEYCHAIN_SERVICE, '-a', PEXELS_KEYCHAIN_ACCOUNT], undefined, timeoutMs, signal);
+    return this.#run(['delete-generic-password', '-s', this.source.service, '-a', PEXELS_KEYCHAIN_ACCOUNT], undefined, timeoutMs, signal);
   }
 
   #run(args: string[], input?: string, timeoutMs = KEYCHAIN_TIMEOUT_MS, signal = this.cancellation.signal): Promise<KeychainResult> {

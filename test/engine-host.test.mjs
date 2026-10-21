@@ -49,6 +49,7 @@ function fixture(t, {invalidFolder = false, failRole, restoreCredential = async 
       youtube: (discovered, root) => worker(path.basename(root), root, discovered),
       pinterest: (discovered, root) => worker(path.basename(root), root, discovered),
       pexels: root => worker('pexels', root),
+      pixabay: root => worker('pixabay', root),
       mediaPrep: discovered => worker('media-prep', null, discovered),
     },
     completion: {
@@ -81,13 +82,13 @@ test('readiness waits for discovery while independent operations answer; every r
   discovery.resolve(engines); await starting;
   assert.equal(await f.host.ready(), engines);
   assert.deepEqual(await pending, {role: 'youtube-search', args: ['cats', 2]});
-  assert.deepEqual([...f.workers.keys()], ['youtube', 'social', 'pinterest', 'pinterest-metadata', 'pinterest-search', 'youtube-search', 'youtube-metadata', 'social-metadata', 'youtube-subtitles', 'media-prep', 'pexels']);
-  for (const [role, worker] of f.workers) if (role !== 'pexels') assert.equal(worker.discovered, engines);
-  await f.start(); assert.equal(f.workers.size, 11);
+  assert.deepEqual([...f.workers.keys()], ['youtube', 'social', 'pinterest', 'pinterest-metadata', 'pinterest-search', 'youtube-search', 'youtube-metadata', 'social-metadata', 'youtube-subtitles', 'media-prep', 'pexels', 'pixabay']);
+  for (const [role, worker] of f.workers) if (role !== 'pexels' && role !== 'pixabay') assert.equal(worker.discovered, engines);
+  await f.start(); assert.equal(f.workers.size, 12);
   assert.equal(f.host.isBusy(), false);
   f.workers.get('pinterest-search').active = true; assert.equal(f.host.isBusy(), true);
   f.workers.get('pinterest-search').active = false;
-  await f.host.dispose(); assert.equal(f.order.length, 11);
+  await f.host.dispose(); assert.equal(f.order.length, 12);
 });
 
 test('discovery failure is the one startup error for every engine entry point, before workers or folder writes', async t => {
@@ -98,7 +99,7 @@ test('discovery failure is the one startup error for every engine entry point, b
   discovery.reject(new Error('discovery failed')); await starting; await rejected;
   const error = await f.host.ready().catch(error => error);
   assert.equal(error.message, 'Download services could not start: discovery failed');
-  for (const operation of [() => f.host.ready(), () => f.host.provider('youtube').load('url'), () => startDownload(f.host, 'youtube'), () => f.host.credential(() => 'unexpected')]) {
+  for (const operation of [() => f.host.ready(), () => f.host.provider('youtube').load('url'), () => startDownload(f.host, 'youtube'), () => f.host.credential('pexels', () => 'unexpected')]) {
     await assert.rejects(operation(), actual => actual === error);
   }
   assert.equal(await f.host.run(() => 'history', 'immediate'), 'history');
@@ -123,7 +124,7 @@ test('invalid folder recovers through a committed re-point; later transient erro
   const persistence = [];
   assert.equal(await f.host.changeFolder(async () => next.verify(), () => next, root => persistence.push(root.verify())), next.verify());
   assert.deepEqual(persistence, [next.verify()]); assert.equal(f.host.error(), undefined);
-  for (const provider of ['youtube', 'social', 'pinterest', 'pexels']) assert.equal(f.workers.get(provider).root, next.providerPath(provider));
+  for (const provider of ['youtube', 'social', 'pinterest', 'pexels', 'pixabay']) assert.equal(f.workers.get(provider).root, next.providerPath(provider));
   const result = await startDownload(f.host, 'youtube'); assert.equal(result.cardId, 'card');
   assert.equal(f.published[0].filePath, path.join(next.verify(), 'youtube', 'job.mp4'));
   const moved = `${next.verify()}.moved`; fs.renameSync(next.verify(), moved);
@@ -139,11 +140,11 @@ test('folder changes roll back adapters and preserve the root on persistence fai
   const next = ManagedRoot.prepare(path.join(f.directory, 'next'));
   await assert.rejects(f.host.changeFolder(async () => next.verify(), () => next, () => { throw new Error('save failed'); }), {message: 'Could not change the download folder: save failed'});
   assert.equal(f.host.activeRoot().verify(), f.folder);
-  for (const provider of ['youtube', 'social', 'pinterest', 'pexels']) assert.equal(f.workers.get(provider).root, path.join(f.folder, provider));
+  for (const provider of ['youtube', 'social', 'pinterest', 'pexels', 'pixabay']) assert.equal(f.workers.get(provider).root, path.join(f.folder, provider));
   assert.equal((await startDownload(f.host, 'youtube')).fileName, 'job.mp4');
 });
 
-for (const provider of ['youtube', 'social', 'pinterest', 'pexels']) {
+for (const provider of ['youtube', 'social', 'pinterest', 'pexels', 'pixabay']) {
   test(`${provider} cancel replies synchronously and interrupts the admitted job and waits for cleanup`, async t => {
     const f = fixture(t); await f.start();
     const entered = deferred(), release = deferred(), cancelled = deferred();
@@ -179,15 +180,25 @@ test('provider metadata/search roles and Pinterest snapshots stay independent of
   assert.deepEqual(await f.host.provider('pexels').search('video', 'cats', 1), {role: 'pexels', args: ['video', 'cats', 1]});
   assert.equal(await f.host.provider('pexels').load('video', 7), asset);
   assert.equal(await f.host.provider('pexels').abortRequests(), true);
+  assert.deepEqual(await f.host.provider('pixabay').search('video', 'cats', 1), {role: 'pixabay', args: ['video', 'cats', 1]});
 });
 
 test('credential restoration blocks only credential reads and mutations', async t => {
   const restored = deferred(); const f = fixture(t, {restoreCredential: () => restored.promise}); await f.start();
   let read = false;
-  const pending = f.host.credential(() => { read = true; return 'connected'; });
+  const pending = f.host.credential('pixabay', worker => { read = true; return worker.root; });
   assert.deepEqual(await f.host.provider('youtube').search('cats', 1), {role: 'youtube-search', args: ['cats', 1]});
   assert.equal(read, false);
-  restored.resolve(); assert.equal(await pending, 'connected'); assert.equal(read, true);
+  restored.resolve(); assert.equal(await pending, path.join(f.folder, 'pixabay')); assert.equal(read, true);
+});
+
+test('a slow Pexels credential restore does not delay Pixabay credential work', async t => {
+  const pexels = deferred(); const f = fixture(t, {restoreCredential: provider => provider === 'pexels' ? pexels.promise : Promise.resolve()}); await f.start();
+  let pexelsRead = false;
+  const pending = f.host.credential('pexels', () => { pexelsRead = true; return 'pexels'; });
+  assert.equal(await f.host.credential('pixabay', () => 'pixabay'), 'pixabay');
+  assert.equal(pexelsRead, false);
+  pexels.resolve(); assert.equal(await pending, 'pexels');
 });
 
 test('dispose initiates workers in role order, waits for workers and native handoffs, and rejects subsequent operations', async t => {
@@ -198,7 +209,7 @@ test('dispose initiates workers in role order, waits for workers and native hand
   assert.equal(f.host.mediaInUse(), true);
   const pending = f.host.dispose(); let disposed = false; pending.then(() => { disposed = true; });
   assert.equal(f.host.dispose(), pending);
-  assert.deepEqual(f.order, ['youtube', 'social', 'pinterest', 'pinterest-metadata', 'pinterest-search', 'youtube-search', 'youtube-metadata', 'social-metadata', 'youtube-subtitles', 'pexels', 'media-prep']);
+  assert.deepEqual(f.order, ['youtube', 'social', 'pinterest', 'pinterest-metadata', 'pinterest-search', 'youtube-search', 'youtube-metadata', 'social-metadata', 'youtube-subtitles', 'pexels', 'pixabay', 'media-prep']);
   for (const operation of [() => f.host.ready(), () => f.host.run(() => 'status', 'immediate'), () => f.host.provider('pinterest').search('cats', 1), () => startDownload(f.host, 'youtube'), () => f.host.handoff(() => 'transfer')]) {
     await assert.rejects(operation(), {message: 'Download services are shutting down.'});
   }

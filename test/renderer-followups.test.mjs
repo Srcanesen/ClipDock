@@ -37,7 +37,7 @@ const ELEMENT_IDS = [
   // Phase 2: provider hint removed — single live status line (youtube-search-status) carries provider context
   'youtube-search-form', 'pexels-credit',
   'provider-youtube', 'provider-pexels', 'provider-social', 'provider-pinterest',
-  'pexels-kind-switch', 'youtube-paste-url', 'social-url-panel', 'pinterest-url-panel',
+  'pexels-kind-switch', 'stock-source-switch', 'stock-source-pexels', 'stock-source-pixabay', 'stock-credit-lead', 'pixabay-setup', 'pixabay-setup-summary', 'pixabay-connection-status', 'pixabay-api-key', 'pixabay-connect-btn', 'pixabay-disconnect-btn', 'pixabay-key-link', 'pixabay-save-note', 'youtube-paste-url', 'social-url-panel', 'pinterest-url-panel',
   'youtube-mode-controls', 'youtube-subtitle-controls', 'youtube-selection-controls',
   'inspector-loading', 'inspector-empty',
   // Inspector chrome: the detail rail, its backdrop workspace, and the Back control.
@@ -186,7 +186,7 @@ function createHarness() {
   getPexels: () => pexels,
   getSelectedDetailKey: () => outputSession.selected?.key ?? null,
   getInspectorOpen: () => inspectorOpen,
-  setPexelsConnected: (value) => { pexelsConnected = value; },
+  setPexelsConnected: (value) => { stockConnected.pexels = value; },
   getSelectedSearchId: () => outputSession.selected?.resultId ?? null,
   getSelectedThumbnailDataUrl: () => outputSession.selected?.thumbnailDataUrl ?? null,
   getPreviewStopTimer: () => previewStopTimer,

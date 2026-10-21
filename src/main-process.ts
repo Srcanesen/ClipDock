@@ -17,7 +17,7 @@ import {ProviderJobRunner, ProviderJobCancelledError, ProviderJobFailureError, r
 import type {TimelineAutomation, Transfer, TransferResult} from './transfer';
 import type {DownloadEvent, DownloadOptions, Quality, YtdlpWorker} from './ytdlp';
 import type {GalleryDlWorker, PinterestDownloadEvent} from './gallerydl';
-import type {PexelsAsset, PexelsClient, PexelsEvent} from './pexels';
+import type {StockAsset, StockClient, StockEvent} from './stock';
 
 /** Own the entire admitted operation, including provider preflight and host waits. */
 export class ManagedOperations {
@@ -466,8 +466,8 @@ export interface PinterestDownloadAdapter {
   emit: ProviderEventEmitter;
 }
 
-export interface PexelsDownloadAdapter {
-  worker: Pick<PexelsClient, 'load' | 'download' | 'cancel'>;
+export interface StockDownloadAdapter {
+  worker: Pick<StockClient, 'load' | 'download' | 'cancel'>;
   emit: ProviderEventEmitter;
 }
 
@@ -482,7 +482,8 @@ export interface ProviderDownloadDependencies {
   youtube: YoutubeDownloadAdapter;
   social: SocialDownloadAdapter;
   pinterest: PinterestDownloadAdapter;
-  pexels: PexelsDownloadAdapter;
+  pexels: StockDownloadAdapter;
+  pixabay: StockDownloadAdapter;
 }
 
 export interface ProviderDownloadHandlers {
@@ -492,6 +493,7 @@ export interface ProviderDownloadHandlers {
   social(event: unknown, url: unknown, quality: unknown, profile: unknown, jobId: unknown): Promise<CompletedDownloadResult>;
   pinterest(event: unknown, url: unknown, itemIndex: unknown, profile: unknown, jobId: unknown): Promise<CompletedDownloadResult>;
   pexels(event: unknown, asset: unknown, fileId: unknown, profile: unknown, jobId: unknown): Promise<CompletedDownloadResult>;
+  pixabay(event: unknown, asset: unknown, fileId: unknown, profile: unknown, jobId: unknown): Promise<CompletedDownloadResult>;
 }
 
 const validProfile = (value: unknown): value is MediaProfile => value === 'original' || value === 'fast' || value === 'editing';
@@ -504,7 +506,7 @@ const validSocialQuality = (value: unknown): boolean => {
 };
 const validPinterestItemIndex = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 50;
 
-/** Create the four provider download handlers; trusted-sender validation remains main's IPC adapter. */
+/** Create the provider download handlers; trusted-sender validation remains main's IPC adapter. */
 export function createProviderDownloadHandlers(deps: ProviderDownloadDependencies): ProviderDownloadHandlers {
   const jobs = new ProviderJobRunner({
     cancelledMessage: 'Download cancelled.',
@@ -684,22 +686,24 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
     }, true, false, {invalidMessage: 'Invalid Pinterest download request.'});
   }
 
-  async function pexels(event: unknown, asset: unknown, fileId: unknown, profile: unknown, jobId: unknown): Promise<CompletedDownloadResult> {
-    if (!asset || typeof asset !== 'object' || typeof fileId !== 'string' || typeof jobId !== 'string' || !validProfile(profile) || !hasSender(event)) throw new Error('Invalid Pexels download request.');
-    const requested = asset as PexelsAsset;
-    if ((requested.kind !== 'photo' && requested.kind !== 'video') || !Number.isInteger(requested.id)) throw new Error('Invalid Pexels media selection.');
+  // Pexels and Pixabay share one stock download flow; the asset is re-read from the provider.
+  const stock = (provider: 'pexels' | 'pixabay', label: string) => async function (event: unknown, asset: unknown, fileId: unknown, profile: unknown, jobId: unknown): Promise<CompletedDownloadResult> {
+    const adapter = deps[provider];
+    if (!asset || typeof asset !== 'object' || typeof fileId !== 'string' || typeof jobId !== 'string' || !validProfile(profile) || !hasSender(event)) throw new Error(`Invalid ${label} download request.`);
+    const requested = asset as StockAsset;
+    if ((requested.kind !== 'photo' && requested.kind !== 'video') || !Number.isInteger(requested.id)) throw new Error(`Invalid ${label} media selection.`);
 
-    return runJob(jobId, deps.pexels, event, async (job, emit, artifactCompletion) => {
-      const authoritative = await job.perform(() => deps.pexels.worker.load(requested.kind, requested.id, {jobId}), () => deps.pexels.worker.cancel(jobId));
+    return runJob(jobId, adapter, event, async (job, emit, artifactCompletion) => {
+      const authoritative = await job.perform(() => adapter.worker.load(requested.kind, requested.id, {jobId}), () => adapter.worker.cancel(jobId));
       const selected = authoritative.files.find((file) => file.id === fileId);
-      if (!selected || (authoritative.kind === 'photo' && profile !== 'original')) throw new Error('Invalid Pexels media selection.');
+      if (!selected || (authoritative.kind === 'photo' && profile !== 'original')) throw new Error(`Invalid ${label} media selection.`);
       if (authoritative.kind === 'video' && profile !== 'original') requireFfprobe(deps.ffprobeAvailable);
 
       const downloaded = await job.perform(
-        () => deps.pexels.worker.download(jobId, selected, emit as (update: PexelsEvent) => void),
-        () => deps.pexels.worker.cancel(jobId), artifact => registerArtifact(job, artifact));
+        () => adapter.worker.download(jobId, selected, emit as (update: StockEvent) => void),
+        () => adapter.worker.cancel(jobId), artifact => registerArtifact(job, artifact));
       if (!deps.completion.isSafeMediaFile(downloaded.filePath)) throw new Error('Downloaded file is no longer available.');
-      const automation: TimelineAutomation = {provider: 'pexels', source: authoritative.sourceUrl, selection: null, chapters: []};
+      const automation: TimelineAutomation = {provider, source: authoritative.sourceUrl, selection: null, chapters: []};
       return artifactCompletion.completeDownload({
         jobId, job,
         automation,
@@ -708,13 +712,13 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
           ? {jobId, inputPath: downloaded.filePath, allowedRoot: dirname(downloaded.filePath), profile, emit}
           : undefined,
         history: {
-          provider: 'pexels', source: authoritative.sourceUrl, filePath: downloaded.filePath, assetId: `${authoritative.kind}:${authoritative.id}`,
+          provider, source: authoritative.sourceUrl, filePath: downloaded.filePath, assetId: `${authoritative.kind}:${authoritative.id}`,
           title: authoritative.title, creator: authoritative.creator, profile, quality: selected.label,
           mediaMode: authoritative.kind, selection: null, automation,
         },
       });
-    }, true, false, {invalidMessage: 'Invalid Pexels download request.'});
-  }
+    }, true, false, {invalidMessage: `Invalid ${label} download request.`});
+  };
 
-  return {youtube, social, pinterest, pexels, cancel: jobId => jobs.cancel(jobId) !== null, shutdown: () => jobs.dispose()};
+  return {youtube, social, pinterest, pexels: stock('pexels', 'Pexels'), pixabay: stock('pixabay', 'Pixabay'), cancel: jobId => jobs.cancel(jobId) !== null, shutdown: () => jobs.dispose()};
 }

@@ -36,7 +36,7 @@ function fixture(t) {
   for (const file of ['package.json', 'package-lock.json', 'tsconfig.json']) write(file, '{}\n');
   write('scripts/build.mjs', '// fixture build\n');
   for (const file of [...DIST_REQUIRED_FILES, 'main-process.js']) write(`dist/${file}`, '// fixture artifact\n');
-  const html = `<meta http-equiv="Content-Security-Policy" content="img-src 'self' data: https://i.ytimg.com https://images.pexels.com https://i.pinimg.com;"><link rel="stylesheet" href="css/styles.css"><script src="renderer.js"></script>${REQUIRED_HTML_IDS_FLAT.map((id) => `<div id="${id}"></div>`).join('')}\n`;
+  const html = `<meta http-equiv="Content-Security-Policy" content="img-src 'self' data: https://i.ytimg.com https://images.pexels.com https://i.pinimg.com https://cdn.pixabay.com;"><link rel="stylesheet" href="css/styles.css"><script src="renderer.js"></script>${REQUIRED_HTML_IDS_FLAT.map((id) => `<div id="${id}"></div>`).join('')}\n`;
   write('static/index.html', html); write('dist/index.html', html);
   write('dist/css/styles.css', 'body { color: black; }\n');
   write('dist/package.json', '{"main":"main.js"}\n');
@@ -133,7 +133,7 @@ for (const kind of ['link', 'target', 'empty target', 'commented link', 'non-sty
   assert.deepEqual(runShippedSurfaceRules(tree.root, { ruleIds: ['completed-build'] }).map(({ id, ok }) => ({ id, ok })), [{ id: 'completed-build', ok: false }]);
 });
 
-for (const images of ["'self' data: https:", "'self' data: https://i.ytimg.com https://images.pexels.com https://i.pinimg.com https://evil.test"]) test(`html-contract rejects widened image policy ${images}`, t => {
+for (const images of ["'self' data: https:", "'self' data: https://i.ytimg.com https://images.pexels.com https://i.pinimg.com https://cdn.pixabay.com https://evil.test"]) test(`html-contract rejects widened image policy ${images}`, t => {
   const tree = fixture(t);
   const html = readFileSync(path.join(tree.root, 'static/index.html'), 'utf8').replace(/img-src [^;]+;/, `img-src ${images};`);
   tree.write('static/index.html', html);

@@ -24,7 +24,10 @@ export type OutputDefaults = {
 };
 export type OutputOverrides = Partial<OutputDefaults>;
 
-export type Provider = 'youtube' | 'pexels' | 'social' | 'pinterest';
+export type Provider = 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest';
+/** Stock providers share the Pexels asset shape and rendition rules; Pixabay is video-only. */
+export type StockProvider = 'pexels' | 'pixabay';
+export const isStock = (value: Provider): value is StockProvider => value === 'pexels' || value === 'pixabay';
 export type PexelsKind = 'photo' | 'video';
 
 export interface StagedSelection {
@@ -188,7 +191,7 @@ export function resolvePexelsRendition<T extends Rendition>(kind: PexelsKind, fi
 }
 export function sourceQualityChoices(provider: Provider, heights: number[] = [], files: Rendition[] = []): string[] {
   if (provider === 'pinterest') return ['original'];
-  if (provider === 'pexels') return files.map((file) => file.id);
+  if (isStock(provider)) return files.map((file) => file.id);
   const actual = [...new Set(heights.filter((height) => Number.isInteger(height) && height >= 144 && height <= 4320))].sort((a, b) => b - a);
   return actual.length ? actual.map((height) => `${height}p`) : ['best'];
 }
@@ -201,7 +204,7 @@ export function normalizeSourceOutput(value: OutputDefaults, provider: Provider,
     output.mediaMode = 'video'; output.audioFormat = 'm4a'; output.subtitles = false; output.subtitleLanguage = 'en'; output.selection = null; delete output.selectionPlan;
   } else if (output.mediaMode === 'audio') { output.profile = 'original'; output.quality = 'best'; }
   // Photo rendition IDs are opaque too; generic height/default choices mean Original.
-  if (provider === 'pinterest' || (photo && (provider !== 'pexels' || output.quality === 'best' || /^\d+p$/.test(output.quality)))) output.quality = 'original';
+  if (provider === 'pinterest' || (photo && (!isStock(provider) || output.quality === 'best' || /^\d+p$/.test(output.quality)))) output.quality = 'original';
   if (photo) output.profile = 'original';
   return output;
 }

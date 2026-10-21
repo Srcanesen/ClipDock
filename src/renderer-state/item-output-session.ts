@@ -1,8 +1,8 @@
-import { cloneOutputDefaults, cloneOutputOverrides, createCommonDefaults, normalizeSourceOutput, outputOverridesFrom, resolvePexelsRendition, resolveQualityChoice, type OutputDefaults, type OutputOverrides, type Provider, type PexelsKind, type Rendition, type ResultSelection, type StagedSelection } from './output-model';
+import { cloneOutputDefaults, cloneOutputOverrides, createCommonDefaults, normalizeSourceOutput, outputOverridesFrom, resolvePexelsRendition, resolveQualityChoice, isStock, type OutputDefaults, type OutputOverrides, type Provider, type PexelsKind, type Rendition, type ResultSelection, type StagedSelection } from './output-model';
 
 // Renderer callers read these helpers through the session module; output-model is
 // an implementation detail shared with the range and rendition calculations.
-export { cardOutputSummary, cardQualityLabel, resultOptionsId, profileLabel, intentLabel, cloneOutputDefaults, cloneOutputOverrides, normalizeSourceOutput, transitionSourceSelection, selectSourceSegments, resolveSourceSelection, selectionEnvelope, renditionHeight, resolveQualityChoice, resolvePexelsRendition, sourceQualityChoices } from './output-model';
+export { cardOutputSummary, cardQualityLabel, resultOptionsId, profileLabel, intentLabel, cloneOutputDefaults, cloneOutputOverrides, normalizeSourceOutput, transitionSourceSelection, selectSourceSegments, resolveSourceSelection, selectionEnvelope, renditionHeight, resolveQualityChoice, resolvePexelsRendition, sourceQualityChoices, isStock, type StockProvider } from './output-model';
 export type { OutputDefaults, OutputOverrides, SourceSelection, ResultSelection, StagedSelection } from './output-model';
 
 export type RawItemOutput = Partial<Record<'profile' | 'quality' | 'mediaMode' | 'audioFormat' | 'intent' | 'targetBin' | 'subtitleLanguage', string | null>> & {
@@ -26,7 +26,7 @@ function validateOutput(raw: RawItemOutput, provider: Provider): OutputOverrides
   if (raw.intent === 'download' || raw.intent === 'import' || raw.intent === 'playhead' || raw.intent === 'end') value.intent = raw.intent;
   if (raw.targetBin === 'active' || raw.targetBin === 'clipdock') value.targetBin = raw.targetBin;
   if (raw.subtitleLanguage === 'en' || raw.subtitleLanguage === 'es' || raw.subtitleLanguage === 'fr' || raw.subtitleLanguage === 'de' || raw.subtitleLanguage === 'tr') value.subtitleLanguage = raw.subtitleLanguage;
-  if (typeof raw.quality === 'string' && raw.quality.trim() && (provider === 'pexels' || raw.quality === 'best' || raw.quality === 'original' || /^\d+p$/.test(raw.quality))) value.quality = raw.quality;
+  if (typeof raw.quality === 'string' && raw.quality.trim() && (isStock(provider) || raw.quality === 'best' || raw.quality === 'original' || /^\d+p$/.test(raw.quality))) value.quality = raw.quality;
   if (typeof raw.subtitles === 'boolean') value.subtitles = raw.subtitles;
   if (raw.selection === null || (raw.selection && Number.isFinite(raw.selection.start) && Number.isFinite(raw.selection.end) && raw.selection.start >= 0 && raw.selection.end > raw.selection.start && typeof raw.selection.label === 'string')) value.selection = raw.selection;
   const plan = raw.selectionPlan;
@@ -35,7 +35,7 @@ function validateOutput(raw: RawItemOutput, provider: Provider): OutputOverrides
   return cloneOutputOverrides(value);
 }
 function providerForKey(key: string): Provider {
-  return key.startsWith('pexels:') ? 'pexels' : key.startsWith('social:') ? 'social' : key.startsWith('pinterest:') ? 'pinterest' : 'youtube';
+  return key.startsWith('pexels:') ? 'pexels' : key.startsWith('pixabay:') ? 'pixabay' : key.startsWith('social:') ? 'social' : key.startsWith('pinterest:') ? 'pinterest' : 'youtube';
 }
 function copyStage(stage: StagedSelection): StagedSelection {
   return { ...stage, snapshot: cloneOutputDefaults(stage.snapshot), overrides: cloneOutputOverrides(stage.overrides) };
@@ -88,8 +88,8 @@ export class ItemOutputSession {
     const provider = target ? providerForKey(target) : this.provider;
     const photo = context.photo ?? (target ? target.startsWith('pexels:photo:') : provider === 'pexels' && this.kind === 'photo');
     const output = normalizeSourceOutput(value, provider, photo);
-    if (provider === 'pexels' && context.files) output.quality = resolvePexelsRendition(context.kind ?? (photo ? 'photo' : 'video'), context.files, output.quality)?.id ?? '';
-    else if (provider !== 'pexels' && output.mediaMode !== 'audio') output.quality = this.resolveQuality(provider, output.quality, context.choices);
+    if (isStock(provider) && context.files) output.quality = resolvePexelsRendition(context.kind ?? (photo ? 'photo' : 'video'), context.files, output.quality)?.id ?? '';
+    else if (!isStock(provider) && output.mediaMode !== 'audio') output.quality = this.resolveQuality(provider, output.quality, context.choices);
     return output;
   }
 
@@ -155,5 +155,5 @@ export class ItemOutputSession {
       ? { ...saved.snapshot, ...saved.overrides } : key ? this.common : { ...this.common, ...this.draft });
   }
 
-  private sourceKey(): string { return this.provider === 'pexels' ? `pexels:${this.kind}` : this.provider; }
+  private sourceKey(): string { return isStock(this.provider) ? `${this.provider}:${this.kind}` : this.provider; }
 }

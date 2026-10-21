@@ -89,10 +89,10 @@ test('YouTube image selection prefers adequate allowlisted sizes and rejects hos
   for (const thumbnail of ['https://i.ytimg.com.evil.test/x', 'http://i.ytimg.com/x', 'https://user@i.ytimg.com/x']) assert.equal(youtubeThumbnail({thumbnail}, id), null);
 });
 
-test('image CSP permits exactly self, data and the three provider image hosts', () => {
+test('image CSP permits exactly self, data and the four provider image hosts', () => {
   const html = readFileSync(new URL('../static/index.html', import.meta.url), 'utf8');
   const policy = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
-  assert.deepEqual(policy.split(';').map(x => x.trim()).filter(x => x.startsWith('img-src ')), ["img-src 'self' data: https://i.ytimg.com https://images.pexels.com https://i.pinimg.com"]);
+  assert.deepEqual(policy.split(';').map(x => x.trim()).filter(x => x.startsWith('img-src ')), ["img-src 'self' data: https://i.ytimg.com https://images.pexels.com https://i.pinimg.com https://cdn.pixabay.com"]);
 });
 
 test('renderer prefetch waits 300 ms and cancels on leave, blur and result replacement', async () => {

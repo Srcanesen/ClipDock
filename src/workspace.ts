@@ -10,7 +10,7 @@ export type WorkspaceCleanupResult = { deletedFileCount: number; deletedBytes: n
 
 type File = { path: string; bytes: number; owned: OwnedFile };
 type WorkspaceFileClass = 'media' | 'companion' | 'transient' | 'diagnostic';
-const PROVIDER_DIRECTORIES = ['youtube', 'social', 'pexels', 'pinterest'] as const;
+const PROVIDER_DIRECTORIES = ['youtube', 'social', 'pexels', 'pinterest', 'pixabay'] as const;
 // Subtitles are user content but are classified separately from media so counts
 // stay truthful; transient partial/temp files and the diagnostic log are never
 // presented as stored media. Anything else keeps the historical default (counted).

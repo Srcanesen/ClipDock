@@ -22,7 +22,7 @@ test('prepare creates provider directories, captures once and round-trips the im
   const dir = fixture(t), folder = path.join(dir, 'new');
   const root = ManagedRoot.prepare(folder);
   assert.equal(root.verify(), folder);
-  assert.deepEqual(fs.readdirSync(folder).sort(), ['pexels', 'pinterest', 'social', 'youtube']);
+  assert.deepEqual(fs.readdirSync(folder).sort(), ['pexels', 'pinterest', 'pixabay', 'social', 'youtube']);
   const media = path.join(folder, 'youtube', 'clip.mp4'); fs.writeFileSync(media, 'media');
   assert.equal(root.resolve(media), media);
   assert.equal(root.resolve(dir), null);

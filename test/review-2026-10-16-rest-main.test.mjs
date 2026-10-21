@@ -7,7 +7,7 @@ import ts from 'typescript';
 test('Escape from an old native preview cannot close its replacement', async () => {
   const source = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
   const start = source.indexOf('function registerYoutubePreviewHandlers()');
-  const end = source.indexOf('\nasync function restorePexelsCredential', start);
+  const end = source.indexOf('\nasync function restoreStockCredential', start);
   assert.ok(start >= 0 && end > start);
   const handlers = new Map(), views = [], closed = [];
   const context = {

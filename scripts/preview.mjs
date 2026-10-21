@@ -114,6 +114,6 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`ClipDock preview: http://${HOST}:${PORT}/?preview=ready`);
-  console.log('Fixtures: ready | no-project | no-timeline | bridge-error | loading | empty | error | queue | audio | pexels-photo | pexels-video | pinterest | pinterest-search | duplicate | missing-file | download-failed');
+  console.log('Fixtures: ready | no-project | no-timeline | bridge-error | loading | empty | error | queue | audio | pexels-photo | pexels-video | pixabay | pinterest | pinterest-search | duplicate | missing-file | download-failed');
   console.log('Press Ctrl+C to stop.');
 });

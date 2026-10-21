@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { tryAcquireFileLock } from './file-lock';
 import { validatePinterestUrl, validateSocialUrl } from './ytdlp-url';
 
-export type HistoryProvider = 'youtube' | 'pexels' | 'social' | 'pinterest';
+export type HistoryProvider = 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest';
 export type HistorySelection = { start: number; end: number; label: string } | null;
 export type HistoryAutomation = { provider: HistoryProvider; source: string; selection: HistorySelection; chapters: Array<{ start: number; end: number; title: string }> };
 /** Public, path-free subtitle companion metadata. */
@@ -35,6 +35,7 @@ export function safeHistorySource(provider: HistoryProvider, source: unknown): s
     const host = url.hostname.toLowerCase();
     if (provider === 'youtube' && !['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'].includes(host)) return null;
     if (provider === 'pexels' && !['pexels.com', 'www.pexels.com'].includes(host)) return null;
+    if (provider === 'pixabay' && host !== 'pixabay.com') return null;
     if (provider === 'social') return validateSocialUrl(source)?.url ?? null;
     if (provider === 'pinterest') return validatePinterestUrl(source)?.url ?? null;
     return url.toString();
@@ -109,7 +110,7 @@ export class DownloadHistory {
       if (raw?.schemaVersion !== 1 || !Array.isArray(raw.records)) throw new Error('Unsupported history store.');
       this.records = raw.records.flatMap((value) => {
         const r = value as Partial<StoredRecord>;
-        if (!r || typeof r.id !== 'string' || (r.provider !== 'youtube' && r.provider !== 'pexels' && r.provider !== 'social' && r.provider !== 'pinterest') || typeof r.filePath !== 'string' || typeof r.fileName !== 'string' || typeof r.source !== 'string') return [];
+        if (!r || typeof r.id !== 'string' || (r.provider !== 'youtube' && r.provider !== 'pexels' && r.provider !== 'pixabay' && r.provider !== 'social' && r.provider !== 'pinterest') || typeof r.filePath !== 'string' || typeof r.fileName !== 'string' || typeof r.source !== 'string') return [];
         const source = r.provider === 'social' || r.provider === 'pinterest' ? safeHistorySource(r.provider, r.source) : r.source.slice(0, 2048);
         if (!source) return [];
         const selection = r.provider === 'social' || r.provider === 'pinterest' ? null : finiteRange(r.selection);

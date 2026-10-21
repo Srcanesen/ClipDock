@@ -87,6 +87,16 @@ interface PreviewApi {
   cancelPexelsRequests(): Promise<boolean>;
   onPexelsEvent(callback: (event: any) => void): () => void;
   openPexelsExternal(url: string): Promise<boolean>;
+  pixabayKeyStatus(): Promise<{ connected: boolean; persisted: boolean; message: string }>;
+  setPixabayKey(key: string): Promise<{ connected: boolean; persisted: boolean; message: string }>;
+  clearPixabayKey(): Promise<{ connected: boolean; persisted: boolean; message: string }>;
+  searchPixabay(kind: 'video', query: string, page: number): Promise<any>;
+  loadPixabay(kind: 'video', id: number): Promise<any>;
+  downloadPixabay(asset: any, fileId: string, profile: string, jobId: string): Promise<{ cardId: string; fileName: string }>;
+  cancelPixabay(jobId: string): Promise<boolean>;
+  cancelPixabayRequests(): Promise<boolean>;
+  onPixabayEvent(callback: (event: any) => void): () => void;
+  openPixabayExternal(url: string): Promise<boolean>;
   workspaceStatus(): Promise<{ fileCount: number; totalBytes: number; cleanupFileCount: number; cleanupBytes: number }>;
   openWorkspace(): Promise<boolean>;
   cleanupWorkspace(): Promise<{ deletedFileCount: number; deletedBytes: number; fileCount: number; totalBytes: number }>;
@@ -250,6 +260,13 @@ if (previewParam !== null) {
   let socialListener: ((event: PreviewSocialEvent) => void) | null = null;
   let pinterestListener: ((event: PreviewPinterestEvent) => void) | null = null;
   let pexelsListener: ((event: PreviewYoutubeEvent) => void) | null = null;
+  let pixabayListener: ((event: PreviewYoutubeEvent) => void) | null = null;
+  // Docs-shaped Pixabay assets after parsing: `large` absent on the second hit, as Pixabay omits it when unavailable.
+  const pixabayAsset = (id: number, title: string, creator: string, large: boolean) => ({ id, kind: 'video', title, creator, creatorUrl: null, sourceUrl: `https://pixabay.com/videos/id-${id}/`, duration: 14, width: large ? 1920 : 1280, height: large ? 1080 : 720, thumbnailUrl: SYNTHETIC_THUMBNAIL_DATA_URL, previewUrl: null,
+    files: [...(large ? [{ id: 'large', url: `https://cdn.pixabay.com/video/preview/${id}_large.mp4`, width: 1920, height: 1080, label: 'Large · 1920×1080', mime: 'video/mp4', size: 18_000_000 }] : []),
+      { id: 'medium', url: `https://cdn.pixabay.com/video/preview/${id}_medium.mp4`, width: 1280, height: 720, label: 'Medium · 1280×720', mime: 'video/mp4', size: 7_000_000 },
+      { id: 'small', url: `https://cdn.pixabay.com/video/preview/${id}_small.mp4`, width: 960, height: 540, label: 'Small · 960×540', mime: 'video/mp4', size: 3_000_000 }] });
+  const PIXABAY_RESULTS = [pixabayAsset(201, 'Ocean, waves, beach', 'Coverr-Free-Footage', true), pixabayAsset(202, 'City, night, traffic', 'Engin_Akyurt', false), pixabayAsset(203, 'Forest, fog, trees', 'Pexels_Preview_User', true)];
   let previewStateListener: ((state: {state: 'closed'; reason: 'closed'}) => void) | null = null;
   let previewOpen = false;
   let previewDownloadJob: string | null = null;
@@ -385,6 +402,27 @@ if (previewParam !== null) {
     cancelPexelsRequests: async () => true,
     onPexelsEvent: (callback) => { pexelsListener = callback; return () => { if (pexelsListener === callback) pexelsListener = null; }; },
     openPexelsExternal: async () => true,
+    pixabayKeyStatus: async () => ({ connected: previewParam === 'ready' || previewParam === 'pixabay', persisted: true, message: 'Connected · saved securely' }),
+    setPixabayKey: async () => ({ connected: true, persisted: true, message: 'Connected · saved securely' }), clearPixabayKey: async () => ({ connected: false, persisted: false, message: 'Disconnected.' }),
+    searchPixabay: async (_kind, query, page) => ({ query, page, pageSize: 15, hasPrevious: false, hasNext: false, totalResults: PIXABAY_RESULTS.length, results: PIXABAY_RESULTS }),
+    loadPixabay: async (_kind, id) => { const asset = PIXABAY_RESULTS.find(item => item.id === id); if (!asset) throw new Error('Pixabay returned invalid media metadata.'); return asset; },
+    downloadPixabay: async (_asset, _fileId, profile, jobId) => {
+      if (previewDownloadJob) throw new Error('Preview fixture: only one backend job may be active.');
+      previewDownloadJob = jobId;
+      try {
+        pixabayListener?.({jobId, state: 'downloading', percent: 50, message: 'Downloading from Pixabay…'});
+        await new Promise(resolve => setTimeout(resolve, 60));
+        if (previewDownloadJob !== jobId) throw new Error('Download cancelled.');
+        if (profile !== 'original') pixabayListener?.({jobId, state: 'processing', percent: 75, message: 'Preparing for Resolve…'});
+        const result = {cardId: `preview-pixabay-${jobId}`, fileName: 'preview-pixabay.mp4'};
+        pixabayListener?.({jobId, state: 'completed', percent: 100, message: 'Ready for Resolve.', ...result});
+        return result;
+      } finally { if (previewDownloadJob === jobId) previewDownloadJob = null; }
+    },
+    cancelPixabay: async (jobId) => { if (previewDownloadJob !== jobId) return false; previewDownloadJob = null; pixabayListener?.({jobId, state: 'cancelled', percent: null, message: 'Download cancelled.'}); return true; },
+    cancelPixabayRequests: async () => true,
+    onPixabayEvent: (callback) => { pixabayListener = callback; return () => { if (pixabayListener === callback) pixabayListener = null; }; },
+    openPixabayExternal: async () => true,
     workspaceStatus: async () => ({ fileCount: 3, totalBytes: 48_000_000, cleanupFileCount: 2, cleanupBytes: 32_000_000 }), openWorkspace: async () => true, cleanupWorkspace: async () => ({ deletedFileCount: 2, deletedBytes: 32_000_000, fileCount: 1, totalBytes: 16_000_000 }), queueDelete: async () => previewParam === 'missing-file' ? { deleted: false, message: 'The file is no longer available. It remains in the queue.' } : { deleted: true, message: 'File deleted.' }, historyList: async () => PREVIEW_HISTORY, historyReuse: async () => null, historyReveal: async () => false, historySource: async () => false, historyCopy: async () => false, historyRelink: async () => null, historyDelete: async () => ({ deleted: false, removed: false, removedCardIds: [] }),
     // Import only needs MediaStorage (no project/timeline); timeline append is stricter.
     importToMediaPool: async (cardId, targetBin) => {
@@ -448,8 +486,17 @@ if (previewParam !== null) {
       (document.getElementById('download-youtube-btn') as HTMLButtonElement | null)?.click();
       return;
     }
+    if (previewParam === 'pixabay') {
+      (document.getElementById('provider-pexels') as HTMLButtonElement | null)?.click();
+      (document.getElementById('stock-source-pixabay') as HTMLButtonElement | null)?.click();
+      const search = document.getElementById('youtube-search-input') as HTMLInputElement | null;
+      if (search) search.value = 'ocean';
+      (document.getElementById('youtube-search-form') as HTMLFormElement | null)?.requestSubmit();
+      return;
+    }
     if (previewParam === 'pexels-photo' || previewParam === 'pexels-video') {
       (document.getElementById('provider-pexels') as HTMLButtonElement | null)?.click();
+      (document.getElementById('stock-source-pexels') as HTMLButtonElement | null)?.click();
       // Explicit kind selection: photo fixture must open the Photos flow, video stays on Videos.
       if (previewParam === 'pexels-photo') (document.getElementById('pexels-photo-kind') as HTMLButtonElement | null)?.click();
       if (previewParam === 'pexels-video') (document.getElementById('pexels-video-kind') as HTMLButtonElement | null)?.click();
