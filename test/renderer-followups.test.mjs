@@ -189,9 +189,7 @@ function createHarness() {
   setPexelsConnected: (value) => { stockConnected.pexels = value; },
   getSelectedSearchId: () => outputSession.selected?.resultId ?? null,
   getSelectedThumbnailDataUrl: () => outputSession.selected?.thumbnailDataUrl ?? null,
-  getPreviewStopTimer: () => previewStopTimer,
   getPreviewActive: () => previewSession.youtubeActive,
-  schedulePreviewStop: () => schedulePreviewStop(),
   startPreview: (id) => startYoutubePreview(id),
   clearPreview: () => clearPreviewState(),
   enqueueResultCard: (key, sel, mode) => enqueueResultCard(key, sel, mode),
@@ -268,9 +266,7 @@ function createHarness() {
     get revealSubtitleCalls() { return revealSubtitleCalls; },
     get revealCalls() { return revealCalls; },
     get youtubeDownloads() { return youtubeDownloads; },
-    getPreviewStopTimer: () => followupTest.getPreviewStopTimer(),
     getPreviewActive: () => followupTest.getPreviewActive(),
-    schedulePreviewStop: () => followupTest.schedulePreviewStop(),
     startPreview: (id, target) => followupTest.startPreview(id, target),
     clearPreview: () => followupTest.clearPreview(),
     enqueueResultCard: (key, sel, mode) => followupTest.enqueueResultCard(key, sel, mode),
@@ -756,29 +752,6 @@ test('a Pinterest search through the common seam closes the Inspector, and a dir
   assert.equal(h.el('workspace').classList.contains('inspector-open'), true);
 });
 
-test('stale preview-stop timer does not cancel a new YouTube preview', async () => {
-  const h = createHarness();
-  const target = h.el('source-monitor');
-  target.getBoundingClientRect = () => ({left: 0, top: 0, right: 400, bottom: 300, width: 400, height: 300});
-  h.el('workspace').getBoundingClientRect = () => ({left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600});
-  h.setProvider('youtube');
-  // Start first preview then schedule its 120ms stop timer
-  await h.startPreview('dQw4w9WgXcQ', target);
-  await h.flush();
-  assert.equal(h.getPreviewActive(), true);
-  h.schedulePreviewStop();
-  const staleTimer = h.getPreviewStopTimer();
-  assert.notEqual(staleTimer, null);
-  // Before stale timer fires, start a new preview — fix clears stale timer in clearPreviewState
-  await h.startPreview('aaaaaaaaaaa', target);
-  await h.flush();
-  assert.equal(h.getPreviewActive(), true);
-  assert.equal(h.getTimers().has(staleTimer), false, 'stale preview-stop timer should have been cleared by new preview');
-  // Triggering the old timer id (now deleted) must be a no-op and not stop the new preview
-  h.triggerTimer(staleTimer);
-  assert.equal(h.getPreviewActive(), true, 'stale timer must not stop new preview');
-});
-
 test('result-card enqueue captures click-time snapshot across delayed metadata', async () => {
   const h = createHarness();
   h.setProvider('youtube');
@@ -1019,7 +992,6 @@ for (const end of ['stop', 'ended', 'error', 'reject']) test(`Pexels card Play u
   assert.equal(h.pexelsLoads.length, 1);
   assert.equal(h.getPreviewTarget(), h.el('source-monitor'));
   assert.equal(h.el('workspace').classList.contains('theater'), true);
-  assert.equal(h.el('pexels-preview-overlay').style.width, '672px');
   assert.equal(video.src, asset.previewUrl);
   assert.equal(cardAction(h, 0, 'play').getAttribute('aria-pressed'), 'true');
   h.pexelsLoads[0].resolve(asset); await h.flush();
@@ -1044,6 +1016,32 @@ test('pausing a stock preview, as native timeline scrubbing does, keeps it open'
   assert.equal(h.el('pexels-preview-overlay').classList.contains('hidden'), false);
   assert.equal(video.src, asset.previewUrl);
   assert.equal(h.el('workspace').classList.contains('theater'), true);
+});
+
+test('scrolling or resizing keeps a stock preview playing in the monitor', async () => {
+  const h = await theaterHarness();
+  h.setProvider('pexels'); h.setPexelsConnected(true);
+  const asset = { ...PEXELS_ASSET, previewUrl: 'https://videos.pexels.com/fixture.mp4' };
+  h.searchPexels('mountains', 1).resolve({ ...PEXELS_PAGE, results: [asset] }); await h.flush();
+  cardAction(h, 0, 'play').click();
+  h.pexelsLoads[0].resolve(asset); await h.flush();
+  h.windowEvent('scroll'); h.windowEvent('resize'); h.runAllTimers(); await h.flush();
+  assert.equal(h.el('pexels-preview-overlay').classList.contains('hidden'), false);
+  assert.equal(h.el('pexels-preview-video').src, asset.previewUrl);
+  const html = readFileSync(new URL('../static/index.html', import.meta.url), 'utf8');
+  const monitor = html.slice(html.indexOf('<div class="monitor-wrap">'), html.indexOf('<div class="preview-transport"'));
+  assert.match(monitor, /id="pexels-preview-overlay"/, 'the stock video lives in the monitor so it scrolls with the inspector');
+});
+
+test('YouTube preview bounds stay inside the scrolled inspector body', async () => {
+  const h = await theaterHarness();
+  const body = { getBoundingClientRect: () => ({ left: 528, top: 132, width: 672, height: 560 }) };
+  h.el('source-monitor').closest = selector => selector === '.ins-body' ? body : null;
+  cardAction(h, 0, 'play').click(); await h.flush();
+  h.el('source-monitor').getBoundingClientRect = () => ({ left: 528, top: -100, width: 672, height: 378 });
+  h.windowEvent('scroll'); h.runAllTimers(); await h.flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(h.previewBounds.at(-1))), { x: 528, y: 132, width: 672, height: 146 });
+  assert.equal(h.getPreviewActive(), true);
 });
 
 test('a stale bounds failure cannot stop a newer inspector preview', async () => {

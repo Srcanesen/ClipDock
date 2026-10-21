@@ -456,7 +456,7 @@ test('FIFO queue, immutable snapshots, handoff, cancellation and deletion', asyn
   }
 });
 
-test('preview teardown and scroll debounce', async (t) => {
+test('preview teardown', async (t) => {
   const renderer = readFileSync(path.join(dist, 'renderer.js'), 'utf8');
   {
     let videoAssignments = 0; let pauseCalls = 0; let loadCalls = 0; let playCalls = 0; let removeSrcCalls = 0;
@@ -469,7 +469,7 @@ test('preview teardown and scroll debounce', async (t) => {
     const pendingStops = new Map(); let stopTimerId = 0;
     const sandbox = { window: { addEventListener() {}, matchMedia: () => ({ matches: false }), setTimeout(callback, delay) { const id = ++stopTimerId; pendingStops.set(id, { callback, delay }); return id; }, clearTimeout(id) { pendingStops.delete(id); } }, document: { getElementById: (id) => elements.get(id) ?? null }, console, Date, Math, Number, Promise, crypto: { randomUUID: () => 'preview-test' }, setTimeout, clearTimeout, queueMicrotask };
     runInNewContext(`${renderer}
-  globalThis.__previewTest = { stopPreview, startPexelsPreview, schedulePreviewStop, setFixture(asset) { provider = 'pexels'; pexels = asset; } };`, sandbox);
+  globalThis.__previewTest = { stopPreview, startPexelsPreview, setFixture(asset) { provider = 'pexels'; pexels = asset; } };`, sandbox);
     for (let call = 0; call < 50; call += 1) sandbox.__previewTest.stopPreview();
     expect('50 closed stopPreview calls perform no media DOM work', [videoAssignments, pauseCalls, loadCalls, removeSrcCalls], [0, 0, 0, 0]);
     const asset = { id: 1, kind: 'video', title: 'Preview', previewUrl: 'https://videos.pexels.com/preview.mp4' };
@@ -480,16 +480,6 @@ test('preview teardown and scroll debounce', async (t) => {
     sandbox.__previewTest.stopPreview();
     for (let call = 0; call < 50; call += 1) sandbox.__previewTest.stopPreview();
     expect('one opened Pexels preview closes once and later stops remain no-ops', [videoAssignments, playCalls, pauseCalls, loadCalls, removeSrcCalls], [1, 1, 1, 1, 1]);
-    videoAssignments = 0; pauseCalls = 0; loadCalls = 0; playCalls = 0; removeSrcCalls = 0;
-    sandbox.__previewTest.startPexelsPreview(asset);
-    videoAssignments = 0; pauseCalls = 0; loadCalls = 0; playCalls = 0; removeSrcCalls = 0;
-    for (let event = 0; event < 30; event += 1) sandbox.__previewTest.schedulePreviewStop();
-    const burstTimer = [...pendingStops.entries()][0];
-    expect('30-event scroll burst performs no synchronous media teardown and keeps one debounce', [pendingStops.size, burstTimer[1].delay, pauseCalls, loadCalls, removeSrcCalls], [1, 120, 0, 0, 0]);
-    pendingStops.delete(burstTimer[0]); burstTimer[1].callback();
-    expect('scroll burst flush performs exactly one teardown and no further debounce runs', [pauseCalls, loadCalls, removeSrcCalls, pendingStops.size], [1, 1, 1, 0]);
-    sandbox.__previewTest.schedulePreviewStop();
-    expect('closed preview never schedules a scroll debounce', [pendingStops.size], [0]);
     sandbox.__previewTest.startPexelsPreview(asset); sandbox.__previewTest.stopPreview(true);
     expect('explicit preview close restores focus to Preview without changing automatic close behavior', previewFocusCalls, 1);
   }

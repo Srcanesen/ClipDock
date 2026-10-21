@@ -131,7 +131,6 @@ let hostRefreshTimer: number | null = null;
 let queueRenderTimer: number | null = null;
 const queueProgressViews = new Map<string, {row: HTMLElement; status: HTMLElement; progress: HTMLProgressElement | null}>();
 const dirtyQueueProgress = new Set<string>();
-let previewStopTimer: number | null = null;
 let previewBoundsTimer: number | null = null;
 const previewSession = new PreviewSession<HTMLElement>();
 let observedResultListWidth = 0;
@@ -907,11 +906,12 @@ function currentPreviewBounds(targetOverride: HTMLElement | null = null): Previe
   if (!target || (!inspectorOpen && !targetOverride && !previewSession.target)) return null;
   const rect = target.getBoundingClientRect();
   if (!rect || !Number.isFinite(rect.left) || !Number.isFinite(rect.top) || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return null;
-  const left = Math.max(0, rect.left), top = Math.max(0, rect.top), right = Math.min(window.innerWidth, rect.left + rect.width), bottom = Math.min(window.innerHeight, rect.top + rect.height);
+  // The native view paints above the page, so clip it to the scroll area the monitor lives in.
+  const clip = target.closest?.('.ins-body')?.getBoundingClientRect() ?? { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+  const left = Math.max(0, clip.left, rect.left), top = Math.max(0, clip.top, rect.top), right = Math.min(window.innerWidth, clip.left + clip.width, rect.left + rect.width), bottom = Math.min(window.innerHeight, clip.top + clip.height, rect.top + rect.height);
   return right - left >= 160 && bottom - top >= 90 ? { x: left, y: top, width: right - left, height: bottom - top } : null;
 }
 function clearPreviewState(restoreFocus = false): void {
-  if (previewStopTimer !== null) { window.clearTimeout(previewStopTimer); previewStopTimer = null; }
   if (previewBoundsTimer !== null) { window.clearTimeout(previewBoundsTimer); previewBoundsTimer = null; }
   const { provider: stoppedProvider, closeToken } = previewSession.clear();
   if (closeToken) void window.clipdockAPI.closeYoutubePreview().then((closed) => previewSession.closeSettled(closeToken, closed)).catch(() => previewSession.closeSettled(closeToken, false));
@@ -925,7 +925,6 @@ function clearPreviewState(restoreFocus = false): void {
 function stopPreview(restoreFocus = false): void {
   if (previewSession.stop()) clearPreviewState(restoreFocus);
 }
-function schedulePreviewStop(): void { if (previewSession.source === null) return; if (previewStopTimer !== null) window.clearTimeout(previewStopTimer); previewStopTimer = window.setTimeout(() => { previewStopTimer = null; stopPreview(); }, 120); }
 function updateYoutubePreviewBounds(): void {
   if (previewSession.provider !== 'youtube' || previewSession.source === null) return;
   const bounds = currentPreviewBounds();
@@ -979,7 +978,6 @@ function startPexelsPreview(asset: PexelsAsset, resultKey: string | null = outpu
   const overlay = $('pexels-preview-overlay'); const video = $('pexels-preview-video') as HTMLVideoElement;
   const request = previewSession.beginPexels(target, resultKey);
   video.src = asset.previewUrl; video.muted = false; video.controls = true; video.autoplay = true;
-  overlay.style.left = `${rect.left}px`; overlay.style.top = `${rect.top}px`; overlay.style.width = `${rect.width}px`; overlay.style.height = `${rect.height}px`;
   overlay.classList.add('interactive'); overlay.classList.remove('hidden'); overlay.setAttribute('aria-hidden', 'false');
   void video.play().catch(() => { if (previewSession.isCurrent(request)) stopPreview(); }); updatePreviewButton();
 }
@@ -990,7 +988,8 @@ function wirePreviewControls(): void {
   document.getElementById('open-youtube-external-btn')?.addEventListener('click', () => { if (youtube) void watchYoutube(youtube.id, currentSelection()?.start); });
   document.getElementById('source-monitor')?.addEventListener('click', () => { ($('preview-selected-btn') as HTMLButtonElement).click(); });
   document.getElementById('back-to-results')?.addEventListener('click', () => setInspectorOpen(false, true));
-  window.addEventListener('scroll', () => { if (previewSession.provider === 'youtube') scheduleYoutubePreviewBounds(); else schedulePreviewStop(); }, true); window.addEventListener('resize', () => { if (previewSession.provider === 'youtube') scheduleYoutubePreviewBounds(); else stopPreview(); }); window.addEventListener('beforeunload', () => stopPreview()); window.addEventListener('keydown', (event) => {
+  // The stock <video> sits inside the monitor and scrolls with it; only the native YouTube view needs new bounds.
+  window.addEventListener('scroll', scheduleYoutubePreviewBounds, true); window.addEventListener('resize', scheduleYoutubePreviewBounds); window.addEventListener('beforeunload', () => stopPreview()); window.addEventListener('keydown', (event) => {
     const command = event.ctrlKey || event.metaKey;
     if (command && event.key.toLowerCase() === 'k') { event.preventDefault(); if (settingsOpen) closeSettings(false); if (currentSurface !== 'search') setSurface('search', false); ($('youtube-search-input') as HTMLInputElement).focus(); return; }
     if (command && event.key === ',') { event.preventDefault(); openSettings(); return; }
@@ -2545,7 +2544,6 @@ window.addEventListener('DOMContentLoaded', () => {
     if (hostRefreshTimer !== null) window.clearTimeout(hostRefreshTimer);
     if (statusRefreshTimer !== null) window.clearTimeout(statusRefreshTimer);
     if (queueRenderTimer !== null) window.clearTimeout(queueRenderTimer);
-    if (previewStopTimer !== null) window.clearTimeout(previewStopTimer);
     if (previewBoundsTimer !== null) window.clearTimeout(previewBoundsTimer);
   });
   renderPinState($('pin-on-top-btn').getAttribute?.('aria-pressed') === 'true');

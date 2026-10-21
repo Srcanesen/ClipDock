@@ -707,8 +707,8 @@ body[data-phase="no-project"] .ins-foot:has(#download-youtube-btn:not([data-inte
 #first-use-dialog::backdrop { background: rgba(14, 11, 9, .7); }
 #first-use-dialog h2 { margin: 0 0 8px; font-family: var(--f-display); font-size: 22px; font-weight: 560; font-variation-settings: "opsz" 30, "SOFT" 100; }
 #first-use-dialog p { color: var(--fixer); margin-bottom: 16px; }
-.pexels-preview-overlay { position: fixed; z-index: 50; background: #000; border-radius: 4px; overflow: hidden; }
-.pexels-preview-overlay video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.pexels-preview-overlay { grid-area: 1 / 1; position: relative; z-index: 4; aspect-ratio: 16 / 9; background: #000; border-radius: 4px; overflow: hidden; }
+.pexels-preview-overlay video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
