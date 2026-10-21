@@ -300,9 +300,9 @@ test('GalleryDlWorker returns a fixed truthful error for direct Story metadata',
 
 test('Pinterest direct metadata sanitizes URL and path-shaped display text only', () => {
   const url = 'https://private.example/secret';
-  const fileUrl = 'file:///Users/sercan/secret.mov';
-  const posixPath = '/Users/sercan/secret.mov';
-  const windowsPath = String.raw`C:\\Users\\sercan\\secret.mov`;
+  const fileUrl = 'file:///Users/alice/secret.mov';
+  const posixPath = '/Users/alice/secret.mov';
+  const windowsPath = String.raw`C:\\Users\\alice\\secret.mov`;
   const source = [
     [2, {id: '123456789', count: 1, title: `Pin ${url} ${fileUrl} ${posixPath} ${windowsPath}`, creator: `Creator ${url} ${posixPath} ${windowsPath}`}],
     [3, 'https://example.invalid/item.jpg', {pin_id: '123456789', extension: 'jpg', title: `Item ${url} ${fileUrl} ${posixPath} ${windowsPath}`, creator: `Author ${url} ${posixPath} ${windowsPath}`}],
