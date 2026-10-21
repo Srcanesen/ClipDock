@@ -1,8 +1,8 @@
 # ClipDock
 
 A free, open-source **DaVinci Resolve plugin** that finds, downloads and drops media into
-your project without leaving Resolve. Search YouTube, Pexels and Pinterest or paste a
-public link, then send the clip to the Media Pool, the playhead or the end of the timeline.
+your project without leaving Resolve. Search YouTube, Pexels, Pixabay and Pinterest or
+paste a public link, then send the clip to the Media Pool, the playhead or the end of the timeline.
 ClipDock runs as a Workflow Integration panel inside DaVinci Resolve Studio.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue)
@@ -13,7 +13,7 @@ ClipDock runs as a Workflow Integration panel inside DaVinci Resolve Studio.
 
 ## What it does
 
-- Find media through YouTube, Pinterest and Pexels search, or paste a supported link.
+- Find media through YouTube, Pinterest, Pexels and Pixabay search, or paste a supported link.
 - Download a whole YouTube video or pick an In/Out range before downloading.
 - Choose video quality, or download YouTube audio only and optional SRT subtitles
   when available. Keep the original video or prepare a Fast or Edit-ready version.
@@ -28,11 +28,16 @@ ClipDock runs as a Workflow Integration panel inside DaVinci Resolve Studio.
 |---|---|---|
 | YouTube | Search and single-video links; full clips, ranges, audio and subtitles | yt-dlp, ffmpeg, ffprobe and a supported JavaScript runtime |
 | Pexels | Search stock photos and videos | A free [Pexels API key](https://www.pexels.com/api/); saved in macOS Keychain |
+| Pixabay | Search stock videos (no photos) | A free [Pixabay API key](https://pixabay.com/api/docs/); saved in macOS Keychain |
 | Pinterest | Search or public Pin links; images, videos and carousel items | gallery-dl 1.28+; videos also need the yt-dlp Python module and ffmpeg |
 | Instagram / X / Facebook | Public video links | yt-dlp, ffmpeg and ffprobe |
 
 Pinterest boards, profiles and private Pins are not supported.
 Social sources accept links; they do not have search in ClipDock.
+Pexels and Pixabay share the **Stock** tab; switch between them with its source toggle.
+
+**Pixabay key:** while logged in to Pixabay, open the [API docs](https://pixabay.com/api/docs/);
+your key appears under **Parameters → `key`**. Paste it in ClipDock **Settings**.
 
 ## Requirements
 
@@ -127,7 +132,7 @@ Completed files appear in the panel and can be reused from **History**.
   or Node.js 22+ is discoverable. Use `CLIPDOCK_DENO_PATH` for a specific Deno executable.
 - **Pinterest reports gallery-dl missing** → Install gallery-dl 1.28+ or set
   `CLIPDOCK_GALLERYDL_PATH`. Only public Pins are supported.
-- **Pexels search is disconnected** → Enter a valid Pexels API key in **Settings**.
+- **Pexels or Pixabay search is disconnected** → Enter a valid API key for that source in **Settings**.
   If secure storage fails, check the connection message before trying again.
 
 ## Settings and files
@@ -140,7 +145,7 @@ leaves existing files in place; it does not move or delete them.
 **History** lists previous downloads, their availability and reuse actions.
 Its metadata is stored in `download-history.json` under Electron's `userData`
 directory, alongside `clipdock-settings.json`. Media stays in the download folder.
-On macOS, the Pexels API key is stored in Keychain.
+On macOS, the Pexels and Pixabay API keys are stored in Keychain.
 
 To select specific executables, set these variables to absolute executable paths
 in the environment used to launch Resolve:
@@ -178,14 +183,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and pull request guidance.
 
 ## Responsible use
 
-Downloading may breach a source service's terms. You are responsible for the rights
-to download and use media and for following applicable terms and laws.
+Only download and use content you own or are licensed to use. ClipDock does not grant
+any rights to third-party content. Downloading may breach a source service's terms;
+YouTube and social media downloads are subject to those platforms' terms. You are
+responsible for the rights to download and use media and for following applicable laws.
 ClipDock supports public content only and uses no logins, cookies or proxies.
 Pinterest search uses its public web interface, not an official API.
-Pexels media is subject to the [Pexels license](https://www.pexels.com/license/).
+Pexels media is subject to the [Pexels license](https://www.pexels.com/license/) and Pixabay
+media to the [Pixabay Content License](https://pixabay.com/service/license-summary/);
+ClipDock shows each source's attribution with its results.
 
 ClipDock is not affiliated with or endorsed by Blackmagic Design, Google/YouTube,
-Meta, X, Pinterest, Pexels, yt-dlp or gallery-dl.
+Meta, X, Pinterest, Pexels, Pixabay, yt-dlp or gallery-dl.
 
 ## License and credits
 
