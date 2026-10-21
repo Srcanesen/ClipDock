@@ -3,13 +3,12 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, win32 } from 'node:path';
 import { contains as pathContains } from './path-boundary';
-import { absoluteForPlatform, discoverBinary, LruCache, spawnBounded, fetchBounded, cleanJobDirectory, SharedProviderOperation } from './provider-platform';
-import { ProviderJobRunner, ProviderJobCancelledError, ProviderJobRejectedError, requireFfprobe, type ProviderJobContext } from './provider-job';
+import { absoluteForPlatform, discoverBinary, executable, installCandidates, LruCache, requireBinary, spawnBounded, fetchBounded, cleanJobDirectory, SharedProviderOperation, type VersionProbe } from './provider-platform';
+import { ProviderJobRunner, ProviderJobCancelledError, ProviderJobRejectedError, ProviderSession, requireFfprobe, type ProviderJobContext } from './provider-job';
 import { homedir, tmpdir } from 'node:os';
 import { discoverFfprobe } from './media-prep';
 import { VIDEO_EXTENSIONS } from './media-extensions';
-import { ManagedRoot } from './managed-root';
-import { AnchoredDir, SafeFsError, appendOwned, captureFile, createDirectory, openExclusive, prepareDirectory, verifyFile, writeExclusive, writeOwned, type OwnedFile } from './safe-fs';
+import { AnchoredDir, SafeFsError, appendOwned, captureFile, openExclusive, verifyFile, writeExclusive, writeOwned, type OwnedFile } from './safe-fs';
 import { randomUUID } from 'node:crypto';
 import { validateSocialUrl, validateYoutubeUrl, type SocialPlatform, type ValidSocialUrl, type ValidYoutubeUrl } from './ytdlp-url';
 
@@ -59,8 +58,6 @@ const BASE = ['--ignore-config', '--no-warnings', '--no-colors', '--no-playlist'
 const BEST_SELECTOR = 'bv*+ba/b';
 const MAX_STDERR = 64 * 1024;
 const MAX_STDOUT = 2 * 1024 * 1024;
-const VERSION_PROBE_TIMEOUT_MS = 3_000;
-const VERSION_PROBE_MAX_BYTES = 256 * 1024;
 const MAX_LOG = 128 * 1024;
 const MAX_THUMBNAIL = 5 * 1024 * 1024;
 const MAX_SUBTITLE_BYTES = 2 * 1024 * 1024;
@@ -77,33 +74,16 @@ const SOCIAL_ERRORS = new Set([
   'This post does not contain a supported video. Image-only posts are not supported.',
 ]);
 
-type VersionProbe = (candidate: string) => { code: number | null; text: string } | null;
-function probeVersion(candidate: string): { code: number | null; text: string } | null {
-  // retained for test seam compatibility; provider-platform owns the spawnSync probe
-  try {
-    const { spawnSync: sync } = require('node:child_process') as typeof import('node:child_process');
-    const result = sync(candidate, ['-version'], { shell: false, timeout: VERSION_PROBE_TIMEOUT_MS, encoding: 'utf8', maxBuffer: VERSION_PROBE_MAX_BYTES });
-    return { code: result.status, text: `${result.stdout ?? ''}${result.stderr ?? ''}` };
-  } catch { return null; }
-}
 export function discoverYtdlp(env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':')): string | null {
-  // Thin adapter: delegate candidate enumeration to provider-platform, preserving absolute+executable semantics
   const names = platform === 'win32' ? ['yt-dlp.exe', 'yt-dlp.bat'] : ['yt-dlp'];
-  const extra = [...(platform === 'darwin' ? ['/opt/homebrew/bin/yt-dlp', '/usr/local/bin/yt-dlp'] : []), ...(platform === 'win32' ? [join(env.ProgramFiles ?? 'C:\\Program Files', 'yt-dlp', 'yt-dlp.exe'), join(env.LOCALAPPDATA ?? '', 'yt-dlp', 'yt-dlp.exe')] : [])];
-  // ytdlp's override allows any executable absolute path (no version check)
+  // The override allows any executable absolute path (no version check).
   const configured = env.CLIPDOCK_YTDLP_PATH;
-  if (configured && isAbsolute(configured)) {
-    try {
-      const { accessSync: acc, constants: cons } = require('node:fs') as typeof import('node:fs');
-      acc(configured, cons.X_OK);
-      return configured;
-    } catch { /* fall through to PATH discovery */ }
-  }
-  return discoverBinary(names, null, { env, platform, pathEntries, extraCandidates: extra, allowNoVersion: true });
+  if (configured && isAbsolute(configured) && executable(configured)) return configured;
+  return discoverBinary(names, null, { env, platform, pathEntries, extraCandidates: installCandidates('yt-dlp', env, platform, {programDir: 'yt-dlp', localAppDataDir: 'yt-dlp'}) });
 }
-export function discoverFfmpeg(env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':'), probe: VersionProbe = probeVersion): string | null {
+export function discoverFfmpeg(env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':'), probe?: VersionProbe): string | null {
   const name = platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  const extra = [...(platform === 'darwin' ? ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', join(env.HOME ?? homedir(), 'bin', 'ffmpeg')] : []), ...(platform === 'win32' ? [join(env.ProgramFiles ?? 'C:\\Program Files', 'ffmpeg', 'bin', 'ffmpeg.exe'), join(env.LOCALAPPDATA ?? '', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'), join(env.USERPROFILE ?? '', 'bin', 'ffmpeg.exe')] : [])];
+  const extra = installCandidates('ffmpeg', env, platform, {homeBin: true, programDir: 'ffmpeg/bin', localAppDataDir: 'Microsoft/WinGet/Links'});
   return discoverBinary([name], ['-version'], { env, platform, pathEntries, envKey: 'CLIPDOCK_FFMPEG_PATH', extraCandidates: extra, versionIdentity: 'ffmpeg version', probe });
 }
 /**
@@ -114,13 +94,13 @@ export function discoverFfmpeg(env = process.env, platform = process.platform, p
  */
 export function discoverJsRuntime(env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':'), probe?: VersionProbe): string | null {
   const home = env.HOME ?? homedir();
-  const deno = discoverBinary([platform === 'win32' ? 'deno.exe' : 'deno'], ['--version'], { env, platform, pathEntries, envKey: 'CLIPDOCK_DENO_PATH', extraCandidates: [...(platform === 'darwin' ? ['/opt/homebrew/bin/deno', '/usr/local/bin/deno'] : []), ...(platform === 'win32' ? [join(env.USERPROFILE ?? '', '.deno', 'bin', 'deno.exe')] : [join(home, '.deno', 'bin', 'deno')])], versionIdentity: 'deno ', versionCheck: ({ text }) => runtimeVersionSupported(text, /^deno (\S+)/, [2, 3, 0]), probe });
+  const deno = discoverBinary([platform === 'win32' ? 'deno.exe' : 'deno'], ['--version'], { env, platform, pathEntries, envKey: 'CLIPDOCK_DENO_PATH', extraCandidates: [...installCandidates('deno', env, platform), ...(platform === 'win32' ? [join(env.USERPROFILE ?? '', '.deno', 'bin', 'deno.exe')] : [join(home, '.deno', 'bin', 'deno')])], versionIdentity: 'deno ', versionCheck: ({ text }) => runtimeVersionSupported(text, /^deno (\S+)/, [2, 3, 0]), probe });
   if (deno) return `deno:${deno}`;
-  const node = discoverBinary([platform === 'win32' ? 'node.exe' : 'node'], ['--version'], { env, platform, pathEntries, extraCandidates: platform === 'darwin' ? ['/opt/homebrew/bin/node', '/usr/local/bin/node'] : [], versionIdentity: 'v', versionCheck: ({ text }) => runtimeVersionSupported(text, /^v(\S+)/, [22, 0, 0]), probe });
+  const node = discoverBinary([platform === 'win32' ? 'node.exe' : 'node'], ['--version'], { env, platform, pathEntries, extraCandidates: installCandidates('node', env, platform), versionIdentity: 'v', versionCheck: ({ text }) => runtimeVersionSupported(text, /^v(\S+)/, [22, 0, 0]), probe });
   if (node) return `node:${node}`;
-  const bun = discoverBinary([platform === 'win32' ? 'bun.exe' : 'bun'], ['--version'], { env, platform, pathEntries, extraCandidates: [...(platform === 'darwin' ? ['/opt/homebrew/bin/bun', '/usr/local/bin/bun'] : []), join(platform === 'win32' ? env.USERPROFILE ?? home : home, '.bun', 'bin', platform === 'win32' ? 'bun.exe' : 'bun')], versionCheck: ({ code, text }) => code === 0 && runtimeVersionSupported(text, /^(\S+)/, [1, 2, 11]), probe });
+  const bun = discoverBinary([platform === 'win32' ? 'bun.exe' : 'bun'], ['--version'], { env, platform, pathEntries, extraCandidates: [...installCandidates('bun', env, platform), join(platform === 'win32' ? env.USERPROFILE ?? home : home, '.bun', 'bin', platform === 'win32' ? 'bun.exe' : 'bun')], versionCheck: ({ code, text }) => code === 0 && runtimeVersionSupported(text, /^(\S+)/, [1, 2, 11]), probe });
   if (bun) return `bun:${bun}`;
-  const quickjs = discoverBinary([platform === 'win32' ? 'qjs.exe' : 'qjs'], ['--help'], { env, platform, pathEntries, extraCandidates: platform === 'darwin' ? ['/opt/homebrew/bin/qjs', '/usr/local/bin/qjs'] : [], versionCheck: ({ code, text }) => code !== null && runtimeVersionSupported(text, /^QuickJS(?:-ng)?\s+version\s+(\S+)/, text.includes('QuickJS-ng') ? [0] : [2023, 12, 9], text.includes('QuickJS-ng')), probe });
+  const quickjs = discoverBinary([platform === 'win32' ? 'qjs.exe' : 'qjs'], ['--help'], { env, platform, pathEntries, extraCandidates: installCandidates('qjs', env, platform), versionCheck: ({ code, text }) => code !== null && runtimeVersionSupported(text, /^QuickJS(?:-ng)?\s+version\s+(\S+)/, text.includes('QuickJS-ng') ? [0] : [2023, 12, 9], text.includes('QuickJS-ng')), probe });
   if (quickjs) return `quickjs:${quickjs}`;
   console.warn('No supported JavaScript runtime found. yt-dlp requires Deno >=2.3.0, Node >=22.0.0, Bun >=1.2.11, QuickJS >=2023-12-09, or QuickJS-ng >0. YouTube challenge solving may be unavailable.');
   return null;
@@ -335,7 +315,9 @@ export class YtdlpWorker {
   private readonly downloadTimeoutMs: number;
   private readonly thumbnailTimeoutMs: number;
   private readonly ffprobePath: string | null;
-  private sessionDir: string;
+  // Only named providers are pruned by workspace cleanup; recreation discards the old log identity.
+  private session!: ProviderSession;
+  private get sessionDir(): string { return this.session.path; }
   private readonly platform: NodeJS.Platform;
   private readonly processSpawn: Spawn;
   private readonly killGraceMs: number;
@@ -349,7 +331,6 @@ export class YtdlpWorker {
   private prefetchPending = false;
   private disposed = false;
   constructor(private readonly binary = discoverYtdlp(), private readonly spawn: Spawn = nodeSpawn as Spawn, private readonly fetcher: Fetch = globalThis.fetch as unknown as Fetch, private readonly options: WorkerOptions = {}) {
-    this.sessionDir = options.sessionDir ?? join(tmpdir(), 'clipdock', randomUUID());
     this.platform = options.platform ?? process.platform;
     this.processSpawn = options.processSpawn ?? nodeSpawn as Spawn;
     this.killGraceMs = options.killGraceMs ?? 3_000;
@@ -362,7 +343,7 @@ export class YtdlpWorker {
     this.now = options.now ?? Date.now;
     this.searchCache = new LruCache<string, SearchCacheEntry>(SEARCH_CACHE_MAX, SEARCH_CACHE_TTL, this.now);
     this.metadataStore = metadataStore(this.spawn, JSON.stringify([this.binary, this.jsRuntime]), this.now);
-    this.captureLogDirectory();
+    this.captureLogDirectory(options.sessionDir ?? join(tmpdir(), 'clipdock', randomUUID()));
   }
   /**
    * Move future jobs to a new session directory (download folder change). The
@@ -370,68 +351,42 @@ export class YtdlpWorker {
    * started afterwards use the new root.
    */
   setSessionDir(dir: string): void {
-    this.sessionDir = dir;
     this.prefetchWorker?.setSessionDir(dir);
-    this.captureLogDirectory();
+    this.captureLogDirectory(dir);
   }
-  private assertAvailable(): string { if (!this.binary) throw new Error('yt-dlp was not found. Install yt-dlp or set CLIPDOCK_YTDLP_PATH to an absolute executable path.'); return this.binary; }
-  private logDirectory!: AnchoredDir;
-  private logParent!: AnchoredDir;
   private stopObservingLogDirectory?: () => void;
-  private captureLogDirectory(): void {
+  private captureLogDirectory(dir: string): void {
     this.stopObservingLogDirectory?.();
-    const path = prepareDirectory(this.sessionDir).verify();
-    this.sessionDir = path;
-    const root = ManagedRoot.capture(dirname(path));
-    const parent = AnchoredDir.capture(root.verify(), root);
-    this.logParent = parent;
-    this.logDirectory = AnchoredDir.capture(path, root); this.logFile = null;
+    if (this.session) this.session.capture(dir);
+    else this.session = new ProviderSession(dir, ['youtube', 'social'], () => { this.logFile = null; });
+    const {path, root, parent} = this.session;
+    this.logFile = null;
     this.stopObservingLogDirectory = this.jobs.observeDirectories(created => {
       try {
         // Only a newly admitted job supplies fresh provider authority. Its own
         // captured chain and the original managed parent must both still match.
         if (dirname(created.verify()) !== path) return;
         parent.verify();
-        try { this.logDirectory.verify(); }
+        try { this.session.directory.verify(); }
         catch { this.logFile = null; }
-        this.logDirectory = AnchoredDir.capture(path, root);
+        this.session.directory = AnchoredDir.capture(path, root);
         if (this.logFile) {
           try { verifyFile(this.logFile); }
           catch {
             // Cleanup can remove the log while protected media keeps its parent.
             // An existing replacement keeps the old, refusing file identity.
-            try { lstatSync(this.logDirectory.child('clipdock.log'), {bigint: true}); }
+            try { lstatSync(this.session.directory.child('clipdock.log'), {bigint: true}); }
             catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') this.logFile = null; }
           }
         }
       } catch { /* diagnostics never refresh authority after an unsafe admission */ }
     });
   }
-  private admitProviderDirectory(): void {
-    try { this.logDirectory.verify(); }
-    catch (error) {
-      // Only named providers are pruned by workspace cleanup. An arbitrary
-      // caller-selected session directory remains an immutable boundary.
-      if (!['youtube', 'social'].includes(basename(this.sessionDir))) throw error;
-      // Cleanup may prune this provider. Only absence permits recreation, and
-      // only through the original parent; an existing replacement stays rejected.
-      const path = this.logParent.child(basename(this.sessionDir));
-      try { lstatSync(path); }
-      catch (missing) {
-        if ((missing as NodeJS.ErrnoException).code !== 'ENOENT') throw missing;
-        this.logDirectory = createDirectory(this.logParent, basename(path));
-        this.logFile = null;
-        return;
-      }
-      throw error;
-    }
-  }
-  private readonly jobDirectories = new Map<string, AnchoredDir>();
   private logFile: OwnedFile | null = null;
   private log(message: string): void {
     try {
       const line = `${new Date().toISOString()} ${sanitized(message).slice(0, MAX_STDERR)}\n`;
-      const directory = this.logDirectory;
+      const directory = this.session.directory;
       if (!this.logFile) {
         try {
           const opened = openExclusive(directory, 'clipdock.log');
@@ -445,22 +400,8 @@ export class YtdlpWorker {
     } catch { /* diagnostics must never prevent reporting or cleanup */ }
   }
   private async runJob<T>(details: JobDetails, body: (context: ProviderJobContext) => Promise<T>, cancelledMessage = 'Download cancelled.', mapError?: (error: Error) => Error): Promise<T> {
-    let current: typeof this.current = null;
     const jobId = details.jobId ?? randomUUID();
-    try {
-      return await this.jobs.run(jobId, context => {
-        current = {...details, context};
-        this.activeJobs.set(jobId, current);
-        // A shared wait owns no child and must not replace a running extractor's
-        // context, or prevent explicit work alongside speculative prefetch.
-        if (!details.sharedMetadata) this.current = current;
-        if (details.jobDir) {
-          this.admitProviderDirectory();
-          context.createDirectory(details.jobDir);
-          this.jobDirectories.set(details.jobDir, AnchoredDir.capture(details.jobDir, this.logDirectory.root));
-        }
-        return body(context);
-      }, {cancelledMessage, mapError, notifyFailure: details.kind === 'download', busyMessage: 'Another ClipDock URL job is already active.', invalidMessage: details.kind === 'metadata' ? 'Invalid social download request.' : 'Invalid download request.', prerequisites: () => {
+    return this.session.run(this.jobs, jobId, details.jobDir, body, {cancelledMessage, mapError, notifyFailure: details.kind === 'download', busyMessage: 'Another ClipDock URL job is already active.', invalidMessage: details.kind === 'metadata' ? 'Invalid social download request.' : 'Invalid download request.', prerequisites: () => {
         if (!details.sharedMetadata && this.current) throw new ProviderJobRejectedError('busy', 'Another ClipDock URL job is already active.');
         if (details.kind === 'download') {
           if (!this.ffmpegPath || !absoluteForPlatform(this.ffmpegPath, this.platform)) throw new Error('ffmpeg was not found. Install ffmpeg or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.');
@@ -470,17 +411,22 @@ export class YtdlpWorker {
           const message = details.kind === 'download' ? 'download cancelled' : details.cancelledLog;
           if (message) this.log(message);
         }
-      }});
-    } finally {
-      this.jobDirectories.delete(details.jobDir);
-      if (this.current === current) this.current = null;
-      if (current && this.activeJobs.get(jobId) === current) this.activeJobs.delete(jobId);
-    }
+      }}, context => {
+        const current = {...details, context};
+        this.activeJobs.set(jobId, current);
+        // A shared wait owns no child and must not replace a running extractor's
+        // context, or prevent explicit work alongside speculative prefetch.
+        if (!details.sharedMetadata) this.current = current;
+        return () => {
+          if (this.current === current) this.current = null;
+          if (this.activeJobs.get(jobId) === current) this.activeJobs.delete(jobId);
+        };
+      });
   }
   private begin(args: string[], details: JobDetails, onLine?: (line: string) => void, onStderrLine?: (line: string) => void): Promise<import('./provider-platform').SpawnBoundedResult> {
     const context = this.current!.context;
     context.check();
-    const bounded = spawnBounded(this.assertAvailable(), this.jsRuntime ? [...args.slice(0, 1), '--js-runtimes', this.jsRuntime, ...args.slice(1)] : args, this.spawn, {
+    const bounded = spawnBounded(requireBinary(this.binary, 'yt-dlp was not found. Install yt-dlp or set CLIPDOCK_YTDLP_PATH to an absolute executable path.'), this.jsRuntime ? [...args.slice(0, 1), '--js-runtimes', this.jsRuntime, ...args.slice(1)] : args, this.spawn, {
       env: literalPathEnv(args), maxStdout: MAX_STDOUT, maxStderr: MAX_STDERR, onLine, onStderrLine,
       timeoutMs: details.kind === 'download' ? this.downloadTimeoutMs : this.metadataTimeoutMs,
       killGraceMs: this.killGraceMs, platform: this.platform, processSpawn: this.processSpawn,
@@ -683,7 +629,7 @@ export class YtdlpWorker {
       const subtitleLanguage = subtitleTag('videoId' in valid && options.subtitles ? await this.subtitleInfo(valid, context) : null, options.subtitleLanguage);
       const cachedInfo = 'videoId' in valid && !selection ? this.metadataStore.raw.get(valid.videoId) : null;
       const infoPath = join(jobDir, 'source.info.json');
-      if (cachedInfo) writeExclusive(this.jobDirectories.get(jobDir)!, basename(infoPath), cachedInfo);
+      if (cachedInfo) writeExclusive(this.session.jobDirectories.get(jobDir)!, basename(infoPath), cachedInfo);
       let bytesWritten = false;
       const combinedSubtitles = options.subtitles && !selection;
       const runDownload = (loaded: boolean) => this.begin([...BASE, '--quiet', '--progress', '--progress-delta', '0.25', '--newline', '--progress-template', 'download:C|%(progress.status)s|%(progress._percent).1f|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s', '--progress-template', 'postprocess:Q|%(progress.status)s', '--print', 'before_dl:S|%(format_id)s|%(requested_formats.:.filesize)l|%(filesize,filesize_approx)s', '--print', 'after_move:P|%(filepath)s', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', literalPath(ffmpegPath, this.platform), ...(selection ? ['--download-sections', `*${selection.start.toFixed(3)}-${selection.end.toFixed(3)}`, '--force-keyframes-at-cuts'] : []), ...(combinedSubtitles ? ['--write-subs', '--write-auto-subs', '--sub-langs', subtitleLanguage, '--sub-format', 'srt/vtt', '--ignore-errors'] : []), ...conversion, '-f', selectedFormat, ...formatSort, '-o', literalPath(join(jobDir.replace(/%/g, '%%'), selection ? `%(title).120B [%(id)s] [${selection.label.replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 50)}].%(ext)s` : '%(title).150B [%(id)s].%(ext)s'), this.platform, true), ...(loaded ? ['--load-info-json', literalPath(infoPath, this.platform)] : [valid.url])], { jobDir, kind: 'download', emit, jobId }, (line) => {
@@ -721,7 +667,7 @@ export class YtdlpWorker {
       });
       if (cachedInfo && result.code !== 0 && (/HTTP.*(?:403|410)|expired|Requested format is not available/i.test(result.stderr) || (!bytesWritten && !wroteMedia()))) {
         if ('videoId' in valid) this.metadataStore.raw.delete(valid.videoId);
-        cleanJobDirectory(this.jobDirectories.get(jobDir)!, [infoPath]);
+        cleanJobDirectory(this.session.jobDirectories.get(jobDir)!, [infoPath]);
         output = null; streams = []; weights = []; overall = 0;
         result = await runDownload(false);
         context.check();
@@ -768,7 +714,7 @@ export class YtdlpWorker {
           context.check();
           // Full clips use the existing cue normalizer to write SRT directly.
           // This avoids a failing subtitle converter poisoning the media exit code.
-          const directory = this.jobDirectories.get(jobDir)!;
+          const directory = this.session.jobDirectories.get(jobDir)!;
           const candidates = readdirSync(directory.verify()).filter(name => /\.srt$/i.test(name) || (!selection && /\.vtt$/i.test(name))).filter(name => {
             const path = directory.child(name);
             if (!lstatSync(path).isSymbolicLink()) return true;
@@ -802,7 +748,7 @@ export class YtdlpWorker {
           }
         }
       }
-      cleanJobDirectory(this.jobDirectories.get(jobDir)!, [filePath, ...(subtitlePath ? [subtitlePath] : []), ...subtitlePreserved]);
+      cleanJobDirectory(this.session.jobDirectories.get(jobDir)!, [filePath, ...(subtitlePath ? [subtitlePath] : []), ...subtitlePreserved]);
       context.publish(jobDir);
       return { filePath, fileName: basename(filePath), subtitlePath, subtitleFileName: subtitlePath ? basename(subtitlePath) : undefined, warning };
     }, 'Download cancelled.', error => {
@@ -827,13 +773,13 @@ export class YtdlpWorker {
     return this.runJob({jobDir, kind: 'metadata'}, async context => {
       const raw = await this.subtitleInfo(valid, context);
       const infoPath = join(jobDir, 'source.info.json');
-      if (raw) writeExclusive(this.jobDirectories.get(jobDir)!, basename(infoPath), raw);
+      if (raw) writeExclusive(this.session.jobDirectories.get(jobDir)!, basename(infoPath), raw);
       const runSubtitles = (loaded: boolean) => this.begin([...BASE, '--quiet', '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', subtitleTag(raw, language as SubtitleLanguage), '--convert-subs', 'vtt', '-o', literalPath(join(jobDir.replace(/%/g, '%%'), 'captions.%(ext)s'), this.platform, true), ...(loaded ? ['--load-info-json', literalPath(infoPath, this.platform)] : [valid.url])], {jobDir, kind: 'metadata'});
       let result = await runSubtitles(!!raw);
       context.check();
       if (raw && result.code !== 0) {
         this.metadataStore.raw.delete(valid.videoId);
-        cleanJobDirectory(this.jobDirectories.get(jobDir)!, [infoPath]);
+        cleanJobDirectory(this.session.jobDirectories.get(jobDir)!, [infoPath]);
         result = await runSubtitles(false);
       }
       context.check();

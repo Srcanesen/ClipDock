@@ -1,6 +1,6 @@
-import { closeSync } from 'node:fs';
+import { closeSync, lstatSync } from 'node:fs';
 import { ManagedRoot } from './managed-root';
-import { AnchoredDir, captureFile, createDirectory, openExclusive, removeOwned, removePrivateDir, verifyFile, type OwnedFile } from './safe-fs';
+import { AnchoredDir, captureFile, createDirectory, openExclusive, prepareDirectory, removeOwned, removePrivateDir, verifyFile, type OwnedFile } from './safe-fs';
 import { basename, dirname, isAbsolute, relative, sep } from 'node:path';
 
 export class ProviderJobCancelledError extends Error {
@@ -51,7 +51,7 @@ export type ProviderJobContext = {
   /** Start provider work, register any returned artifact before checking abort, and await cancellation. */
   perform<T>(operation: () => Promise<T>, cancel: () => ProviderCancellation | void, register?: (value: T) => void): Promise<T>;
 };
-type RunOptions<T> = {
+export type RunOptions<T> = {
   cancelledMessage?: string;
   cancelledEventMessage?: string;
   notifyFailure?: boolean | ((error: Error) => boolean);
@@ -300,5 +300,106 @@ export class ProviderJobRunner {
     this.cancel();
     await Promise.all(pending);
     this.directoryObservers.clear();
+  }
+}
+
+/** A provider's session directory under its managed parent, and the private job
+ * directories admitted into it. Workspace cleanup prunes only named provider
+ * directories; admission recreates an absent one, only through the original parent.
+ */
+export class ProviderSession {
+  path!: string;
+  root!: ManagedRoot;
+  parent!: AnchoredDir;
+  directory!: AnchoredDir;
+  readonly jobDirectories = new Map<string, AnchoredDir>();
+  constructor(path: string, private readonly prunable: readonly string[], private readonly onRecreated?: () => void) { this.capture(path); }
+
+  /** Move future jobs to a new session directory; active jobs keep their captured directories. */
+  capture(path: string): void {
+    const verified = prepareDirectory(path).verify();
+    const root = ManagedRoot.capture(dirname(verified));
+    const parent = AnchoredDir.capture(root.verify(), root);
+    const directory = AnchoredDir.capture(verified, root);
+    this.path = verified; this.root = root; this.parent = parent; this.directory = directory;
+  }
+
+  admit(): void {
+    try { this.directory.verify(); }
+    catch (error) {
+      // An arbitrary caller-selected session directory remains an immutable boundary.
+      const name = basename(this.path);
+      if (!this.prunable.includes(name)) throw error;
+      // Only absence permits recreation; an existing replacement stays rejected.
+      try { lstatSync(this.parent.child(name)); }
+      catch (missing) {
+        if ((missing as NodeJS.ErrnoException).code !== 'ENOENT') throw missing;
+        this.directory = createDirectory(this.parent, name);
+        this.onRecreated?.();
+        return;
+      }
+      throw error;
+    }
+  }
+
+  /** Run a job whose non-empty jobDir is created privately inside the admitted session.
+   * enter runs first in the job body; the callback it returns runs after the job settles.
+   */
+  async run<T>(
+    jobs: ProviderJobRunner, jobId: string, jobDir: string, body: (context: ProviderJobContext) => Promise<T>,
+    options: RunOptions<T>, enter?: (context: ProviderJobContext) => () => void,
+  ): Promise<T> {
+    let exit: (() => void) | undefined;
+    try {
+      return await jobs.run(jobId, context => {
+        exit = enter?.(context);
+        if (jobDir) {
+          this.admit();
+          context.createDirectory(jobDir);
+          this.jobDirectories.set(jobDir, AnchoredDir.capture(jobDir, this.root));
+        }
+        return body(context);
+      }, options);
+    } finally { this.jobDirectories.delete(jobDir); exit?.(); }
+  }
+}
+
+type CancellableBody = {body?: {cancel(reason?: unknown): Promise<void>} | null};
+
+/** Cancellation must not wait for a hostile upstream body to acknowledge it. */
+export function cancelBody(response: CancellableBody): void {
+  void response.body?.cancel().catch(() => undefined);
+}
+
+/** Settle with `message` on abort without waiting for the work itself. */
+export function abortable<T>(work: Promise<T>, signal: AbortSignal, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = (): void => reject(new Error(message));
+    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    if (signal.aborted) { abort(); return; }
+    signal.addEventListener('abort', abort, {once: true});
+  });
+}
+
+/** Fetch whose cancellation never waits for headers or a late body. A response
+ * arriving after abort has its body cancelled in the background; after user
+ * cancellation that termination joins `terminations`, so only disposal awaits it.
+ */
+export async function abortableFetch<U, I, R extends CancellableBody>(
+  url: U, init: I,
+  context: {fetch: (url: U, init: I) => Promise<R>; signal: AbortSignal; cancelledMessage: string; terminations?: Set<Promise<unknown>>},
+): Promise<R> {
+  const {signal, terminations} = context;
+  const tracked = (): boolean => !!terminations && signal.reason instanceof ProviderJobCancelledError;
+  const pending = context.fetch(url, init);
+  void pending.then(response => { if (signal.aborted && !tracked()) cancelBody(response); }, () => undefined);
+  try { return await abortable(pending, signal, context.cancelledMessage); }
+  catch (error) {
+    if (tracked()) {
+      const termination = pending.then(response => response.body?.cancel(), () => undefined).catch(() => undefined);
+      terminations!.add(termination);
+      void termination.finally(() => terminations!.delete(termination));
+    }
+    throw error;
   }
 }

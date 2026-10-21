@@ -16,7 +16,7 @@ test('discoverBinary finds PATH candidate and respects executable + versionIdent
     chmodSync(bin, 0o755);
     const env = { PATH: dir, CUSTOM_PATH: bin };
     // plain discovery without version
-    const found = discoverBinary(['mybin'], null, { env, platform: 'linux', pathEntries: [dir], extraCandidates: [], allowNoVersion: true });
+    const found = discoverBinary(['mybin'], null, { env, platform: 'linux', pathEntries: [dir], extraCandidates: [] });
     assert.equal(found, bin);
     // versionIdentity success
     const probeOk = () => ({ code: 0, text: 'mybin version 1.0' });
@@ -28,14 +28,14 @@ test('discoverBinary finds PATH candidate and respects executable + versionIdent
     assert.equal(notFound, null);
     // envKey override absolute executable takes precedence
     const env2 = { PATH: '', CUSTOM_PATH: bin, CLIPDOCK_CUSTOM_PATH: bin };
-    const viaEnv = discoverBinary(['other'], null, { env: env2, platform: 'linux', pathEntries: [], envKey: 'CLIPDOCK_CUSTOM_PATH', allowNoVersion: true });
+    const viaEnv = discoverBinary(['other'], null, { env: env2, platform: 'linux', pathEntries: [], envKey: 'CLIPDOCK_CUSTOM_PATH' });
     assert.equal(viaEnv, bin);
     // non-executable not found
     const dir2 = tempRoot('clipdock-provider-discover2-');
     const nonExec = path.join(dir2, 'mybin');
     writeFileSync(nonExec, '#!/bin/sh\n');
     chmodSync(nonExec, 0o644);
-    const notExec = discoverBinary(['mybin'], null, { env: { PATH: dir2 }, platform: 'linux', pathEntries: [dir2], allowNoVersion: true });
+    const notExec = discoverBinary(['mybin'], null, { env: { PATH: dir2 }, platform: 'linux', pathEntries: [dir2] });
     assert.equal(notExec, null);
     rmSync(dir2, { recursive: true, force: true });
   } finally { rmSync(dir, { recursive: true, force: true }); }

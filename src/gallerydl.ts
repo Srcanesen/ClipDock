@@ -6,13 +6,11 @@
 
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { AnchoredDir, createDirectory, prepareDirectory } from './safe-fs';
-import { ManagedRoot } from './managed-root';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { contains as pathContains } from './path-boundary';
-import { discoverBinary, executable, absoluteForPlatform, LruCache, spawnBounded, cleanJobDirectory } from './provider-platform';
-import { ProviderJobRunner, type ProviderJobContext } from './provider-job';
-import { homedir, tmpdir } from 'node:os';
+import { discoverBinary, installCandidates, LruCache, requireBinary, spawnBounded, cleanJobDirectory } from './provider-platform';
+import { ProviderJobRunner, ProviderSession, abortableFetch, type ProviderJobContext } from './provider-job';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { pinterestPinHost, validatePinterestSearchQuery, validatePinterestShortUrl, validatePinterestUrl, type ValidPinterestUrl } from './ytdlp-url';
 import { literalPath, literalPathEnv } from './ytdlp';
@@ -71,7 +69,7 @@ export type PinterestDownloadResult = {
 
 export type GalleryDlProbe = (candidate: string) => { code: number | null; text: string } | null;
 type Spawn = (binary: string, args: string[], options: { shell: false; detached?: boolean; env?: NodeJS.ProcessEnv }) => ChildProcess;
-type FetchResponse = { ok: boolean; status: number; url?: string; headers: { get(name: string): string | null }; arrayBuffer(): Promise<ArrayBuffer> };
+type FetchResponse = { ok: boolean; status: number; url?: string; headers: { get(name: string): string | null }; body?: ReadableStream<Uint8Array> | null; arrayBuffer(): Promise<ArrayBuffer> };
 type Fetch = (url: string, init: { redirect: 'manual' | 'follow'; signal: AbortSignal }) => Promise<FetchResponse>;
 type GalleryDlOptions = {
   sessionDir?: string;
@@ -109,8 +107,6 @@ const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
 const sizeLimitMessage = (kind: 'image' | 'video'): string => `This ${kind} exceeds ClipDock’s ${kind === 'image' ? '20 MB' : '2 GB'} download limit.`;
 const NETWORK_HELPER_TIMEOUT_MS = 10_000;
-const VERSION_PROBE_TIMEOUT_MS = 3_000;
-const VERSION_PROBE_MAX_BYTES = 256 * 1024;
 const METADATA_TIMEOUT_MS = 30_000;
 const DOWNLOAD_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const MAX_OUTPUT_FILES = 64;
@@ -129,18 +125,6 @@ const PINTEREST_SEARCH_TOO_LARGE = 'Search results were too large.';
 const PINTEREST_DOWNLOAD_ERROR = 'Pinterest download failed.';
 const PINTEREST_PRIVATE_ERROR = 'This Pin is private or requires login. Only public Pins are supported.';
 const PINTEREST_YTDLP_ERROR = 'Pinterest video download requires the yt-dlp Python module. Install yt-dlp, then retry.';
-
-function probeVersion(candidate: string): { code: number | null; text: string } | null {
-  try {
-    const { spawnSync: sync } = require('node:child_process') as typeof import('node:child_process');
-    const result = sync(candidate, ['--version'], { shell: false, timeout: VERSION_PROBE_TIMEOUT_MS, encoding: 'utf8', maxBuffer: VERSION_PROBE_MAX_BYTES });
-    return { code: result.status, text: `${result.stdout ?? ''}${result.stderr ?? ''}` };
-  } catch { return null; }
-}
-function versionSupported(candidate: string, probe: GalleryDlProbe): boolean {
-  const result = probe(candidate);
-  return result?.code === 0 && galleryDlVersionSupported(result.text);
-}
 
 /** Parse the first semantic version printed by gallery-dl. */
 export function parseGalleryDlVersion(value: unknown): [number, number, number] | null {
@@ -170,24 +154,13 @@ export function discoverGalleryDl(
   env = process.env,
   platform = process.platform,
   pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':'),
-  probe: GalleryDlProbe = probeVersion,
+  probe?: GalleryDlProbe,
 ): string | null {
-  const names = platform === 'win32' ? ['gallery-dl.exe'] : ['gallery-dl'];
-  const extra = [...(platform === 'darwin' ? ['/opt/homebrew/bin/gallery-dl', '/usr/local/bin/gallery-dl', join(env.HOME || homedir(), 'bin', 'gallery-dl')] : []), ...(platform === 'win32' ? [join(env.ProgramFiles ?? 'C:\\Program Files', 'gallery-dl', 'gallery-dl.exe'), join(env.LOCALAPPDATA ?? '', 'gallery-dl', 'gallery-dl.exe'), join(env.USERPROFILE ?? '', 'bin', 'gallery-dl.exe')] : [])];
-  // Use provider-platform for candidate enumeration but preserve version floor check
-  const configured = env.CLIPDOCK_GALLERYDL_PATH;
-  const candidates = [
-    ...(configured && absoluteForPlatform(configured, platform) ? [configured] : []),
-    ...pathEntries.filter(Boolean).flatMap((directory) => names.map((name) => join(directory, name))),
-    ...extra,
-  ];
-  const seen = new Set<string>();
-  for (const candidate of candidates) {
-    if (seen.has(candidate) || !absoluteForPlatform(candidate, platform) || !executable(candidate)) continue;
-    seen.add(candidate);
-    if (versionSupported(candidate, probe)) return candidate;
-  }
-  return null;
+  return discoverBinary([platform === 'win32' ? 'gallery-dl.exe' : 'gallery-dl'], ['--version'], {
+    env, platform, pathEntries, envKey: 'CLIPDOCK_GALLERYDL_PATH', probe,
+    extraCandidates: installCandidates('gallery-dl', env, platform, {homeBin: true, programDir: 'gallery-dl', localAppDataDir: 'gallery-dl'}),
+    versionCheck: ({code, text}) => code === 0 && galleryDlVersionSupported(text),
+  });
 }
 
 function safeText(value: unknown, max = 300): string | null {
@@ -563,10 +536,8 @@ function searchStderrFailed(stderr: string): boolean {
 export class GalleryDlWorker {
   private readonly jobs = new ProviderJobRunner({cancelledMessage: 'Download cancelled.', busyMessage: 'Another Pinterest job is already active.', disposedMessage: 'Pinterest worker is shut down.'});
   private current: (JobDetails & {context: ProviderJobContext}) | null = null;
-  private sessionDir: string;
-  private sessionDirectory!: AnchoredDir;
-  private sessionParent!: AnchoredDir;
-  private readonly jobDirectories = new Map<string, AnchoredDir>();
+  // Only the named provider is pruned by cleanup; a selected session root remains immutable.
+  private readonly session: ProviderSession;
   private readonly platform: NodeJS.Platform;
   private readonly processSpawn: Spawn;
   private readonly killGraceMs: number;
@@ -582,8 +553,7 @@ export class GalleryDlWorker {
     private readonly spawn: Spawn = nodeSpawn as Spawn,
     options: GalleryDlOptions = {},
   ) {
-    this.sessionDir = resolve(options.sessionDir ?? join(tmpdir(), 'clipdock-gallerydl', randomUUID()));
-    this.captureSessionDirectory();
+    this.session = new ProviderSession(resolve(options.sessionDir ?? join(tmpdir(), 'clipdock-gallerydl', randomUUID())), ['pinterest']);
     this.platform = options.platform ?? process.platform;
     this.processSpawn = options.processSpawn ?? nodeSpawn as Spawn;
     this.killGraceMs = options.killGraceMs ?? 3_000;
@@ -595,59 +565,25 @@ export class GalleryDlWorker {
     this.searchCache = new LruCache<string, SearchCacheEntry>(SEARCH_CACHE_MAX, SEARCH_CACHE_TTL, this.now);
   }
 
-  setSessionDir(directory: string): void { this.captureSessionDirectory(resolve(directory)); }
-  private captureSessionDirectory(directory = this.sessionDir): void {
-    const path = prepareDirectory(directory).verify();
-    const root = ManagedRoot.capture(dirname(path));
-    const parent = AnchoredDir.capture(root.verify(), root);
-    const admitted = AnchoredDir.capture(path, root);
-    this.sessionDir = path; this.sessionParent = parent; this.sessionDirectory = admitted;
-  }
-  private admitProviderDirectory(): void {
-    try { this.sessionDirectory.verify(); }
-    catch (error) {
-      // Only the named provider is pruned by cleanup; a selected session root
-      // remains immutable. Recreate absence through the original parent only.
-      if (basename(this.sessionDir) !== 'pinterest') throw error;
-      const path = this.sessionParent.child(basename(this.sessionDir));
-      try { lstatSync(path); }
-      catch (missing) {
-        if ((missing as NodeJS.ErrnoException).code !== 'ENOENT') throw missing;
-        this.sessionDirectory = createDirectory(this.sessionParent, basename(path));
-        return;
-      }
-      throw error;
-    }
-  }
+  setSessionDir(directory: string): void { this.session.capture(resolve(directory)); }
   isActive(): boolean { return this.jobs.isActive(); }
   isDownloadActive(): boolean { return this.jobs.isActive() && this.current?.kind === 'download'; }
-  private assertAvailable(): string {
-    if (!this.binary) throw new Error('gallery-dl 1.28.0 or newer was not found. Install gallery-dl or set CLIPDOCK_GALLERYDL_PATH to an absolute executable path.');
-    return this.binary;
-  }
+  private assertAvailable(): string { return requireBinary(this.binary, 'gallery-dl 1.28.0 or newer was not found. Install gallery-dl or set CLIPDOCK_GALLERYDL_PATH to an absolute executable path.'); }
   private jobDirectory(prefix: 'metadata' | 'download' | 'search'): string {
-    return join(this.sessionDir, `${prefix}-${randomUUID()}`);
+    return join(this.session.path, `${prefix}-${randomUUID()}`);
   }
-  private async runJob<T>(details: JobDetails, body: (context: ProviderJobContext) => Promise<T>, mapError?: (error: Error) => Error): Promise<T> {
-    let current: typeof this.current = null;
-    try {
-      return await this.jobs.run(details.jobId ?? randomUUID(), context => {
-        current = {...details, context}; this.current = current;
-        if (details.jobDir) {
-          this.admitProviderDirectory();
-          context.createDirectory(details.jobDir);
-          this.jobDirectories.set(details.jobDir, AnchoredDir.capture(details.jobDir, this.sessionDirectory.root));
-        }
-        return body(context);
-      }, {
-        mapError, notifyFailure: details.kind === 'download',
-        cancelledEventMessage: details.kind === 'metadata' ? 'Download cancelled.' : undefined,
-        invalidMessage: 'Invalid Pinterest download request.', prerequisites: () => { this.assertAvailable(); },
-        cancelledMessage: details.kind === 'search' ? PINTEREST_SEARCH_CANCELLED : details.kind === 'metadata' ? 'Pinterest request cancelled.' : 'Download cancelled.',
-        timeoutMs: details.kind === 'download' ? this.downloadTimeoutMs : this.metadataTimeoutMs,
-        timeoutMessage: details.kind === 'search' ? PINTEREST_SEARCH_TIMEOUT : 'Pinterest request timed out.',
-      });
-    } finally { this.jobDirectories.delete(details.jobDir); if (this.current === current) this.current = null; }
+  private runJob<T>(details: JobDetails, body: (context: ProviderJobContext) => Promise<T>, mapError?: (error: Error) => Error): Promise<T> {
+    return this.session.run(this.jobs, details.jobId ?? randomUUID(), details.jobDir, body, {
+      mapError, notifyFailure: details.kind === 'download',
+      cancelledEventMessage: details.kind === 'metadata' ? 'Download cancelled.' : undefined,
+      invalidMessage: 'Invalid Pinterest download request.', prerequisites: () => { this.assertAvailable(); },
+      cancelledMessage: details.kind === 'search' ? PINTEREST_SEARCH_CANCELLED : details.kind === 'metadata' ? 'Pinterest request cancelled.' : 'Download cancelled.',
+      timeoutMs: details.kind === 'download' ? this.downloadTimeoutMs : this.metadataTimeoutMs,
+      timeoutMessage: details.kind === 'search' ? PINTEREST_SEARCH_TIMEOUT : 'Pinterest request timed out.',
+    }, context => {
+      const current = {...details, context}; this.current = current;
+      return () => { if (this.current === current) this.current = null; };
+    });
   }
   private begin(
     args: string[],
@@ -694,8 +630,9 @@ export class GalleryDlWorker {
     signal?.addEventListener('abort', abort, {once: true});
     if (signal?.aborted) controller.abort();
     const timer = setTimeout(abort, NETWORK_HELPER_TIMEOUT_MS);
+    const request = (url: string): Promise<FetchResponse> => abortableFetch(url, {redirect: 'manual', signal: controller.signal}, {fetch: this.fetcher, signal: controller.signal, cancelledMessage: 'Pinterest request cancelled.'});
     try {
-      const first = await this.fetcher(short.url, {redirect: 'manual', signal: controller.signal});
+      const first = await request(short.url);
       if (first.status < 300 || first.status > 399) throw new Error('Pinterest short link could not be resolved.');
       if (signal?.aborted) throw new Error('Pinterest request cancelled.');
       const firstLocation = first.headers.get('location') ?? '';
@@ -703,7 +640,7 @@ export class GalleryDlWorker {
       if (immediate) return immediate;
       const apiUrl = pinterestApiRedirect(firstLocation, short.url, short.token);
       if (!apiUrl) throw new Error('Pinterest short link redirect was rejected.');
-      const second = await this.fetcher(apiUrl, {redirect: 'manual', signal: controller.signal});
+      const second = await request(apiUrl);
       if (second.status < 300 || second.status > 399) throw new Error('Pinterest short link could not be resolved.');
       if (signal?.aborted) throw new Error('Pinterest request cancelled.');
       const resolved = pinterestPinRedirect(second.headers.get('location') ?? '', apiUrl);
@@ -820,7 +757,7 @@ export class GalleryDlWorker {
       // Successful media stays in its private managed provider job directory so
       // Resolve/history can continue to reference it after this worker returns.
       // Failed/cancelled jobs are removed in the finally block.
-      cleanJobDirectory(this.jobDirectories.get(jobDir)!, [safe.path]);
+      cleanJobDirectory(this.session.jobDirectories.get(jobDir)!, [safe.path]);
       emit({jobId, state: 'downloading', percent: 100, message: 'Pinterest download complete.'});
       context.publish(jobDir);
       return {filePath: safe.path, fileName: basename(safe.path), kind: safe.kind};

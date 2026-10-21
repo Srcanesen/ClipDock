@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { Readable, Transform } from 'node:stream';
 import { finished, pipeline } from 'node:stream/promises';
-import { ProviderJobRunner, ProviderJobCancelledError } from './provider-job';
+import { ProviderJobRunner, abortable, abortableFetch, cancelBody } from './provider-job';
 import { isValidPexelsKey } from './pexels-credential';
 import { LruCache } from './provider-platform';
 import { ManagedRoot } from './managed-root';
@@ -49,11 +49,6 @@ const inRoot = (root: string, file: string): boolean => {
 const contentType = (response: Response): string =>
   response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
 
-// Cancellation must not wait for a hostile upstream body to acknowledge it.
-function cancelBody(response: Response): void {
-  void response.body?.cancel().catch(() => undefined);
-}
-
 // Node's web-stream adapter waits for the source to acknowledge cancellation;
 // this proxy acknowledges at once and terminates the upstream body in the background.
 function detachCancel(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
@@ -67,14 +62,7 @@ function detachCancel(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Arr
   });
 }
 
-function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const abort = (): void => reject(new Error('Pexels request cancelled.'));
-    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
-    if (signal.aborted) { abort(); return; }
-    signal.addEventListener('abort', abort, {once: true});
-  });
-}
+const CANCELLED = 'Pexels request cancelled.';
 
 export function safePexelsUrl(value: unknown, api = false): URL | null {
   if (typeof value !== 'string' || value.length > 2048) return null;
@@ -414,7 +402,7 @@ export class PexelsClient {
     };
     signal.addEventListener('abort', detach, {once: true});
     if (signal.aborted) detach();
-    try { return structuredClone(await abortable(shared.promise, signal)); }
+    try { return structuredClone(await abortable(shared.promise, signal, CANCELLED)); }
     finally {
       signal.removeEventListener('abort', detach);
       detach();
@@ -563,21 +551,9 @@ export class PexelsClient {
     }});
   }
 
-  async #fetchResponse(url: URL, init: RequestInit, signal: AbortSignal): Promise<Response> {
-    const pending = this.#fetch(url, init);
-    void pending.then(response => {
-      if (signal.aborted && !(signal.reason instanceof ProviderJobCancelledError)) cancelBody(response);
-    }, () => undefined);
-    try { return await abortable(pending, signal); }
-    catch (error) {
-      if (signal.reason instanceof ProviderJobCancelledError) {
-        // The job ends now; only disposal waits for the late response and its body.
-        const termination = pending.then(response => response.body?.cancel(), () => undefined).catch(() => undefined);
-        this.#terminations.add(termination);
-        void termination.finally(() => this.#terminations.delete(termination));
-      }
-      throw error;
-    }
+  #fetchResponse(url: URL, init: RequestInit, signal: AbortSignal): Promise<Response> {
+    // The job ends now; only disposal waits for a late response and its body.
+    return abortableFetch(url, init, {fetch: this.#fetch, signal, cancelledMessage: CANCELLED, terminations: this.#terminations});
   }
 
   async #fetchMedia(value: string, signal: AbortSignal): Promise<Response> {
@@ -614,7 +590,7 @@ export class PexelsClient {
     try {
       while (true) {
         if (signal.aborted) throw new Error('Pexels request cancelled.');
-        const { done, value } = await abortable(reader.read(), signal);
+        const { done, value } = await abortable(reader.read(), signal, CANCELLED);
         if (done) break;
         total += value.byteLength;
         if (total > max) {

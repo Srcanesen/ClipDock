@@ -28,18 +28,23 @@ export function absoluteForPlatform(p: string, platform: NodeJS.Platform): boole
 
 export type VersionProbe = (candidate: string) => { code: number | null; text: string } | null;
 
-function defaultProbe(candidate: string, versionArgs: string[]): VersionProbe {
-  return () => {
-    try {
-      const result = spawnSync(candidate, versionArgs, {
-        shell: false,
-        timeout: VERSION_PROBE_TIMEOUT_MS,
-        encoding: 'utf8',
-        maxBuffer: VERSION_PROBE_MAX_BYTES,
-      });
-      return { code: result.status, text: `${result.stdout ?? ''}${result.stderr ?? ''}` };
-    } catch { return null; }
-  };
+/** Bounded shell:false version probe; null when the candidate cannot run. */
+export function probeVersion(candidate: string, versionArgs: string[]): { code: number | null; text: string } | null {
+  try {
+    const result = spawnSync(candidate, versionArgs, {
+      shell: false,
+      timeout: VERSION_PROBE_TIMEOUT_MS,
+      encoding: 'utf8',
+      maxBuffer: VERSION_PROBE_MAX_BYTES,
+    });
+    return { code: result.status, text: `${result.stdout ?? ''}${result.stderr ?? ''}` };
+  } catch { return null; }
+}
+
+/** The discovered binary, or the provider's install guidance as an error. */
+export function requireBinary(binary: string | null, missingMessage: string): string {
+  if (!binary) throw new Error(missingMessage);
+  return binary;
 }
 
 export type DiscoverBinaryOptions = {
@@ -48,18 +53,16 @@ export type DiscoverBinaryOptions = {
   pathEntries?: string[];
   envKey?: string;
   extraCandidates?: string[];
-  versionArgs?: string[] | null;
   versionIdentity?: string | null;
   versionCheck?: (result: { code: number | null; text: string }) => boolean;
   probe?: VersionProbe;
-  allowNoVersion?: boolean;
 };
 
 /**
  * Single candidate+probe+override discovery.
- * - envKey override is checked first (must be absolute + executable + optional version match)
+ * - an absolute envKey override is the first candidate; an invalid one never blocks fallback
  * - PATH candidates + extraCandidates are enumerated, de-duplicated via seen Set
- * - each candidate must be absoluteForPlatform, executable, and pass versionIdentity if given
+ * - each candidate must be absoluteForPlatform, executable, and pass versionIdentity/versionCheck if given
  * Returns first match or null. shell:false is enforced in every spawnSync probe.
  */
 export function discoverBinary(
@@ -70,35 +73,11 @@ export function discoverBinary(
   const platform = opts.platform ?? process.platform;
   const env = opts.env ?? process.env;
   const pathEntries = opts.pathEntries ?? (env.PATH ?? '').split(platform === 'win32' ? ';' : ':');
-  const probe = opts.probe ?? (versionArgs ? defaultProbe('', versionArgs) : null);
-
-  // Build a probe function that uses opts.probe if given, otherwise a per-candidate default
-  const effectiveProbe: VersionProbe = opts.probe
-    ? opts.probe
-    : versionArgs
-      ? (candidate: string) => {
-          try {
-            const result = spawnSync(candidate, versionArgs, {
-              shell: false,
-              timeout: VERSION_PROBE_TIMEOUT_MS,
-              encoding: 'utf8',
-              maxBuffer: VERSION_PROBE_MAX_BYTES,
-            });
-            return { code: result.status, text: `${result.stdout ?? ''}${result.stderr ?? ''}` };
-          } catch { return null; }
-        }
-      : () => null;
+  const probe: VersionProbe = opts.probe ?? (versionArgs ? candidate => probeVersion(candidate, versionArgs) : () => null);
 
   const candidates: string[] = [];
-  const configured = opts.envKey ? (env[opts.envKey] as string | undefined) : undefined;
+  const configured = opts.envKey ? env[opts.envKey] : undefined;
   if (configured && absoluteForPlatform(configured, platform)) candidates.push(configured);
-  else if (configured && !absoluteForPlatform(configured, platform)) {
-    // invalid absolute -> skip without fallback blocking, like gallery-dl
-    // ytdlp's discoverYtdlp uses isAbsolute (not platform aware) and would still
-    // return configured only if isAbsolute true. For absoluteForPlatform mismatch we
-    // intentionally do not push invalid configured, matching gallery-dl behaviour.
-    // For ytdlp compatibility we rely on wrapper handling.
-  }
   for (const dir of pathEntries.filter(Boolean)) {
     for (const name of names) candidates.push(join(dir, name));
   }
@@ -111,45 +90,26 @@ export function discoverBinary(
     if (!absoluteForPlatform(candidate, platform)) continue;
     if (!executable(candidate)) continue;
     if (opts.versionIdentity || opts.versionCheck) {
-      const result = effectiveProbe(candidate);
+      const result = probe(candidate);
       if (!result) continue;
       if (opts.versionIdentity && (result.code !== 0 || !result.text.toLowerCase().includes(opts.versionIdentity.toLowerCase()))) continue;
       if (opts.versionCheck && !opts.versionCheck(result)) continue;
-    } else if (versionArgs && !opts.allowNoVersion) {
-      // if versionArgs supplied and no identity, still require probe success ==0 ?
-      // ytdlp's discoverYtdlp has no version check, so this branch not taken there.
-      // For safety, if versionIdentity is null and versionArgs provided but caller
-      // didn't opt to allowNoVersion, treat any probe not needed.
     }
     return candidate;
   }
   return null;
 }
 
-// Convenience wrapper preserving ytdlp's isAbsolute (not platform-aware) override semantics
-export function discoverBinarySimple(
-  names: string[],
-  opts: {
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    pathEntries?: string[];
-    envKey?: string;
-    extraCandidates?: string[];
-    probe?: VersionProbe;
-    versionIdentity?: string;
-    versionArgs?: string[] | null;
-  },
-): string | null {
-  return discoverBinary(names, opts.versionArgs ?? null, {
-    env: opts.env,
-    platform: opts.platform,
-    pathEntries: opts.pathEntries,
-    envKey: opts.envKey,
-    extraCandidates: opts.extraCandidates,
-    versionIdentity: opts.versionIdentity,
-    probe: opts.probe,
-    versionArgs: opts.versionArgs ?? null,
-  });
+/** Common per-user and Homebrew install locations for a provider binary. */
+export function installCandidates(name: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform, options: {homeBin?: boolean; programDir?: string; localAppDataDir?: string} = {}): string[] {
+  if (platform === 'darwin') return [`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, ...(options.homeBin ? [join(env.HOME || homedir(), 'bin', name)] : [])];
+  if (platform !== 'win32') return [];
+  const exe = `${name}.exe`;
+  return [
+    ...(options.programDir ? [join(env.ProgramFiles ?? 'C:\\Program Files', ...options.programDir.split('/'), exe)] : []),
+    ...(options.localAppDataDir ? [join(env.LOCALAPPDATA ?? '', ...options.localAppDataDir.split('/'), exe)] : []),
+    ...(options.homeBin ? [join(env.USERPROFILE ?? '', 'bin', exe)] : []),
+  ];
 }
 
 // ---------------------------------------------------------------------------
