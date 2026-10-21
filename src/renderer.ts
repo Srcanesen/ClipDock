@@ -1015,7 +1015,8 @@ function wirePreviewControls(): void {
     if (detail) { detail.open = false; return; }
     if (inspectorOpen) { setInspectorOpen(false, returnFocusToResult); }
   });
-  for (const event of ['ended', 'error', 'pause']) document.getElementById('pexels-preview-video')?.addEventListener(event, () => { if (previewSession.provider === 'pexels' && (event !== 'pause' || ($('pexels-preview-video') as HTMLVideoElement).paused)) stopPreview(); });
+  // Native controls pause the video while the timeline is scrubbed, so a pause must not close the preview.
+  for (const event of ['ended', 'error']) document.getElementById('pexels-preview-video')?.addEventListener(event, () => { if (previewSession.provider === 'pexels') stopPreview(); });
 }
 
 function wireSearchResultRow(row: HTMLElement, checkbox: HTMLInputElement): void {

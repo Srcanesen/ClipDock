@@ -1006,7 +1006,7 @@ test('stopped preview opening late cannot restore theater or resync old bounds',
   assert.deepEqual(h.previewBounds, []);
 });
 
-for (const end of ['stop', 'ended', 'error', 'pause', 'reject']) test(`Pexels card Play uses the inspector theater and restores it on ${end}`, async () => {
+for (const end of ['stop', 'ended', 'error', 'reject']) test(`Pexels card Play uses the inspector theater and restores it on ${end}`, async () => {
   const h = await theaterHarness();
   h.setProvider('pexels'); h.setPexelsConnected(true);
   const asset = { ...PEXELS_ASSET, previewUrl: 'https://videos.pexels.com/fixture.mp4' };
@@ -1030,6 +1030,20 @@ for (const end of ['stop', 'ended', 'error', 'pause', 'reject']) test(`Pexels ca
   }
   assert.equal(h.el('pexels-preview-overlay').classList.contains('hidden'), true);
   assertTheaterStopped(h);
+});
+
+test('pausing a stock preview, as native timeline scrubbing does, keeps it open', async () => {
+  const h = await theaterHarness();
+  h.setProvider('pexels'); h.setPexelsConnected(true);
+  const asset = { ...PEXELS_ASSET, previewUrl: 'https://videos.pexels.com/fixture.mp4' };
+  h.searchPexels('mountains', 1).resolve({ ...PEXELS_PAGE, results: [asset] }); await h.flush();
+  const video = h.el('pexels-preview-video');
+  cardAction(h, 0, 'play').click();
+  h.pexelsLoads[0].resolve(asset); await h.flush();
+  video.paused = true; video.listeners.pause?.();
+  assert.equal(h.el('pexels-preview-overlay').classList.contains('hidden'), false);
+  assert.equal(video.src, asset.previewUrl);
+  assert.equal(h.el('workspace').classList.contains('theater'), true);
 });
 
 test('a stale bounds failure cannot stop a newer inspector preview', async () => {
