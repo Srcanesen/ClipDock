@@ -1,6 +1,6 @@
 {
   "name": "clipdock-resolve-plugin",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "ClipDock is a DaVinci Resolve Studio Workflow Integration plugin for finding, downloading and importing media into your project.",
   "scripts": {

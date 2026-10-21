@@ -180,6 +180,7 @@ The Resolve checks currently support macOS and need Resolve Studio installed and
 with no fuscript running. The E2E check creates and deletes its own throwaway
 `ClipDock-E2E-` project. Run `npm run build` before it.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and pull request guidance.
+Release history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Responsible use
 
