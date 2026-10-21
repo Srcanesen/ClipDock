@@ -1,5 +1,7 @@
 // ClipDock panel renderer. Plain browser script; all privileged work uses clipdockAPI.
 import { createGenerationGuard } from './renderer-state/search-session';
+import { PreviewSession } from './renderer-state/preview-session';
+import { MetadataSession, StatusRefreshSession } from './renderer-state/status-session';
 import { ItemOutputSession, transitionSourceSelection, selectSourceSegments, resolveSourceSelection, selectionEnvelope, sourceQualityChoices, type RawItemOutput, type SourceSelection, type OutputDefaults, type StagedSelection, type ResultSelection, cloneOutputDefaults, cloneOutputOverrides, resultOptionsId, cardQualityLabel, cardOutputSummary, profileLabel, intentLabel } from './renderer-state/item-output-session';
 import { DownloadQueue, resultKeyFor, type QueueItem as MutableQueueItem, type QueueInsertionMode, type QueueMetadata, type TargetBin, type TimelinePlacement, type YoutubeQuality, type MediaProfile, type MediaMode, type AudioFormat, type SubtitleLanguage, type YoutubeSelection, type DownloadOptions, type DownloadIntent, type SocialPlatform, type Provider, type PinterestMediaKind, type PinterestItem, type PinterestMetadata, type PexelsKind, type PexelsFile, type PexelsAsset, type QueueState, type MediaCard, type YoutubeChapter, type YoutubeMetadata, type SocialMetadata } from './renderer-state/queue-model';
 type QueueItem = Readonly<MutableQueueItem>;
@@ -77,11 +79,11 @@ const downloadQueue = new DownloadQueue({
 const queue = downloadQueue.items;
 downloadQueue.subscribe(({ item, progress, settled, action }) => {
   scheduleQueueRender(!progress, item);
-  if (!metadataBusy && item && !progress && (!downloadQueue.activeId || downloadQueue.activeId === item.queueId)) {
+  if (!metadataSession.busy && item && !progress && (!downloadQueue.activeId || downloadQueue.activeId === item.queueId)) {
     if (settled) showYoutubeStatus(queueStatusText(item));
     else showYoutubeStatus(item.message, item.percent, item.speedBytesPerSecond, item.etaSeconds);
   }
-  if (action && item) { $('youtube-queue-status').textContent = item.message; if (!metadataBusy) showYoutubeStatus(item.message); }
+  if (action && item) { $('youtube-queue-status').textContent = item.message; if (!metadataSession.busy) showYoutubeStatus(item.message); }
   if (settled && document.getElementById('workspace-status')) void refreshWorkspace();
 });
 // Result staging is renderer-session-only. Keys include the provider (and Pexels
@@ -102,16 +104,11 @@ let pinterest: PinterestMetadata | null = null;
 let pinterestSearch: PinterestSearchPage | null = null;
 let socialPlatform: SocialPlatform | null = null;
 let searchBusy = false;
-let metadataBusy = false;
 let youtubeBusy = false;
-const metadataGuard = createGenerationGuard();
+const metadataSession = new MetadataSession();
 const searchGuard = createGenerationGuard();
 const announcedQueueStates = new WeakMap<QueueItem, QueueState>();
 let searchButtons: HTMLElement[] = [];
-let previewSource: 'hover' | 'manual' | null = null;
-let previewProvider: 'youtube' | 'pexels' | null = null;
-let previewTarget: HTMLElement | null = null;
-let previewResultKey: string | null = null;
 let pinBusy = false;
 let hostRefreshTimer: number | null = null;
 let queueRenderTimer: number | null = null;
@@ -119,18 +116,10 @@ const queueProgressViews = new Map<string, {row: HTMLElement; status: HTMLElemen
 const dirtyQueueProgress = new Set<string>();
 let previewStopTimer: number | null = null;
 let previewBoundsTimer: number | null = null;
-const previewGuard = createGenerationGuard();
-// A close is sent only for a preview lifecycle that has attempted to create the
-// main-owned view. This also covers failed open/bounds paths without double-close.
-let youtubePreviewActive = false;
-const pendingYoutubePreviewCloses = new Set<object>();
-let previewFailure = false;
+const previewSession = new PreviewSession<HTMLElement>();
 let observedResultListWidth = 0;
-let statusRefreshInFlight = false;
-let statusRefreshTrailing = false;
-let statusRefreshGeneration = 0;
+const statusSession = new StatusRefreshSession();
 let statusRefreshTimer: number | null = null;
-let statusRefreshEpoch = 0;
 let hostStatus: StatusSnapshot | null = null;
 let settingsOpen = false;
 let settingsTrigger: HTMLElement | null = null;
@@ -514,20 +503,18 @@ function hostActionReason(action: 'import' | 'timeline' | 'drag'): string | null
 // guard and can never overwrite a newer snapshot.
 const HOST_STATUS_TIMEOUT_MS = 10_000;
 function refresh(): void {
-  if (statusRefreshInFlight) { statusRefreshTrailing = true; return; }
-  statusRefreshInFlight = true;
-  const generation = statusRefreshGeneration;
-  const epoch = ++statusRefreshEpoch;
+  const flight = statusSession.begin();
+  if (!flight) return;
   const button = $('refresh-btn') as HTMLButtonElement; button.disabled = true;
   const release = (): void => {
-    statusRefreshInFlight = false; button.disabled = false;
+    const trailing = statusSession.release(); button.disabled = false;
     if (statusRefreshTimer !== null) { window.clearTimeout(statusRefreshTimer); statusRefreshTimer = null; }
-    if (statusRefreshTrailing) { statusRefreshTrailing = false; refresh(); }
+    if (trailing) refresh();
   };
   window.clipdockAPI.getStatus().then((s) => {
     // Stale responses are dropped: ResolveQuit bumps the generation, and the
     // bounded timeout bumps the epoch. Neither may overwrite newer state.
-    if (epoch !== statusRefreshEpoch || generation !== statusRefreshGeneration) return;
+    if (!statusSession.accepts(flight)) return;
     const hostChanged = JSON.stringify(hostStatus) !== JSON.stringify(s);
     hostStatus = s;
     document.body.dataset.phase = s.phase;
@@ -537,13 +524,13 @@ function refresh(): void {
     { const bridgeDot = document.getElementById('bridge-state'); if (bridgeDot) { const stateText = s.bridge.connected ? 'Connected' : 'Not connected'; bridgeDot.setAttribute('aria-label', stateText); bridgeDot.setAttribute('title', stateText); } const pill = document.querySelector('.bridge-pill') as HTMLElement | null; if (pill) { const projectText = s.project.loaded ? (s.project.name?.trim() || 'Untitled project') : 'No project open'; const timelineText = s.timeline.loaded ? (s.timeline.name?.trim() || 'Untitled timeline/comp') : (s.project.loaded ? 'No active timeline/comp' : 'No timeline'); const pillText = `${projectText} - ${timelineText}`; pill.setAttribute('aria-label', pillText); pill.setAttribute('title', pillText); } }
     setText('message', s.message); setText('refresh-hint', s.refreshHint ?? ''); setText('last-updated', `Updated ${new Date().toLocaleTimeString()}`);
     if (hostChanged) { if (queue.length) renderQueue(); else updateControls(); refreshHistoryHostState(); }
-  }).catch((err) => { if (epoch === statusRefreshEpoch && generation === statusRefreshGeneration) setText('message', `Renderer call failed: ${(err as Error).message}`); }).finally(() => {
-    if (epoch !== statusRefreshEpoch) return; // the bounded timeout already released this flight
+  }).catch((err) => { if (statusSession.accepts(flight)) setText('message', `Renderer call failed: ${(err as Error).message}`); }).finally(() => {
+    if (!statusSession.holds(flight)) return; // the bounded timeout already released this flight
     release();
   });
   statusRefreshTimer = window.setTimeout(() => {
     statusRefreshTimer = null;
-    statusRefreshEpoch += 1;
+    statusSession.expire();
     release();
   }, HOST_STATUS_TIMEOUT_MS);
 }
@@ -765,7 +752,7 @@ function renderSearchState(): void {
 }
 function setSearchBusy(busy: boolean): void {
   if (busy) stopPreview(); searchBusy = busy;
-  const blocked = busy || metadataBusy;
+  const blocked = busy || metadataSession.busy;
   const page = provider === 'pinterest' ? pinterestSearch : provider === 'pexels' ? pexelsSearch : searchPage;
   ($('youtube-search-input') as HTMLInputElement).disabled = blocked; ($('youtube-search-btn') as HTMLButtonElement).disabled = blocked;
   ($('youtube-search-prev') as HTMLButtonElement).disabled = blocked || !page?.hasPrevious; ($('youtube-search-next') as HTMLButtonElement).disabled = blocked || !page?.hasNext;
@@ -787,33 +774,33 @@ function onLinkInput(): void {
   if (linkPending()) showYoutubeStatus('Press Load to use this link.');
 }
 function updateControls(): void {
-  youtubeBusy = metadataBusy;
+  youtubeBusy = metadataSession.busy;
   const youtubeLoad = document.getElementById('load-youtube-btn') as HTMLButtonElement | null;
   const youtubeInput = document.getElementById('youtube-url') as HTMLInputElement | null;
   const socialLoad = document.getElementById('load-social-btn') as HTMLButtonElement | null;
   const socialInput = document.getElementById('social-url') as HTMLInputElement | null;
   const pinterestLoad = document.getElementById('load-pinterest-btn') as HTMLButtonElement | null;
   const pinterestInput = document.getElementById('pinterest-url') as HTMLInputElement | null;
-  if (youtubeLoad) youtubeLoad.disabled = metadataBusy;
-  if (youtubeInput) youtubeInput.disabled = metadataBusy;
-  if (socialLoad) socialLoad.disabled = metadataBusy;
-  if (socialInput) socialInput.disabled = metadataBusy;
-  if (pinterestLoad) pinterestLoad.disabled = metadataBusy;
-  if (pinterestInput) pinterestInput.disabled = metadataBusy;
+  if (youtubeLoad) youtubeLoad.disabled = metadataSession.busy;
+  if (youtubeInput) youtubeInput.disabled = metadataSession.busy;
+  if (socialLoad) socialLoad.disabled = metadataSession.busy;
+  if (socialInput) socialInput.disabled = metadataSession.busy;
+  if (pinterestLoad) pinterestLoad.disabled = metadataSession.busy;
+  if (pinterestInput) pinterestInput.disabled = metadataSession.busy;
   const selected = provider === 'pexels' ? pexels : provider === 'social' ? social : provider === 'pinterest' ? pinterest : youtube;
   const audio = provider === 'youtube' && ($('youtube-media-mode') as HTMLSelectElement).value === 'audio';
-  ($('youtube-quality') as HTMLSelectElement).disabled = !selected || metadataBusy || audio;
-  const disabled = !selected || metadataBusy || linkPending();
+  ($('youtube-quality') as HTMLSelectElement).disabled = !selected || metadataSession.busy || audio;
+  const disabled = !selected || metadataSession.busy || linkPending();
   ($('download-youtube-btn') as HTMLButtonElement).disabled = disabled;
   const downloadOnly = document.getElementById('download-only-btn') as HTMLButtonElement | null; if (downloadOnly) downloadOnly.disabled = disabled;
 
-  $('quality-chips').setAttribute('aria-busy', String(metadataBusy)); $('profile-controls').setAttribute('aria-busy', String(metadataBusy));
+  $('quality-chips').setAttribute('aria-busy', String(metadataSession.busy)); $('profile-controls').setAttribute('aria-busy', String(metadataSession.busy));
   setSearchBusy(searchBusy); renderMediaMode(); updatePreviewButton(); renderCommonOutputSummary(); renderSelectionToolbar();
   const consolePane = document.getElementById('transfer-console');
-  consolePane?.toggleAttribute?.('inert', metadataBusy);
+  consolePane?.toggleAttribute?.('inert', metadataSession.busy);
   for (const control of Array.from(consolePane?.querySelectorAll?.('button, input, select') ?? []) as Array<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>) {
     if (['youtube-quality', 'youtube-subtitle-language', 'audio-only-toggle', 'range-in', 'range-out', 'range-full-btn'].includes(control.id)) continue;
-    if (metadataBusy) { if (control.dataset.metadataDisabled === undefined) control.dataset.metadataDisabled = String(control.disabled); control.disabled = true; }
+    if (metadataSession.busy) { if (control.dataset.metadataDisabled === undefined) control.dataset.metadataDisabled = String(control.disabled); control.disabled = true; }
     else if (control.dataset.metadataDisabled !== undefined) { control.disabled = control.dataset.metadataDisabled === 'true'; delete control.dataset.metadataDisabled; }
   }
 }
@@ -874,7 +861,7 @@ function playSourceLock(): void {
 function updatePreviewButton(): void {
   const button = $('preview-selected-btn') as HTMLButtonElement;
   const valid = provider === 'social' || provider === 'pinterest' ? false : provider === 'pexels' ? !!pexels && pexels.kind === 'video' && !!pexels.previewUrl && !youtubeBusy : !!youtube && VIDEO_ID.test(youtube.id) && !youtubeBusy;
-  const manual = previewSource === 'manual';
+  const manual = previewSession.source === 'manual';
   button.disabled = !manual && !valid;
   button.textContent = manual ? 'Stop preview' : 'Preview';
   button.setAttribute('aria-label', manual ? 'Stop preview' : 'Preview');
@@ -885,7 +872,7 @@ function updatePreviewButton(): void {
   if (monitor) { monitor.disabled = button.disabled; monitor.setAttribute('aria-label', button.getAttribute('aria-label') ?? 'Preview'); monitor.setAttribute('aria-pressed', button.getAttribute('aria-pressed') ?? 'false'); }
   const reason = document.getElementById('preview-note');
   if (reason) {
-    reason.textContent = provider === 'social' ? 'Preview is unavailable for pasted links.' : provider === 'pinterest' ? 'Pinterest preview is unavailable.' : provider === 'youtube' ? previewFailure ? 'Preview failed. Open on YouTube to continue.' : 'Adaptive quality; YouTube branding and related videos may appear.' : '';
+    reason.textContent = provider === 'social' ? 'Preview is unavailable for pasted links.' : provider === 'pinterest' ? 'Pinterest preview is unavailable.' : provider === 'youtube' ? previewSession.failure ? 'Preview failed. Open on YouTube to continue.' : 'Adaptive quality; YouTube branding and related videos may appear.' : '';
     reason.classList.toggle('hidden', provider === 'pexels');
   }
   if (provider === 'social') { button.title = 'Preview is unavailable for pasted links.'; button.setAttribute('aria-label', 'Preview unavailable for pasted links'); }
@@ -895,8 +882,8 @@ function updatePreviewButton(): void {
 }
 function currentPreviewBounds(targetOverride: HTMLElement | null = null): PreviewBounds | null {
   if (currentSurface !== 'search' || provider !== 'youtube') return null;
-  const target = targetOverride ?? previewTarget ?? (inspectorOpen ? document.getElementById('source-monitor') : null);
-  if (!target || (!inspectorOpen && !targetOverride && !previewTarget)) return null;
+  const target = targetOverride ?? previewSession.target ?? (inspectorOpen ? document.getElementById('source-monitor') : null);
+  if (!target || (!inspectorOpen && !targetOverride && !previewSession.target)) return null;
   const rect = target.getBoundingClientRect();
   if (!rect || !Number.isFinite(rect.left) || !Number.isFinite(rect.top) || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return null;
   const left = Math.max(0, rect.left), top = Math.max(0, rect.top), right = Math.min(window.innerWidth, rect.left + rect.width), bottom = Math.min(window.innerHeight, rect.top + rect.height);
@@ -905,40 +892,33 @@ function currentPreviewBounds(targetOverride: HTMLElement | null = null): Previe
 function clearPreviewState(restoreFocus = false): void {
   if (previewStopTimer !== null) { window.clearTimeout(previewStopTimer); previewStopTimer = null; }
   if (previewBoundsTimer !== null) { window.clearTimeout(previewBoundsTimer); previewBoundsTimer = null; }
-  if (youtubePreviewActive) {
-    youtubePreviewActive = false;
-    const close = {};
-    pendingYoutubePreviewCloses.add(close);
-    void window.clipdockAPI.closeYoutubePreview().then((closed) => { if (!closed) pendingYoutubePreviewCloses.delete(close); }).catch(() => { pendingYoutubePreviewCloses.delete(close); });
-  }
+  const { provider: stoppedProvider, closeToken } = previewSession.clear();
+  if (closeToken) void window.clipdockAPI.closeYoutubePreview().then((closed) => previewSession.closeSettled(closeToken, closed)).catch(() => previewSession.closeSettled(closeToken, false));
   const pexelsOverlay = document.getElementById('pexels-preview-overlay');
   const pexelsVideo = document.getElementById('pexels-preview-video') as HTMLVideoElement | null;
-  if (previewProvider === 'pexels' && pexelsOverlay && pexelsVideo) { pexelsVideo.pause(); pexelsVideo.removeAttribute('src'); pexelsVideo.load(); pexelsOverlay.classList.remove('interactive'); pexelsOverlay.classList.add('hidden'); pexelsOverlay.setAttribute('aria-hidden', 'true'); }
-  previewSource = null; previewProvider = null; previewTarget = null; previewResultKey = null;
+  if (stoppedProvider === 'pexels' && pexelsOverlay && pexelsVideo) { pexelsVideo.pause(); pexelsVideo.removeAttribute('src'); pexelsVideo.load(); pexelsOverlay.classList.remove('interactive'); pexelsOverlay.classList.add('hidden'); pexelsOverlay.setAttribute('aria-hidden', 'true'); }
   document.getElementById('workspace')?.classList.remove('theater');
   updatePreviewButton();
   if (restoreFocus) ($('preview-selected-btn') as HTMLButtonElement).focus();
 }
 function stopPreview(restoreFocus = false): void {
-  if (previewSource === null) return;
-  previewGuard.invalidate();
-  clearPreviewState(restoreFocus);
+  if (previewSession.stop()) clearPreviewState(restoreFocus);
 }
-function schedulePreviewStop(): void { if (previewSource === null) return; if (previewStopTimer !== null) window.clearTimeout(previewStopTimer); previewStopTimer = window.setTimeout(() => { previewStopTimer = null; stopPreview(); }, 120); }
+function schedulePreviewStop(): void { if (previewSession.source === null) return; if (previewStopTimer !== null) window.clearTimeout(previewStopTimer); previewStopTimer = window.setTimeout(() => { previewStopTimer = null; stopPreview(); }, 120); }
 function updateYoutubePreviewBounds(): void {
-  if (previewProvider !== 'youtube' || previewSource === null) return;
+  if (previewSession.provider !== 'youtube' || previewSession.source === null) return;
   const bounds = currentPreviewBounds();
   if (!bounds) { stopPreview(); return; }
-  const request = previewGuard.current();
-  void window.clipdockAPI.setYoutubePreviewBounds(bounds).then((visible) => { if (!visible && previewGuard.isCurrent(request)) stopPreview(); }).catch(() => { if (previewGuard.isCurrent(request)) stopPreview(); });
+  const request = previewSession.current();
+  void window.clipdockAPI.setYoutubePreviewBounds(bounds).then((visible) => { if (!visible && previewSession.isCurrent(request)) stopPreview(); }).catch(() => { if (previewSession.isCurrent(request)) stopPreview(); });
 }
 function scheduleYoutubePreviewBounds(): void {
-  if (previewProvider !== 'youtube' || previewSource === null || previewBoundsTimer !== null) return;
+  if (previewSession.provider !== 'youtube' || previewSession.source === null || previewBoundsTimer !== null) return;
   previewBoundsTimer = window.setTimeout(() => { previewBoundsTimer = null; updateYoutubePreviewBounds(); }, 16);
 }
 async function startYoutubePreview(id: string, startAt?: number, resultKey: string | null = outputSession.selected?.key ?? null): Promise<void> {
   if (searchBusy || !VIDEO_ID.test(id)) return;
-  if (previewSource !== null) stopPreview();
+  if (previewSession.source !== null) stopPreview();
   setInspectorOpen(true);
   const target = $('source-monitor');
   // No width transition: reading the monitor flushes the widened grid layout before
@@ -946,14 +926,13 @@ async function startYoutubePreview(id: string, startAt?: number, resultKey: stri
   document.getElementById('workspace')?.classList.add('theater');
   const bounds = currentPreviewBounds(target);
   if (!bounds) { document.getElementById('workspace')?.classList.remove('theater'); return; }
-  const request = previewGuard.next();
-  previewFailure = false; previewSource = 'manual'; previewProvider = 'youtube'; previewTarget = target; previewResultKey = resultKey; youtubePreviewActive = true; updatePreviewButton();
+  const request = previewSession.beginYoutube(target, resultKey); updatePreviewButton();
   try {
     const opened = await window.clipdockAPI.openYoutubePreview(id, startAt, bounds);
-    if (previewGuard.isStale(request)) return;
-    if (!opened) { previewFailure = true; clearPreviewState(); setText('message', 'YouTube preview could not load. Use Open on YouTube.'); }
+    if (previewSession.isStale(request)) return;
+    if (!opened) { previewSession.setFailure(true); clearPreviewState(); setText('message', 'YouTube preview could not load. Use Open on YouTube.'); }
     else updateYoutubePreviewBounds();
-  } catch { if (previewGuard.isCurrent(request)) { previewFailure = true; clearPreviewState(); setText('message', 'YouTube preview could not load. Use Open on YouTube.'); } }
+  } catch { if (previewSession.isCurrent(request)) { previewSession.setFailure(true); clearPreviewState(); setText('message', 'YouTube preview could not load. Use Open on YouTube.'); } }
 }
 async function watchYoutube(id: string, startAt?: number): Promise<void> {
   if (searchBusy || youtubeBusy || !VIDEO_ID.test(id)) return;
@@ -964,42 +943,33 @@ async function watchYoutube(id: string, startAt?: number): Promise<void> {
   } catch { setText('message', 'Could not open YouTube. Check your default browser and try again.'); }
 }
 function handleYoutubePreviewState(state: YoutubePreviewState): void {
-  // Main acknowledges each successful renderer close in IPC order. That event
-  // belongs to the stopped lifecycle, even if another preview is now active.
-  if (state.state === 'closed' && state.reason === 'closed' && pendingYoutubePreviewCloses.size) {
-    pendingYoutubePreviewCloses.delete(pendingYoutubePreviewCloses.values().next().value!);
-    return;
-  }
-  if (previewProvider !== 'youtube' || !youtubePreviewActive) return;
-  youtubePreviewActive = false;
-  previewGuard.invalidate();
-  if (state.state === 'failed') { previewFailure = true; setText('message', 'YouTube preview could not play here. Use Open on YouTube.'); }
+  if (previewSession.receiveYoutubeState(state) !== 'ended') return;
+  if (state.state === 'failed') { setText('message', 'YouTube preview could not play here. Use Open on YouTube.'); }
   clearPreviewState(state.reason === 'escape');
 }
 function startPexelsPreview(asset: PexelsAsset, resultKey: string | null = outputSession.selected?.key ?? null): void {
   if (!asset.previewUrl || asset.kind !== 'video' || searchBusy) return;
-  if (previewSource !== null) stopPreview();
+  if (previewSession.source !== null) stopPreview();
   setInspectorOpen(true);
   const target = $('source-monitor');
   document.getElementById('workspace')?.classList.add('theater');
   const rect = target.getBoundingClientRect();
   if (!rect.width || !rect.height) { document.getElementById('workspace')?.classList.remove('theater'); return; }
   const overlay = $('pexels-preview-overlay'); const video = $('pexels-preview-video') as HTMLVideoElement;
-  const request = previewGuard.next();
+  const request = previewSession.beginPexels(target, resultKey);
   video.src = asset.previewUrl; video.muted = false; video.controls = true; video.autoplay = true;
   overlay.style.left = `${rect.left}px`; overlay.style.top = `${rect.top}px`; overlay.style.width = `${rect.width}px`; overlay.style.height = `${rect.height}px`;
   overlay.classList.add('interactive'); overlay.classList.remove('hidden'); overlay.setAttribute('aria-hidden', 'false');
-  previewSource = 'manual'; previewProvider = 'pexels'; previewTarget = target; previewResultKey = resultKey;
-  void video.play().catch(() => { if (previewGuard.isCurrent(request)) stopPreview(); }); updatePreviewButton();
+  void video.play().catch(() => { if (previewSession.isCurrent(request)) stopPreview(); }); updatePreviewButton();
 }
 
 function wirePreviewControls(): void {
   document.getElementById('source-monitor')?.addEventListener('animationend', () => document.getElementById('source-monitor')?.classList.remove('locking'));
-  $('preview-selected-btn').addEventListener('click', () => { if (previewSource === 'manual') stopPreview(); else if (provider === 'pexels' && pexels) startPexelsPreview(pexels); else if (provider === 'youtube' && youtube) void startYoutubePreview(youtube.id, currentSelection()?.start); });
+  $('preview-selected-btn').addEventListener('click', () => { if (previewSession.source === 'manual') stopPreview(); else if (provider === 'pexels' && pexels) startPexelsPreview(pexels); else if (provider === 'youtube' && youtube) void startYoutubePreview(youtube.id, currentSelection()?.start); });
   document.getElementById('open-youtube-external-btn')?.addEventListener('click', () => { if (youtube) void watchYoutube(youtube.id, currentSelection()?.start); });
   document.getElementById('source-monitor')?.addEventListener('click', () => { ($('preview-selected-btn') as HTMLButtonElement).click(); });
   document.getElementById('back-to-results')?.addEventListener('click', () => setInspectorOpen(false, true));
-  window.addEventListener('scroll', () => { if (previewProvider === 'youtube') scheduleYoutubePreviewBounds(); else schedulePreviewStop(); }, true); window.addEventListener('resize', () => { if (previewProvider === 'youtube') scheduleYoutubePreviewBounds(); else stopPreview(); }); window.addEventListener('beforeunload', () => stopPreview()); window.addEventListener('keydown', (event) => {
+  window.addEventListener('scroll', () => { if (previewSession.provider === 'youtube') scheduleYoutubePreviewBounds(); else schedulePreviewStop(); }, true); window.addEventListener('resize', () => { if (previewSession.provider === 'youtube') scheduleYoutubePreviewBounds(); else stopPreview(); }); window.addEventListener('beforeunload', () => stopPreview()); window.addEventListener('keydown', (event) => {
     const command = event.ctrlKey || event.metaKey;
     if (command && event.key.toLowerCase() === 'k') { event.preventDefault(); if (settingsOpen) closeSettings(false); if (currentSurface !== 'search') setSurface('search', false); ($('youtube-search-input') as HTMLInputElement).focus(); return; }
     if (command && event.key === ',') { event.preventDefault(); openSettings(); return; }
@@ -1016,7 +986,7 @@ function wirePreviewControls(): void {
     if (event.key !== 'Escape') return;
     if (openHistoryMenu) { closeHistoryActions(true); return; }
     if (document.getElementById('intent-menu') && !document.getElementById('intent-menu')?.classList.contains('hidden')) { setIntentMenuOpen(false); (document.getElementById('intent-menu-btn') as HTMLElement | null)?.focus?.(); return; }
-    if (previewSource !== null) { stopPreview(true); return; }
+    if (previewSession.source !== null) { stopPreview(true); return; }
     if (settingsOpen) { closeSettings(true); return; }
     if (currentSurface !== 'search') { setSurface('search'); return; }
     const openDetails = (Array.from(document.querySelectorAll?.('details[open]') ?? []) as HTMLDetailsElement[]).filter((detail) => !detail.classList.contains('hidden'));
@@ -1024,7 +994,7 @@ function wirePreviewControls(): void {
     if (detail) { detail.open = false; return; }
     if (inspectorOpen) { setInspectorOpen(false, returnFocusToResult); }
   });
-  for (const event of ['ended', 'error', 'pause']) document.getElementById('pexels-preview-video')?.addEventListener(event, () => { if (previewProvider === 'pexels' && (event !== 'pause' || ($('pexels-preview-video') as HTMLVideoElement).paused)) stopPreview(); });
+  for (const event of ['ended', 'error', 'pause']) document.getElementById('pexels-preview-video')?.addEventListener(event, () => { if (previewSession.provider === 'pexels' && (event !== 'pause' || ($('pexels-preview-video') as HTMLVideoElement).paused)) stopPreview(); });
 }
 
 function wireSearchResultRow(row: HTMLElement, checkbox: HTMLInputElement): void {
@@ -1176,11 +1146,11 @@ function updateInlineCardStates(): void {
     const playButton = findResultDescendant(row, (element) => element.dataset.cardAction === 'play') as HTMLButtonElement | null;
     const actions = findResultDescendant(row, (element) => element.dataset.field === 'card-actions');
     const options = findResultDescendant(row, (element) => element.dataset.field === 'options');
-    const canAct = !selectedQueueLoadBusy && !searchBusy && !metadataBusy && !busy;
+    const canAct = !selectedQueueLoadBusy && !searchBusy && !metadataSession.busy && !busy;
     row.setAttribute('aria-busy', String(busy)); actions?.setAttribute('aria-busy', String(busy)); options?.setAttribute('aria-busy', String(busy));
     if (queueButton) { queueButton.disabled = !canAct; queueButton.setAttribute('aria-busy', String(busy)); }
     if (nowButton) { nowButton.disabled = !canAct; nowButton.textContent = downloadQueue.activeId ? 'Download next' : 'Download now'; nowButton.setAttribute('aria-label', `${downloadQueue.activeId ? 'Download next' : 'Download now'}: ${row.dataset.resultTitle ?? ''}`); nowButton.setAttribute('aria-busy', String(busy)); }
-    if (playButton) { const active = previewSource === 'manual' && previewResultKey === key; row.classList.toggle('is-playing', active); playButton.disabled = !active && (playButton.dataset.previewAvailable !== 'true' || searchBusy || metadataBusy || youtubeBusy || busy); playButton.textContent = playButton.dataset.previewAvailable === 'true' ? active ? 'Stop preview' : 'Play' : 'Preview unavailable'; playButton.setAttribute('aria-pressed', String(active)); playButton.setAttribute('aria-label', playButton.dataset.previewAvailable === 'true' ? `${active ? 'Stop preview' : 'Play'} ${row.dataset.resultTitle ?? ''}` : playButton.getAttribute('aria-label') ?? 'Preview unavailable'); }
+    if (playButton) { const active = previewSession.isManualFor(key); row.classList.toggle('is-playing', active); playButton.disabled = !active && (playButton.dataset.previewAvailable !== 'true' || searchBusy || metadataSession.busy || youtubeBusy || busy); playButton.textContent = playButton.dataset.previewAvailable === 'true' ? active ? 'Stop preview' : 'Play' : 'Preview unavailable'; playButton.setAttribute('aria-pressed', String(active)); playButton.setAttribute('aria-label', playButton.dataset.previewAvailable === 'true' ? `${active ? 'Stop preview' : 'Play'} ${row.dataset.resultTitle ?? ''}` : playButton.getAttribute('aria-label') ?? 'Preview unavailable'); }
   }
 }
 function refreshInlineResultCards(): void {
@@ -1244,7 +1214,7 @@ function renderPexelsSearchResults(): void {
     const checkbox = appendResultSelection(row, key, item.title, selection); appendResultOutput(row, key, item.kind === 'photo');
     const open = (event: Event) => { if (searchBusy) return; outputSession.select({ key, resultId: String(item.id), thumbnailDataUrl: item.thumbnailUrl }); ($('youtube-url') as HTMLInputElement).value = ''; openInspectorForSelection((event as MouseEvent).detail === 0); applyDetailOutput(); renderPexelsSearchResults(); void loadPexels(item.id); };
     wireSearchResultRow(row, checkbox);
-    appendResultCardControls(row, key, selection, () => open({ detail: 1 } as unknown as Event), () => { if (previewSource === 'manual' && previewResultKey === key) stopPreview(); else { open({ detail: 1 } as unknown as Event); startPexelsPreview(item, key); } }, item.kind === 'video' && !!item.previewUrl, 'Pexels preview is unavailable for this result.', item.kind === 'photo');
+    appendResultCardControls(row, key, selection, () => open({ detail: 1 } as unknown as Event), () => { if (previewSession.isManualFor(key)) stopPreview(); else { open({ detail: 1 } as unknown as Event); startPexelsPreview(item, key); } }, item.kind === 'video' && !!item.previewUrl, 'Pexels preview is unavailable for this result.', item.kind === 'photo');
     decorateResultCard(row, key, frameNumber(index, pexelsSearch), 'PX', details, open, item.kind === 'photo');
     searchButtons.push(row); list.append(row);
   }
@@ -1272,7 +1242,7 @@ function renderSearchResults(): void {
     const open = (event: Event) => { if (searchBusy) return; outputSession.select({ key, resultId: item.id, thumbnailDataUrl: item.thumbnailUrl }); ($('youtube-url') as HTMLInputElement).value = item.url; openInspectorForSelection((event as MouseEvent).detail === 0); applyDetailOutput(); renderSearchResults(); void loadYoutube(item.url, item.thumbnailUrl); };
     wireSearchResultRow(row, checkbox);
     wireMetadataPrefetch(row, item.url);
-    appendResultCardControls(row, key, selection, () => open({ detail: 1 } as unknown as Event), () => { if (previewSource === 'manual' && previewResultKey === key) stopPreview(); else { open({ detail: 1 } as unknown as Event); void startYoutubePreview(item.id, undefined, key); } }, true, 'YouTube preview is unavailable for this result.');
+    appendResultCardControls(row, key, selection, () => open({ detail: 1 } as unknown as Event), () => { if (previewSession.isManualFor(key)) stopPreview(); else { open({ detail: 1 } as unknown as Event); void startYoutubePreview(item.id, undefined, key); } }, true, 'YouTube preview is unavailable for this result.');
     decorateResultCard(row, key, frameNumber(index, searchPage), 'YT', details, open);
     searchButtons.push(row); list.append(row);
   }
@@ -1292,7 +1262,7 @@ function renderPinterestSearchResults(): void {
     const details = document.createElement('button'); (details as HTMLButtonElement).type = 'button'; details.className = 'youtube-details source-row-details'; const title = document.createElement('span'); title.className = 'youtube-result-title source-row-title'; title.dataset.field = 'title'; title.textContent = item.title; const meta = document.createElement('span'); meta.className = 'youtube-result-meta source-row-source source-row-meta'; meta.dataset.field = 'source-metadata'; meta.textContent = item.creator ?? 'Creator unavailable'; details.append(title, meta); row.append(thumb, details); const checkbox = appendResultSelection(row, key, item.title, selection); appendResultOutput(row, key, item.kind === 'image');
     const open = (event: Event) => { if (searchBusy) return; outputSession.select({ key, resultId: item.id, thumbnailDataUrl: item.thumbnailUrl }); ($('pinterest-url') as HTMLInputElement).value = item.url; openInspectorForSelection((event as MouseEvent).detail === 0); applyDetailOutput(); renderPinterestSearchResults(); void loadPinterest(item.url, item.thumbnailUrl); };
     wireSearchResultRow(row, checkbox);
-    appendResultCardControls(row, key, selection, () => open({ detail: 1 } as unknown as Event), () => { if (previewSource === 'manual' && previewResultKey === key) stopPreview(); }, false, 'Pinterest preview is unavailable.', item.kind === 'image');
+    appendResultCardControls(row, key, selection, () => open({ detail: 1 } as unknown as Event), () => { if (previewSession.isManualFor(key)) stopPreview(); }, false, 'Pinterest preview is unavailable.', item.kind === 'image');
     decorateResultCard(row, key, frameNumber(index, pinterestSearch), 'PN', details, open, item.kind === 'image');
     searchButtons.push(row); list.append(row);
   }
@@ -1313,9 +1283,8 @@ function beginSearchTransition(): void {
   // Invalidate any in-flight detail/subtitle request from the previous selection and drop
   // its payload, so a stale response can never repopulate the detail rail or keep the
   // download controls live against the old item.
-  metadataGuard.invalidate();
+  metadataSession.reset();
   subtitleGuard.invalidate();
-  metadataBusy = false;
   resetSourceSelection(); youtube = null; social = null; pinterest = null; pexels = null;
   subtitleCues = []; selectedSubtitleCues.clear();
   document.getElementById('subtitle-results')?.replaceChildren();
@@ -1395,7 +1364,7 @@ function submitSourceSearch(): void {
   void searchYoutube(1);
 }
 async function searchYoutube(page: number): Promise<void> {
-  if (metadataBusy) { showYoutubeStatus('Wait for the current source to finish loading.'); return; }
+  if (metadataSession.busy) { showYoutubeStatus('Wait for the current source to finish loading.'); return; }
   beginSearchTransition();
   // Generation marker: a newer query/page supersedes any in-flight search, so only the
   // newest success, error, and busy-reset may touch state.
@@ -1512,19 +1481,19 @@ async function loadPinterest(url = (document.getElementById('pinterest-url') as 
   if (!inspectorOpen) openInspectorForSelection(false);
   // A search-row selection carries the canonical Pin URL and its allowlisted thumbnail; the
   // Pin input is updated for direct-URL parity and the poster survives as fallback only.
-  const request = metadataGuard.next(); previewGuard.invalidate(); metadataBusy = true; pinterest = null; const pinInput = document.getElementById('pinterest-url') as HTMLInputElement | null; if (url && pinInput) pinInput.value = url; renderPinterestMetadata(); setInspectorLoading(true); updateControls(); showYoutubeStatus('Loading Pinterest Pin…');
+  const request = metadataSession.begin(); previewSession.invalidate(); pinterest = null; const pinInput = document.getElementById('pinterest-url') as HTMLInputElement | null; if (url && pinInput) pinInput.value = url; renderPinterestMetadata(); setInspectorLoading(true); updateControls(); showYoutubeStatus('Loading Pinterest Pin…');
   try {
     const metadata = await window.clipdockAPI.loadPinterest(url);
-    if (metadataGuard.isStale(request) || provider !== 'pinterest') return;
+    if (metadataSession.isStale(request) || provider !== 'pinterest') return;
     pinterest = { ...metadata, thumbnailUrl: metadata.thumbnailUrl ?? posterDataUrl }; const input = document.getElementById('pinterest-url') as HTMLInputElement | null; if (input) input.value = metadata.source; loadedLinks.set('pinterest', metadata.source.trim()); setInspectorLoading(false); renderPinterestMetadata(); showYoutubeStatus(metadata.items.length > 1 ? 'Carousel loaded. Download queues each item separately.' : 'Pin loaded. Choose an output intent and download.');
   } catch (err) {
-    if (metadataGuard.isStale(request)) return;
+    if (metadataSession.isStale(request)) return;
     pinterest = null; setInspectorLoading(false); renderPinterestMetadata(); showYoutubeStatus((err as Error).message);
-  } finally { if (metadataGuard.isCurrent(request)) { metadataBusy = false; updateControls(); } }
+  } finally { if (metadataSession.finish(request)) updateControls(); }
 }
 async function loadPexels(id: number): Promise<void> {
   if (searchBusy) { showYoutubeStatus('Wait for the current search to finish.'); return; }
- if (!inspectorOpen) openInspectorForSelection(false); stopPreview(); const request = metadataGuard.next(); previewGuard.invalidate(); metadataBusy = true; pexels = null; renderPexelsMetadata(); setInspectorLoading(true); updateControls(); showYoutubeStatus('Loading Pexels media…'); try { const result = await window.clipdockAPI.loadPexels(pexelsKind, id); if (metadataGuard.isStale(request) || provider !== 'pexels') return; pexels = result; setInspectorLoading(false); renderPexelsMetadata(); showYoutubeStatus('Choose a source size and download.'); } catch (err) { if (metadataGuard.isStale(request)) return; stopPreview(); setInspectorLoading(false); renderPexelsMetadata(); showYoutubeStatus((err as Error).message); } finally { if (metadataGuard.isCurrent(request)) { metadataBusy = false; updateControls(); } } }
+ if (!inspectorOpen) openInspectorForSelection(false); stopPreview(); const request = metadataSession.begin(); previewSession.invalidate(); pexels = null; renderPexelsMetadata(); setInspectorLoading(true); updateControls(); showYoutubeStatus('Loading Pexels media…'); try { const result = await window.clipdockAPI.loadPexels(pexelsKind, id); if (metadataSession.isStale(request) || provider !== 'pexels') return; pexels = result; setInspectorLoading(false); renderPexelsMetadata(); showYoutubeStatus('Choose a source size and download.'); } catch (err) { if (metadataSession.isStale(request)) return; stopPreview(); setInspectorLoading(false); renderPexelsMetadata(); showYoutubeStatus((err as Error).message); } finally { if (metadataSession.finish(request)) updateControls(); } }
 function renderPlacementWarning(): void {
   const warning = document.getElementById('timeline-placement-warning');
   const intent = document.getElementById('youtube-intent') as HTMLSelectElement | null;
@@ -1601,11 +1570,11 @@ function renderMediaMode(): void {
   $('video-controls').classList.toggle('hidden', audio || isPinterest);
   $('audio-controls').classList.toggle('hidden', !audio);
   document.getElementById('pinterest-original-note')?.classList.toggle('hidden', !isPinterest || !pinterest?.items.some((item) => item.kind === 'image'));
-  ($('youtube-quality') as HTMLSelectElement).disabled = audio || !(provider === 'pexels' ? pexels : provider === 'social' ? social : provider === 'pinterest' ? pinterest : youtube) || metadataBusy;
+  ($('youtube-quality') as HTMLSelectElement).disabled = audio || !(provider === 'pexels' ? pexels : provider === 'social' ? social : provider === 'pinterest' ? pinterest : youtube) || metadataSession.busy;
   const subtitleOn = ($('youtube-subtitles') as HTMLInputElement).checked;
-  ($('youtube-subtitle-language') as HTMLSelectElement).disabled = !subtitleOn || metadataBusy;
+  ($('youtube-subtitle-language') as HTMLSelectElement).disabled = !subtitleOn || metadataSession.busy;
   const audioToggle = document.getElementById('audio-only-toggle') as HTMLInputElement | null;
-  if (audioToggle) { audioToggle.checked = audio; audioToggle.disabled = metadataBusy; }
+  if (audioToggle) { audioToggle.checked = audio; audioToggle.disabled = metadataSession.busy; }
   setOptionalText('audio-only-hint', audio ? 'Sound only, in the format beside' : 'Keep picture and sound');
   renderRangeUi();
 }
@@ -1832,7 +1801,7 @@ function clearMetadataPrefetchTimers(): void { for (const timer of metadataPrefe
 function wireMetadataPrefetch(row: HTMLElement, url: string): void {
   let timer: number | null = null;
   const cancel = (): void => { if (timer !== null) { window.clearTimeout(timer); metadataPrefetchTimers.delete(timer); timer = null; } };
-  const start = (): void => { cancel(); if (searchBusy || metadataBusy || provider !== 'youtube') return; timer = window.setTimeout(() => { if (searchBusy || metadataBusy || provider !== 'youtube') { cancel(); return; } if (timer !== null) metadataPrefetchTimers.delete(timer); timer = null; void window.clipdockAPI.prefetchYoutube?.(url).catch(() => undefined); }, 300); metadataPrefetchTimers.add(timer); };
+  const start = (): void => { cancel(); if (searchBusy || metadataSession.busy || provider !== 'youtube') return; timer = window.setTimeout(() => { if (searchBusy || metadataSession.busy || provider !== 'youtube') { cancel(); return; } if (timer !== null) metadataPrefetchTimers.delete(timer); timer = null; void window.clipdockAPI.prefetchYoutube?.(url).catch(() => undefined); }, 300); metadataPrefetchTimers.add(timer); };
   row.addEventListener('mouseenter', start); row.addEventListener('mouseleave', cancel);
   row.addEventListener('focusin', start); row.addEventListener('focusout', cancel);
 }
@@ -1843,28 +1812,28 @@ async function loadYoutube(url = ($('youtube-url') as HTMLInputElement).value, p
   if (!inspectorOpen) openInspectorForSelection(false);
   // Clear any stale inspector immediately and show an explicit loading state; youtube stays
   // null until the current request's metadata lands, so a stale video can never be enqueued.
-  stopPreview(); const request = metadataGuard.next(); previewGuard.invalidate(); subtitleGuard.invalidate(); metadataBusy = true; resetSourceSelection(); youtube = null; previewFailure = false; subtitleCues = []; selectedSubtitleCues.clear(); document.getElementById('subtitle-results')?.replaceChildren(); renderMetadata(); setInspectorLoading(true); updateControls(); showYoutubeStatus('Loading video…');
-  try { const metadata = await window.clipdockAPI.loadYoutube(url); if (metadataGuard.isStale(request)) return; youtube = { ...metadata, thumbnailUrl: metadata.thumbnailUrl ?? posterDataUrl }; loadedLinks.set('youtube', url.trim()); resetSourceSelection(metadata.id); outputSession.select({ source: metadata.id }); setInspectorLoading(false); renderMetadata(); showYoutubeStatus('Choose a quality and download.'); }
-  catch (err) { if (metadataGuard.isStale(request)) return; stopPreview(); youtube = null; setInspectorLoading(false); renderMetadata(); showYoutubeStatus((err as Error).message); }
-  finally { if (metadataGuard.isCurrent(request)) { metadataBusy = false; updateControls(); } }
+  stopPreview(); const request = metadataSession.begin(); previewSession.invalidate(); subtitleGuard.invalidate(); resetSourceSelection(); youtube = null; previewSession.setFailure(false); subtitleCues = []; selectedSubtitleCues.clear(); document.getElementById('subtitle-results')?.replaceChildren(); renderMetadata(); setInspectorLoading(true); updateControls(); showYoutubeStatus('Loading video…');
+  try { const metadata = await window.clipdockAPI.loadYoutube(url); if (metadataSession.isStale(request)) return; youtube = { ...metadata, thumbnailUrl: metadata.thumbnailUrl ?? posterDataUrl }; loadedLinks.set('youtube', url.trim()); resetSourceSelection(metadata.id); outputSession.select({ source: metadata.id }); setInspectorLoading(false); renderMetadata(); showYoutubeStatus('Choose a quality and download.'); }
+  catch (err) { if (metadataSession.isStale(request)) return; stopPreview(); youtube = null; setInspectorLoading(false); renderMetadata(); showYoutubeStatus((err as Error).message); }
+  finally { if (metadataSession.finish(request)) updateControls(); }
 }
 async function loadSocial(url = (document.getElementById('social-url') as HTMLInputElement | null)?.value ?? ''): Promise<void> {
   if (searchBusy) { showYoutubeStatus('Wait for the current search to finish.'); return; }
   if (!inspectorOpen) openInspectorForSelection(false);
-  const request = metadataGuard.next(); previewGuard.invalidate(); metadataBusy = true; social = null; socialPlatform = detectSocialPlatform(url); renderSocialPlatform(socialPlatform, socialPlatform ? 'loading' : 'invalid'); renderSocialMetadata(); setInspectorLoading(true); updateControls(); showYoutubeStatus('Loading public social video…');
+  const request = metadataSession.begin(); previewSession.invalidate(); social = null; socialPlatform = detectSocialPlatform(url); renderSocialPlatform(socialPlatform, socialPlatform ? 'loading' : 'invalid'); renderSocialMetadata(); setInspectorLoading(true); updateControls(); showYoutubeStatus('Loading public social video…');
   try {
     const metadata = await window.clipdockAPI.loadSocial(url);
-    if (metadataGuard.isStale(request) || provider !== 'social') return;
+    if (metadataSession.isStale(request) || provider !== 'social') return;
     social = metadata; loadedLinks.set('social', url.trim());
     void window.clipdockAPI.loadSocialThumbnail?.(metadata.source).then(thumbnail => {
-      if (!thumbnail || metadataGuard.isStale(request) || provider !== 'social' || social?.id !== metadata.id) return;
+      if (!thumbnail || metadataSession.isStale(request) || provider !== 'social' || social?.id !== metadata.id) return;
       social = {...social, thumbnailDataUrl: thumbnail}; setInspectorPoster(thumbnail, social.title);
     }).catch(() => { /* The metadata remains useful without an image. */ });
     socialPlatform = metadata.platform; renderSocialPlatform(socialPlatform); setInspectorLoading(false); renderSocialMetadata(); showYoutubeStatus(`Detected ${socialPlatformLabel(metadata.platform)}. Choose a quality and download.`);
   } catch (err) {
-    if (metadataGuard.isStale(request)) return;
+    if (metadataSession.isStale(request)) return;
     social = null; renderSocialPlatform(socialPlatform, socialPlatform ? 'invalid' : 'invalid'); setInspectorLoading(false); renderSocialMetadata(); showYoutubeStatus((err as Error).message);
-  } finally { if (metadataGuard.isCurrent(request)) { metadataBusy = false; updateControls(); } }
+  } finally { if (metadataSession.finish(request)) updateControls(); }
 }
 
 function globalQueueStatusText(): string {
@@ -1916,7 +1885,7 @@ function scheduleQueueRender(immediate = false, item?: QueueItem): void {
     dirtyQueueProgress.clear();
     updateGlobalQueueStatus();
     const active = queue.find(candidate => candidate.queueId === downloadQueue.activeId);
-    if (active && !metadataBusy) showYoutubeStatus(active.message, active.percent, active.speedBytesPerSecond, active.etaSeconds);
+    if (active && !metadataSession.busy) showYoutubeStatus(active.message, active.percent, active.speedBytesPerSecond, active.etaSeconds);
   }, 200);
 }
 function announceQueueStatus(item: QueueItem): void {
@@ -2107,22 +2076,22 @@ function enqueueStagedSelection(stage: StagedSelection, metadata: QueueMetadata,
   return downloadQueue.add({ provider: stage.provider, output, metadata, source: stage.source, thumbnailDataUrl: stage.thumbnailDataUrl }, mode).added;
 }
 async function enqueueResultCard(key: string, selection: ResultSelection, mode: QueueInsertionMode): Promise<void> {
-  if (selectedQueueLoadBusy || searchBusy || metadataBusy || inlineActionBusyKeys.has(key)) return;
+  if (selectedQueueLoadBusy || searchBusy || metadataSession.busy || inlineActionBusyKeys.has(key)) return;
   const stage = outputSession.stage(key, selection, false);
   const queuedStage: StagedSelection = { ...stage, snapshot: cloneOutputDefaults(stage.snapshot), overrides: cloneOutputOverrides(stage.overrides) };
-  const request = metadataGuard.next();
-  inlineActionBusyKeys.add(key); metadataBusy = true; updateControls(); updateInlineCardStates();
+  const request = metadataSession.begin();
+  inlineActionBusyKeys.add(key); updateControls(); updateInlineCardStates();
   try {
     const metadata = await loadStagedMetadata(queuedStage);
     const hadActive = downloadQueue.activeId !== null;
     const added = enqueueStagedSelection(queuedStage, metadata, mode);
-    if (metadataGuard.isStale(request)) return;
+    if (metadataSession.isStale(request)) return;
     if (added) showYoutubeStatus(mode === 'after-active' && hadActive ? 'Queued next without interrupting the active download.' : 'Queued from result card.');
     else showYoutubeStatus('Already in downloads.');
   } catch (error) {
-    if (metadataGuard.isCurrent(request)) showYoutubeStatus(`${selection.title}: ${(error as Error).message}`);
+    if (metadataSession.isCurrent(request)) showYoutubeStatus(`${selection.title}: ${(error as Error).message}`);
   } finally {
-    if (metadataGuard.isCurrent(request)) metadataBusy = false;
+    metadataSession.finish(request);
     inlineActionBusyKeys.delete(key); updateControls(); updateInlineCardStates();
   }
 }
@@ -2182,7 +2151,7 @@ function setProvider(next: Provider): void {
   saveBrowserState();
   writePreference('source', next);
   if (provider === 'pexels') void window.clipdockAPI.cancelPexelsRequests();
-  metadataGuard.invalidate(); searchGuard.invalidate(); subtitleGuard.invalidate(); metadataBusy = false; searchBusy = false;
+  metadataSession.reset(); searchGuard.invalidate(); subtitleGuard.invalidate(); searchBusy = false;
   provider = next; searchError = null;
   for (const [id, value] of [['provider-youtube', 'youtube'], ['provider-pinterest', 'pinterest'], ['provider-pexels', 'pexels'], ['provider-social', 'social']] as const) { const button = document.getElementById(id) as HTMLButtonElement | null; if (!button) continue; const selected = next === value; button.setAttribute('aria-pressed', String(selected)); button.tabIndex = selected ? 0 : -1; }
   $('pexels-kind-switch').classList.toggle('hidden', next !== 'pexels');
@@ -2204,7 +2173,7 @@ function setPexelsKind(next: PexelsKind): void {
   if (pexelsKind === next) return;
   saveBrowserState();
   pexelsKind = next; searchError = null;
-  metadataGuard.invalidate(); searchGuard.invalidate(); metadataBusy = false; searchBusy = false;
+  metadataSession.reset(); searchGuard.invalidate(); searchBusy = false;
   $('pexels-photo-kind').setAttribute('aria-pressed', String(next === 'photo'));
   $('pexels-video-kind').setAttribute('aria-pressed', String(next === 'video'));
   outputSession.select({ provider, kind: next });
@@ -2233,7 +2202,7 @@ async function connectPexels(): Promise<void> {
 }
 function clearPexelsState(): void {
   pexelsStates.clear(); pexels = null; pexelsSearch = null; outputSession.select({ clear: 'pexels' });
-  if (provider === 'pexels') { metadataGuard.invalidate(); searchGuard.invalidate(); metadataBusy = false; searchBusy = false; restoreBrowserState(); }
+  if (provider === 'pexels') { metadataSession.reset(); searchGuard.invalidate(); searchBusy = false; restoreBrowserState(); }
 }
 async function disconnectPexels(): Promise<void> {
   pexelsConnecting = true; renderPexelsConnection(null);
@@ -2512,7 +2481,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const unsubscribeResolveQuit = window.clipdockAPI.onResolveQuit(() => {
     // Invalidate an older in-flight response before rendering the disconnected
     // snapshot; it must never restore a stale Connected state after Resolve quits.
-    statusRefreshGeneration += 1;
+    statusSession.invalidate();
     // Resolve quit is synchronous: render a safe disconnected snapshot NOW so host
     // actions disable immediately, then let the controlled refresh confirm recovery.
     hostStatus = {

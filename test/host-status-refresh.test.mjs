@@ -155,7 +155,7 @@ function createHarness({ visible = true } = {}) {
   stopHostPolling: typeof stopHostPolling === 'function' ? stopHostPolling : () => undefined,
   hostActionReason,
   hostStatus: () => hostStatus,
-  statusInFlight: () => statusRefreshInFlight,
+  statusInFlight: () => statusSession.inFlight,
 };`, sandbox);
   hostTest = sandbox.__hostTest;
 

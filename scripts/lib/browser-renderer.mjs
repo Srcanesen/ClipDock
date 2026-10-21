@@ -12,7 +12,7 @@ export function assertBrowserScript(source) {
 export function bundleBrowserRenderer(dist) {
   const rendererJsPath = path.join(dist, 'renderer.js');
   if (!existsSync(rendererJsPath)) throw new Error('Missing renderer.js');
-  const stateFiles = ['search-session', 'output-model', 'queue-model', 'item-output-session'];
+  const stateFiles = ['search-session', 'output-model', 'queue-model', 'item-output-session', 'preview-session', 'status-session'];
   const resolveBindings = (source, fromRenderer) => source.replace(/require\(\s*(['"])([^'"]+)\1\s*\)/g, (_, quote, dependency) => {
     const name = dependency.replace(fromRenderer ? './renderer-state/' : './', '');
     if (!stateFiles.includes(name) || dependency !== `${fromRenderer ? './renderer-state/' : './'}${name}`) throw new Error(`Renderer has unresolved CommonJS dependency: ${dependency}`);
