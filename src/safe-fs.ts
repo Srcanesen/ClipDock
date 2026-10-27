@@ -179,18 +179,26 @@ export function publishNoReplace(src: OwnedFile, dest: AnchoredDir, name: string
     if (!['EXDEV', 'EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS'].includes(code ?? '')) throw error;
     const opened = openExclusive(dest, name);
     published = opened.file;
+    if (code !== 'EXDEV') {
+      // Same volume without hard links (exFAT): the exclusive placeholder reserves the
+      // name, and rename atomically replaces only that verified placeholder with the source.
+      closeSync(opened.fd);
+      try { verifyFile(src); verifyFile(published); renameSync(src.path, target); }
+      catch (failure) { removeOwned(published); throw failure; }
+      // A foreign file moved in the final window is not ours to delete.
+      const moved = captureFile(dest, target);
+      if (!sameFile(src.identity, lstatSync(target, {bigint: true}))) throw new SafeFsError('replaced');
+      return moved;
+    }
     let input: number | undefined;
     try {
       verifyFile(src);
       input = openSync(src.path, constants.O_RDONLY | constants.O_NOFOLLOW);
       if (!sameFile(src.identity, fstatSync(input, {bigint: true}))) throw new SafeFsError('replaced');
+      // Both descriptors are bound to verified inodes; a pathname swap mid-copy fails the final checks.
       const buffer = Buffer.alloc(64 * 1024);
       for (let count; (count = readSync(input, buffer, 0, buffer.length, null)) > 0;) {
-        verifyFile(src); verifyFile(published);
-        for (let offset = 0; offset < count;) {
-          verifyFile(src); verifyFile(published);
-          offset += writeSync(opened.fd, buffer, offset, count - offset);
-        }
+        for (let offset = 0; offset < count;) offset += writeSync(opened.fd, buffer, offset, count - offset);
       }
       verifyFile(src); verifyFile(published); fsyncSync(opened.fd);
     } catch (failure) { removeOwned(published); throw failure; }
