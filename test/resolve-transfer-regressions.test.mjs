@@ -26,7 +26,6 @@ function fixture(options = {}) {
     GetCurrentFolder: async () => folder,
     AppendToTimeline: async (args) => {
       calls.appends.push(args);
-      if (state.barrier) { const barrier = state.barrier; state.barrier = null; await barrier; }
       return 'appendResult' in state ? state.appendResult : [{ GetStart: async () => state.itemStart }];
     },
   };
@@ -46,11 +45,11 @@ for (const placement of ['end', 'playhead']) {
   test(`ENG-5: ${placement} rejects false and malformed append results and permits retry`, async () => {
     for (const appendResult of [false, true, {}, 'ok', 1, [], Array(1), [null], [false], [{}], [{ GetStart: 3 }], [{ GetStart() {} }, null]]) {
       const h = fixture({ appendResult });
-      const result = await h.transfer.addToTimeline('/clip.mp4', 'active', placement, automation, 'retry');
+      const result = await h.transfer.addToTimeline('/clip.mp4', 'active', placement, automation);
       assert.deepEqual([result.ok, result.kind, h.calls.colors, h.calls.markers], [false, 'append-failed', [], []]);
       assert.match(result.message, /Resolve returned no usable appended clips/);
       delete h.state.appendResult;
-      assert.equal((await h.transfer.addToTimeline('/clip.mp4', 'active', placement, automation, 'retry')).ok, true);
+      assert.equal((await h.transfer.addToTimeline('/clip.mp4', 'active', placement, automation)).ok, true);
       assert.equal(h.calls.appends.length, 2);
     }
   });
@@ -96,19 +95,6 @@ for (const placement of ['end', 'playhead']) {
     if (placement === 'playhead') assert.equal(h.calls.appends[0][0].recordFrame, 108300);
   });
 }
-
-test('ENG-13: cache pressure preserves every pending operation identity', async () => {
-  let release;
-  const h = fixture({ barrier: new Promise(resolve => { release = resolve; }) });
-  const first = h.transfer.addToTimeline('/first.mp4', 'active', 'end', undefined, 'first');
-  const queued = Array.from({ length: 128 }, (_, i) => h.transfer.addToTimeline(`/clip-${i}.mp4`, 'active', 'end', undefined, `op-${i}`));
-  const retry = h.transfer.addToTimeline('/first.mp4', 'active', 'end', undefined, 'first');
-  release();
-  const results = await Promise.all([first, ...queued, retry]);
-  assert.equal(retry, first);
-  assert.equal(results.filter(result => result.kind === 'timeline-appended').length, 130);
-  assert.equal(h.calls.appends.length, 129);
-});
 
 test('ENG-14: macOS case alone does not identify the same source file', async () => {
   const h = fixture({ platform: 'darwin', paths: ['/media/clip.mp4'] });

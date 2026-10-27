@@ -686,84 +686,12 @@ export function createTransfer(
     return result;
   }
 
-  const MAX_OPERATION_CACHE = 128;
-  const operationCache = new Map<string, Promise<TransferResult>>();
-  const operationCacheSettled = new Set<string>();
-  function operationCacheKey(operationId: string, filePath: string, targetBin: string, placement?: string): string {
-    return `${operationId}\u0000${filePath}\u0000${targetBin}\u0000${placement ?? ''}`;
-  }
-  function evictOperationCacheIfNeeded(): void {
-    while (operationCacheSettled.size > MAX_OPERATION_CACHE) {
-      let toEvict: string | null = null;
-      for (const k of operationCache.keys()) {
-        if (operationCacheSettled.has(k)) { toEvict = k; break; }
-      }
-      if (!toEvict) break;
-      operationCache.delete(toEvict);
-      operationCacheSettled.delete(toEvict);
-    }
-  }
-  function trackOperationCacheEntry(key: string, promise: Promise<TransferResult>): void {
-    promise.then(
-      (result) => {
-        if (operationCache.get(key) !== promise) return;
-        if (result && typeof result === 'object' && (result as TransferResult).ok === false) {
-          operationCache.delete(key);
-          operationCacheSettled.delete(key);
-        } else {
-          operationCacheSettled.add(key);
-          evictOperationCacheIfNeeded();
-        }
-      },
-      () => {
-        if (operationCache.get(key) === promise) {
-          operationCache.delete(key);
-          operationCacheSettled.delete(key);
-        }
-      },
-    );
-  }
-
-  function importToMediaPool(filePath: string, targetBin: TargetBin, operationId?: string): Promise<TransferResult> {
-    if (typeof operationId === 'string' && operationId.length > 0) {
-      const key = operationCacheKey(operationId, filePath, targetBin);
-      if (operationCache.has(key)) {
-        const cached = operationCache.get(key)!;
-        operationCache.delete(key);
-        operationCache.set(key, cached);
-        return cached;
-      }
-      const promise = enqueueTransfer(() => importToMediaPoolTransaction(filePath, targetBin));
-      operationCache.set(key, promise);
-      trackOperationCacheEntry(key, promise);
-      evictOperationCacheIfNeeded();
-      return promise;
-    }
+  function importToMediaPool(filePath: string, targetBin: TargetBin): Promise<TransferResult> {
     return enqueueTransfer(() => importToMediaPoolTransaction(filePath, targetBin));
   }
 
-  function addToTimeline(filePath: string, targetBin: TargetBin, placement: TimelinePlacement, automation?: TimelineAutomation, operationId?: string): Promise<TransferResult> {
-    let actualAutomation: TimelineAutomation | undefined = automation;
-    let actualOpId: string | undefined = operationId;
-    if (typeof automation === 'string' && operationId === undefined) {
-      actualOpId = automation as unknown as string;
-      actualAutomation = undefined;
-    }
-    if (typeof actualOpId === 'string' && actualOpId.length > 0) {
-      const key = operationCacheKey(actualOpId, filePath, targetBin, placement);
-      if (operationCache.has(key)) {
-        const cached = operationCache.get(key)!;
-        operationCache.delete(key);
-        operationCache.set(key, cached);
-        return cached;
-      }
-      const promise = enqueueTransfer(() => addToTimelineTransaction(filePath, targetBin, placement, actualAutomation));
-      operationCache.set(key, promise);
-      trackOperationCacheEntry(key, promise);
-      evictOperationCacheIfNeeded();
-      return promise;
-    }
-    return enqueueTransfer(() => addToTimelineTransaction(filePath, targetBin, placement, actualAutomation));
+  function addToTimeline(filePath: string, targetBin: TargetBin, placement: TimelinePlacement, automation?: TimelineAutomation): Promise<TransferResult> {
+    return enqueueTransfer(() => addToTimelineTransaction(filePath, targetBin, placement, automation));
   }
 
   return { importToMediaPool, addToTimeline, noteResolveQuit };

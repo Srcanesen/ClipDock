@@ -54,9 +54,9 @@ function fixture({ change = 'timeline', changeAt = 'append', duplicate = true, r
 for (const placement of ['end', 'playhead']) {
   for (const change of ['project', 'timeline', 'folder']) {
     for (const changeAt of ['append', 'item-start', 'color', 'marker', 'append-without-automation']) {
-      test(`committed ${placement}: ${change} change during ${changeAt} warns and preserves retry identity`, async () => {
+      test(`committed ${placement}: ${change} change during ${changeAt} warns and keeps the single append`, async () => {
         const h = fixture({ change, changeAt: changeAt === 'append-without-automation' ? 'append' : changeAt });
-        const args = ['/clip.mp4', 'active', placement, changeAt === 'append-without-automation' ? undefined : automation, 'committed'];
+        const args = ['/clip.mp4', 'active', placement, changeAt === 'append-without-automation' ? undefined : automation];
         const result = await h.transfer.addToTimeline(...args);
         assert.deepEqual([result.ok, result.kind], [true, placement === 'end' ? 'timeline-appended' : 'timeline-inserted']);
         assert.match(result.message, /destination changed/i);
@@ -64,28 +64,22 @@ for (const placement of ['end', 'playhead']) {
         assert.deepEqual(h.calls.appends, [{ project: 'A', timeline: 'A' }]);
         assert.equal(h.calls.colors.length, ['color', 'marker'].includes(changeAt) ? 1 : 0);
         assert.equal(h.calls.markers.length, changeAt === 'marker' ? 1 : 0);
-        h.restore();
-        assert.deepEqual(await h.transfer.addToTimeline(...args), result);
-        assert.equal(h.calls.appends.length, 1, 'same operation must retain the completed append');
       });
     }
   }
 }
 
-for (const change of ['project', 'folder', 'trusted-path']) test(`committed import: ${change} change preserves success and retry identity`, async () => {
+for (const change of ['project', 'folder', 'trusted-path']) test(`committed import: ${change} change preserves success`, async () => {
   const h = fixture({ change, changeAt: 'import', duplicate: false, revokePath: change === 'trusted-path' });
-  const args = ['/clip.mp4', 'active', 'committed-import'];
+  const args = ['/clip.mp4', 'active'];
   const result = await h.transfer.importToMediaPool(...args);
   assert.deepEqual([result.ok, result.kind, result.importedCount, h.calls.imports], [true, 'imported', 1, ['A']]);
   assert.doesNotMatch(result.message, /retry/i);
-  h.restore();
-  assert.deepEqual(await h.transfer.importToMediaPool(...args), result);
-  assert.deepEqual(h.calls.imports, ['A']);
 });
 
 test('pending append: destination change after import still aborts the uncommitted append', async () => {
   const h = fixture({ changeAt: 'import', duplicate: false });
-  const args = ['/clip.mp4', 'active', 'end', undefined, 'pending-append'];
+  const args = ['/clip.mp4', 'active', 'end', undefined];
   const result = await h.transfer.addToTimeline(...args);
   assert.deepEqual([result.ok, result.kind, h.calls.appends], [false, 'destination-changed', []]);
   assert.deepEqual(h.calls.imports, ['A']);
