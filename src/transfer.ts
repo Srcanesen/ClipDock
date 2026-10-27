@@ -341,10 +341,10 @@ async function applyAutomation(project: unknown, timeline: unknown, clip: unknow
     const addMarker = (timeline as TimelineLike).AddMarker;
     if (!Number.isFinite(fps) || fps < 1 || fps > 240 || recordFrame === null || timelineStart === null || typeof addMarker !== 'function') return await check() ? 'destination-changed' : 'unavailable';
     const offset = automation.selection?.start ?? 0;
+    // Markers target the captured timeline handle: check the destination around the batch, not per marker.
+    if (await check()) return 'destination-changed';
     for (const chapter of automation.chapters.slice(0, 100)) {
       if (automation.selection && (chapter.start < automation.selection.start || chapter.start >= automation.selection.end)) continue;
-      const changed = await check();
-      if (changed) return 'destination-changed';
       if (await addMarker.call(timeline, recordFrame - timelineStart + Math.round((chapter.start - offset) * fps), markerColor, chapter.title, `${automation.source} · original ${chapter.start.toFixed(3)}s`, 1) === false) warning = 'unavailable';
     }
   } catch { warning = 'unavailable'; }

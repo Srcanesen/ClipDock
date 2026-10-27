@@ -63,7 +63,7 @@ for (const placement of ['end', 'playhead']) {
         assert.doesNotMatch(result.message, /retry/i);
         assert.deepEqual(h.calls.appends, [{ project: 'A', timeline: 'A' }]);
         assert.equal(h.calls.colors.length, ['color', 'marker'].includes(changeAt) ? 1 : 0);
-        assert.equal(h.calls.markers.length, changeAt === 'marker' ? 1 : 0);
+        assert.equal(h.calls.markers.length, changeAt === 'marker' ? 2 : 0);
         h.restore();
         assert.deepEqual(await h.transfer.addToTimeline(...args), result);
         assert.equal(h.calls.appends.length, 1, 'same operation must retain the completed append');
