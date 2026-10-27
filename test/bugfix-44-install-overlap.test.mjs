@@ -18,7 +18,7 @@ test('installer refuses a destination containing dist instead of deleting the ch
   fs.writeFileSync(sentinel, 'CHECKOUT DATA');
   const result = spawnSync(process.execPath, [path.join(root, 'scripts', 'install-plugin.mjs'), `--destination=${root}`, `--native-module=${native}`], { encoding: 'utf8' });
   assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
-  assert.match(result.stderr, /Source and destination directories must not overlap/);
+  assert.match(result.stderr, /Install destination must be named com\.clipdock\.app/);
   assert.equal(fs.readFileSync(sentinel, 'utf8'), 'CHECKOUT DATA');
   assert.equal(fs.readFileSync(path.join(root, 'dist', 'main.js'), 'utf8'), fs.readFileSync('dist/main.js', 'utf8'));
   assert.equal(fs.readFileSync(path.join(root, 'scripts', 'install-plugin.mjs'), 'utf8'), fs.readFileSync('scripts/install-plugin.mjs', 'utf8'));

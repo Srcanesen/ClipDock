@@ -3,7 +3,7 @@
 // from the Resolve developer package (the binary is NEVER committed to the repo).
 //
 // macOS: the plugins directory is /Library/... (system-wide) — may require sudo.
-import { copyFileSync, existsSync, lstatSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCompletedBuild } from './lib/completed-build.mjs';
@@ -26,7 +26,23 @@ const destRoot = isWin
     )
   : '/Library/Application Support/Blackmagic Design/DaVinci Resolve/Workflow Integration Plugins';
 const option = (name) => process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
-const dest = option('destination') ?? path.join(destRoot, PLUGIN_ID);
+const refuse = (message) => { console.error(message); process.exit(1); };
+const destOption = option('destination');
+if (destOption === '') refuse('--destination must not be empty.');
+const dest = path.resolve(destOption ?? path.join(destRoot, PLUGIN_ID));
+// The install swap replaces the destination wholesale, so it may only ever be ClipDock's own folder.
+if (path.basename(dest) !== PLUGIN_ID) refuse(`Install destination must be named ${PLUGIN_ID}: ${dest}`);
+const isClipDockInstall = (dir) => {
+  const manifest = path.join(dir, 'manifest.xml');
+  return existsSync(manifest) && readFileSync(manifest, 'utf8').match(/<Id>\s*([^<]*?)\s*<\/Id>/)?.[1] === PLUGIN_ID;
+};
+const checkDestinationContents = () => {
+  const info = lstatSync(dest, { throwIfNoEntry: false });
+  if (info?.isDirectory() && readdirSync(dest).length > 0 && !isClipDockInstall(dest)) {
+    refuse(`Install destination ${dest} is not empty and holds no ClipDock install (manifest.xml with <Id>${PLUGIN_ID}</Id>). No files were moved or deleted.`);
+  }
+};
+checkDestinationContents();
 
 // WorkflowIntegration.node ships with the Resolve developer package (Help >
 // Documentation > Developer > Workflow Integrations > Examples/SamplePlugin).
@@ -51,7 +67,11 @@ try {
   throw error;
 }
 
-if (!DRY_RUN) recoverInterruptedTransaction(dest);
+if (!DRY_RUN) {
+  recoverInterruptedTransaction(dest);
+  // Recovery can restore a backup into the destination; check what it restored.
+  checkDestinationContents();
+}
 
 if (!existsSync(dist)) {
   console.error(`dist/ not found at ${dist} — run "npm run build" first.`);

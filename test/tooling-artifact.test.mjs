@@ -17,6 +17,7 @@ function fixture(t) {
   const destination = path.join(plugins, 'com.clipdock.app');
   mkdirSync(destination, { recursive: true });
   writeFileSync(path.join(destination, 'old.js'), 'WORKING OLD PLUGIN');
+  writeFileSync(path.join(destination, 'manifest.xml'), '<Id>com.clipdock.app</Id>');
   const native = path.join(root, 'WorkflowIntegration.node');
   writeFileSync(native, 'HOST NATIVE');
   // Redirect only host path literals in the copied CLI, also allowing these
@@ -36,7 +37,7 @@ function fixture(t) {
 const output = (result) => `${result.stdout}\n${result.stderr}`;
 function oldPreserved(fx) {
   assert.equal(readFileSync(path.join(fx.destination, 'old.js'), 'utf8'), 'WORKING OLD PLUGIN');
-  assert.deepEqual(readdirSync(fx.destination), ['old.js']);
+  assert.deepEqual(readdirSync(fx.destination), ['manifest.xml', 'old.js']);
 }
 
 test('installer refuses missing native input before replacing a working plugin (TLG-1)', (t) => {
