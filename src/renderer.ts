@@ -138,6 +138,9 @@ const statusSession = new StatusRefreshSession();
 let statusRefreshTimer: number | null = null;
 let hostStatus: StatusSnapshot | null = null;
 let settingsOpen = false;
+// The host message last written to #message. A refresh repaints the footer only when it
+// changes, so a transient action result stays readable under the 3s poll.
+let shownHostMessage: string | null = null;
 let settingsTrigger: HTMLElement | null = null;
 let currentSurface: Surface = 'search';
 let previousSurface: Surface = 'search';
@@ -542,9 +545,10 @@ function refresh(): void {
     setText('module-version', s.bridge.moduleVersion ?? '-'); setText('resolve-version', s.bridge.resolveVersion ?? '-');
     setText('project-name', s.project.loaded ? (s.project.name?.trim() || 'Untitled project') : 'No project open', s.project.loaded); setText('timeline-name', s.timeline.loaded ? (s.timeline.name?.trim() || 'Untitled timeline/comp') : (s.project.loaded ? 'No active timeline/comp' : 'No timeline'), s.timeline.loaded);
     { const bridgeDot = document.getElementById('bridge-state'); if (bridgeDot) { const stateText = s.bridge.connected ? 'Connected' : 'Not connected'; bridgeDot.setAttribute('aria-label', stateText); bridgeDot.setAttribute('title', stateText); } const pill = document.querySelector('.bridge-pill') as HTMLElement | null; if (pill) { const projectText = s.project.loaded ? (s.project.name?.trim() || 'Untitled project') : 'No project open'; const timelineText = s.timeline.loaded ? (s.timeline.name?.trim() || 'Untitled timeline/comp') : (s.project.loaded ? 'No active timeline/comp' : 'No timeline'); const pillText = `${projectText} - ${timelineText}`; pill.setAttribute('aria-label', pillText); pill.setAttribute('title', pillText); } }
-    setText('message', s.message); setText('refresh-hint', s.refreshHint ?? ''); setText('last-updated', `Updated ${new Date().toLocaleTimeString()}`);
+    if (s.message !== shownHostMessage) { shownHostMessage = s.message; setText('message', s.message); }
+    setText('refresh-hint', s.refreshHint ?? ''); setText('last-updated', `Updated ${new Date().toLocaleTimeString()}`);
     if (hostChanged) { if (queue.length) renderQueue(); else updateControls(); refreshHistoryHostState(); }
-  }).catch((err) => { if (statusSession.accepts(flight)) setText('message', `Renderer call failed: ${(err as Error).message}`); }).finally(() => {
+  }).catch((err) => { if (statusSession.accepts(flight)) { shownHostMessage = null; setText('message', `Renderer call failed: ${(err as Error).message}`); } }).finally(() => {
     if (!statusSession.holds(flight)) return; // the bounded timeout already released this flight
     release();
   });
@@ -993,7 +997,8 @@ function wirePreviewControls(): void {
     const command = event.ctrlKey || event.metaKey;
     if (command && event.key.toLowerCase() === 'k') { event.preventDefault(); if (settingsOpen) closeSettings(false); if (currentSurface !== 'search') setSurface('search', false); ($('youtube-search-input') as HTMLInputElement).focus(); return; }
     if (command && event.key === ',') { event.preventDefault(); openSettings(); return; }
-    if (command && event.key === 'Enter') { event.preventDefault(); ($('download-youtube-btn') as HTMLButtonElement).click(); return; }
+    // The download control lives in the clip detail; act only while it is on screen.
+    if (command && event.key === 'Enter') { if (currentSurface === 'search' && inspectorOpen) { event.preventDefault(); ($('download-youtube-btn') as HTMLButtonElement).click(); } return; }
     if (event.key === ' ' && !event.ctrlKey && !event.metaKey) {
       const active = document.activeElement as HTMLElement | null; const tag = active?.tagName ?? '';
       if (!['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tag) && active?.getAttribute?.('contenteditable') !== 'true') {
@@ -2353,7 +2358,6 @@ async function refreshHistory(): Promise<void> {
     if (historyGuard.isStale(request)) return;
     historyRecords = records;
     historyStatusOverride = null;
-    historyVisibleCount = HISTORY_BATCH_SIZE;
     document.getElementById('history-list')?.removeAttribute?.('data-loading');
     document.getElementById('history-empty-state')?.removeAttribute?.('data-loading');
     renderHistory();
@@ -2527,7 +2531,7 @@ window.addEventListener('DOMContentLoaded', () => {
     setText('bridge-state', 'Not connected', false);
     setText('module-version', '-'); setText('resolve-version', '-');
     setText('project-name', 'No project open', false); setText('timeline-name', 'No timeline', false);
-    setText('message', hostStatus.message); setText('refresh-hint', hostStatus.refreshHint ?? '');
+    shownHostMessage = hostStatus.message; setText('message', hostStatus.message); setText('refresh-hint', hostStatus.refreshHint ?? '');
     updateControls();
     if (queue.length) renderQueue();
     refreshHistoryHostState();

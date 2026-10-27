@@ -663,6 +663,8 @@ test('plain Enter reuses enabled buttons and ignores composition and modifiers',
 test('command shortcuts enqueue the selected item and open Settings; page keys use enabled pagination', async (t) => {
   const f = controlsHarness(t); await f.flush();
   let downloads = 0; f.elements.get('download-youtube-btn').listeners.click = () => { downloads += 1; };
+  // The shortcut acts on the clip detail's download control, so open the detail first.
+  f.elements.get('load-youtube-btn').listeners.click({}); await f.flush();
   f.listeners.keydown({ key: 'Enter', metaKey: true, preventDefault() {} });
   f.listeners.keydown({ key: 'Enter', ctrlKey: true, preventDefault() {} });
   assert.equal(downloads, 2);
