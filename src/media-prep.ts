@@ -138,12 +138,14 @@ export function createMediaPrep(options: Options = {}) {
   const killGraceMs = options.killGraceMs ?? 3_000;
   const jobs = new ProviderJobRunner({cancelledMessage: 'Media preparation cancelled.', busyMessage: 'Another media preparation job is already active.', disposedMessage: 'Media preparation is shut down.'});
 
-  async function run(context: ProviderJobContext, binary: string, args: string[], progress?: (chunk: string) => void): Promise<{ stdout: string; stderr: string; overflow: boolean }> {
+  async function run(context: ProviderJobContext, binary: string, args: string[], progress?: (chunk: string) => void, stallMs?: number): Promise<{ stdout: string; stderr: string; overflow: boolean }> {
     context.check();
     const bounded = spawnBounded(binary, args, spawn, {
       maxStdout: progress ? 16 * 1024 * 1024 : MAX_PROBE, maxStderr: MAX_STDERR,
       onLine: progress ? line => progress(`${line}\n`) : undefined,
-      timeoutMs: progress ? options.conversionTimeoutMs ?? 30 * 60 * 1000 : options.probeTimeoutMs ?? 30000,
+      // Conversion: an 8-hour backstop (16 MB of -progress output lasts about 11 hours);
+      // stalls are caught by the silence window instead.
+      timeoutMs: progress ? options.conversionTimeoutMs ?? 8 * 60 * 60 * 1000 : options.probeTimeoutMs ?? 30000, idleTimeoutMs: stallMs,
       killGraceMs, platform, processSpawn,
     });
     const result = await context.wait(bounded);
@@ -181,7 +183,10 @@ export function createMediaPrep(options: Options = {}) {
         };
         const progress = (chunk: string) => { pending += chunk; const lines = pending.split(/[\r\n]+/); pending = lines.pop() ?? ''; lines.forEach(progressLine); };
         verifySource(ownedSource); privateDir.verify();
-        await run(context, ffmpeg!, ffmpegArgs(attempt, request.profile, input, temporary, source.video), progress);
+        // -progress reports twice a second; the silent +faststart rewrite scales with the
+        // output, so the window grows with duration (unknown: budgeted as one hour).
+        const stallMs = Math.max(5 * 60 * 1000, (source.duration ?? 3600) * 500);
+        await run(context, ffmpeg!, ffmpegArgs(attempt, request.profile, input, temporary, source.video), progress, stallMs);
         if (pending) progressLine(pending);
         const prepared = captureFile(privateDir, temporary);
         if (statSync(verifyFile(prepared)).size === 0) throw new Error('Media file failed the safety check.');

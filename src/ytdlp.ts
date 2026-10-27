@@ -30,7 +30,7 @@ export type DownloadEvent = { jobId: string; state: YtdlpState; percent: number 
 
 type Spawn = (binary: string, args: string[], options: { shell: false }) => ChildProcess;
 type Fetch = (url: string, init?: { redirect?: 'follow'; signal?: AbortSignal }) => Promise<{ ok: boolean; url?: string; headers: { get(name: string): string | null }; arrayBuffer(): Promise<ArrayBuffer> }>;
-type JobDetails = { jobDir: string; kind: 'metadata' | 'download' | 'search'; sharedMetadata?: boolean; cancelledLog?: string; emit?: (event: DownloadEvent) => void; jobId?: string };
+type JobDetails = { jobDir: string; kind: 'metadata' | 'download' | 'search'; sharedMetadata?: boolean; cancelledLog?: string; emit?: (event: DownloadEvent) => void; jobId?: string; stallMs?: number };
 type WorkerOptions = { sessionDir?: string; platform?: NodeJS.Platform; processSpawn?: Spawn; killGraceMs?: number; ffmpegPath?: string | null; ffprobePath?: string | null; jsRuntime?: string | null; metadataTimeoutMs?: number; downloadTimeoutMs?: number; thumbnailTimeoutMs?: number; now?: () => number };
 type SearchCacheEntry = { query: string; createdAt: number; results: YoutubeSearchItem[] };
 // Workers using the same extractor dependencies share replies and in-flight work.
@@ -58,6 +58,8 @@ const BASE = ['--ignore-config', '--no-warnings', '--no-colors', '--no-playlist'
 const BEST_SELECTOR = 'bv*+ba/b';
 const MAX_STDERR = 64 * 1024;
 const MAX_STDOUT = 2 * 1024 * 1024;
+// Progress lines (at most four a second) fill this only after the download backstop.
+const MAX_DOWNLOAD_STDOUT = 16 * 1024 * 1024;
 const MAX_LOG = 128 * 1024;
 const MAX_THUMBNAIL = 5 * 1024 * 1024;
 const MAX_SUBTITLE_BYTES = 2 * 1024 * 1024;
@@ -338,7 +340,8 @@ export class YtdlpWorker {
     this.ffprobePath = options.ffprobePath === undefined ? discoverFfprobe(this.ffmpegPath) : options.ffprobePath;
     this.jsRuntime = options.jsRuntime ?? null;
     this.metadataTimeoutMs = options.metadataTimeoutMs ?? 30000;
-    this.downloadTimeoutMs = options.downloadTimeoutMs ?? 30 * 60 * 1000;
+    // A backstop only: stalls are caught by the per-download silence window.
+    this.downloadTimeoutMs = options.downloadTimeoutMs ?? 8 * 60 * 60 * 1000;
     this.thumbnailTimeoutMs = options.thumbnailTimeoutMs ?? 5000;
     this.now = options.now ?? Date.now;
     this.searchCache = new LruCache<string, SearchCacheEntry>(SEARCH_CACHE_MAX, SEARCH_CACHE_TTL, this.now);
@@ -427,8 +430,8 @@ export class YtdlpWorker {
     const context = this.current!.context;
     context.check();
     const bounded = spawnBounded(requireBinary(this.binary, 'yt-dlp was not found. Install yt-dlp or set CLIPDOCK_YTDLP_PATH to an absolute executable path.'), this.jsRuntime ? [...args.slice(0, 1), '--js-runtimes', this.jsRuntime, ...args.slice(1)] : args, this.spawn, {
-      env: literalPathEnv(args), maxStdout: MAX_STDOUT, maxStderr: MAX_STDERR, onLine, onStderrLine,
-      timeoutMs: details.kind === 'download' ? this.downloadTimeoutMs : this.metadataTimeoutMs,
+      env: literalPathEnv(args), maxStdout: details.kind === 'download' ? MAX_DOWNLOAD_STDOUT : MAX_STDOUT, maxStderr: MAX_STDERR, onLine, onStderrLine,
+      timeoutMs: details.kind === 'download' ? this.downloadTimeoutMs : this.metadataTimeoutMs, idleTimeoutMs: details.stallMs,
       killGraceMs: this.killGraceMs, platform: this.platform, processSpawn: this.processSpawn,
     });
     return context.wait(bounded).then(result => {
@@ -610,6 +613,12 @@ export class YtdlpWorker {
     const formatSort = fastHeight !== null && fastHeight <= 1080 ? ['-S', `res:${fastHeight},vcodec:h264,acodec:aac`] : [];
     const ffmpegPath = this.ffmpegPath!;
     const jobDir = join(this.sessionDir, `download-${randomUUID()}`);
+    // A stall is silence, not slowness: every progress line rearms the window. Silent
+    // phases (merge, audio extraction, a range's keyframe re-encode) scale with the media;
+    // an unknown duration is budgeted as one hour.
+    const knownDuration = 'videoId' in valid ? this.metadataStore.youtube.get(valid.videoId)?.duration : this.metadataStore.social.get(valid.url)?.metadata.duration;
+    const mediaSeconds = selection ? selection.end - selection.start : knownDuration ?? 3600;
+    const stallMs = Math.max(10 * 60 * 1000, mediaSeconds * (selection ? 4000 : 500));
     let output: string | null = null;
     let failureDetail = '';
     return await this.runJob({jobDir, kind: 'download', emit, jobId}, async context => {
@@ -632,7 +641,7 @@ export class YtdlpWorker {
       if (cachedInfo) writeExclusive(this.session.jobDirectories.get(jobDir)!, basename(infoPath), cachedInfo);
       let bytesWritten = false;
       const combinedSubtitles = options.subtitles && !selection;
-      const runDownload = (loaded: boolean) => this.begin([...BASE, '--quiet', '--progress', '--progress-delta', '0.25', '--newline', '--progress-template', 'download:C|%(progress.status)s|%(progress._percent).1f|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s', '--progress-template', 'postprocess:Q|%(progress.status)s', '--print', 'before_dl:S|%(format_id)s|%(requested_formats.:.filesize)l|%(filesize,filesize_approx)s', '--print', 'after_move:P|%(filepath)s', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', literalPath(ffmpegPath, this.platform), ...(selection ? ['--download-sections', `*${selection.start.toFixed(3)}-${selection.end.toFixed(3)}`, '--force-keyframes-at-cuts'] : []), ...(combinedSubtitles ? ['--write-subs', '--write-auto-subs', '--sub-langs', subtitleLanguage, '--sub-format', 'srt/vtt', '--ignore-errors'] : []), ...conversion, '-f', selectedFormat, ...formatSort, '-o', literalPath(join(jobDir.replace(/%/g, '%%'), selection ? `%(title).120B [%(id)s] [${selection.label.replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 50)}].%(ext)s` : '%(title).150B [%(id)s].%(ext)s'), this.platform, true), ...(loaded ? ['--load-info-json', literalPath(infoPath, this.platform)] : [valid.url])], { jobDir, kind: 'download', emit, jobId }, (line) => {
+      const runDownload = (loaded: boolean) => this.begin([...BASE, '--quiet', '--progress', '--progress-delta', '0.25', '--newline', '--progress-template', 'download:C|%(progress.status)s|%(progress._percent).1f|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s', '--progress-template', 'postprocess:Q|%(progress.status)s', '--print', 'before_dl:S|%(format_id)s|%(requested_formats.:.filesize)l|%(filesize,filesize_approx)s', '--print', 'after_move:P|%(filepath)s', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', literalPath(ffmpegPath, this.platform), ...(selection ? ['--download-sections', `*${selection.start.toFixed(3)}-${selection.end.toFixed(3)}`, '--force-keyframes-at-cuts'] : []), ...(combinedSubtitles ? ['--write-subs', '--write-auto-subs', '--sub-langs', subtitleLanguage, '--sub-format', 'srt/vtt', '--ignore-errors'] : []), ...conversion, '-f', selectedFormat, ...formatSort, '-o', literalPath(join(jobDir.replace(/%/g, '%%'), selection ? `%(title).120B [%(id)s] [${selection.label.replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 50)}].%(ext)s` : '%(title).150B [%(id)s].%(ext)s'), this.platform, true), ...(loaded ? ['--load-info-json', literalPath(infoPath, this.platform)] : [valid.url])], { jobDir, kind: 'download', emit, jobId, stallMs }, (line) => {
         if (line.startsWith('Q|')) { emit({jobId, state: 'processing', percent: null, message: 'Processing media…'}); return; }
         if (line.startsWith('P|')) { output = line.slice(2); return; }
         const fields = line.split('|');
@@ -710,7 +719,7 @@ export class YtdlpWorker {
       if (options.subtitles) {
         emit({ jobId, state: 'processing', percent: null, message: 'Retrieving subtitles…' });
         try {
-          const pendingSubtitle = selection ? this.begin([...BASE, '--quiet', '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', subtitleLanguage, '--convert-subs', 'srt', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', literalPath(ffmpegPath, this.platform), '-o', literalPath(join(jobDir.replace(/%/g, '%%'), '%(title).150B [%(id)s].%(ext)s'), this.platform, true), valid.url], { jobDir, kind: 'download', emit, jobId }) : Promise.resolve({code: 0});
+          const pendingSubtitle = selection ? this.begin([...BASE, '--quiet', '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', subtitleLanguage, '--convert-subs', 'srt', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', literalPath(ffmpegPath, this.platform), '-o', literalPath(join(jobDir.replace(/%/g, '%%'), '%(title).150B [%(id)s].%(ext)s'), this.platform, true), valid.url], { jobDir, kind: 'download', emit, jobId, stallMs }) : Promise.resolve({code: 0});
           const subtitle = await pendingSubtitle;
           context.check();
           // Full clips use the existing cue normalizer to write SRT directly.

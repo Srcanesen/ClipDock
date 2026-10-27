@@ -263,6 +263,8 @@ export type SpawnBoundedOptions = {
   onLine?: (line: string) => void;
   onStderrLine?: (line: string) => void;
   timeoutMs?: number;
+  /** Stall window: stop when neither stream has produced output for this long. */
+  idleTimeoutMs?: number;
   killGraceMs?: number;
   platform?: NodeJS.Platform;
   processSpawn?: Spawn;
@@ -288,7 +290,7 @@ export function spawnBounded(
   const outDecoder = new StringDecoder('utf8'), errDecoder = new StringDecoder('utf8');
   let stdout = '', stderr = '', pending = '', pendingStderr = '', stdoutBytes = 0, stderrBytes = 0;
   let timedOut = false, overflow = false, stopping = false, settled = false;
-  let timeoutTimer: NodeJS.Timeout | undefined, killTimer: NodeJS.Timeout | undefined, reapTimer: NodeJS.Timeout | undefined;
+  let timeoutTimer: NodeJS.Timeout | undefined, idleTimer: NodeJS.Timeout | undefined, killTimer: NodeJS.Timeout | undefined, reapTimer: NodeJS.Timeout | undefined;
   let finish: (code: number | null, error?: Error) => void;
   function signalTree(signal: 'SIGTERM' | 'SIGKILL'): void {
     if (platform === 'win32' && child.pid) {
@@ -309,6 +311,7 @@ export function spawnBounded(
     if (settled || stopping) return;
     stopping = true;
     if (timeoutTimer) clearTimeout(timeoutTimer);
+    if (idleTimer) clearTimeout(idleTimer);
     // Install escalation before TERM: injected children may close synchronously.
     killTimer = setTimeout(() => {
       signalTree('SIGKILL');
@@ -318,6 +321,11 @@ export function spawnBounded(
       }, 1000);
     }, opts.killGraceMs ?? 3000);
     signalTree('SIGTERM');
+  }
+  function armIdle(): void {
+    if (!opts.idleTimeoutMs || opts.idleTimeoutMs <= 0 || stopping) return;
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { timedOut = true; stop(); }, opts.idleTimeoutMs);
   }
   function deliver(text: string): void {
     stdout += text;
@@ -343,6 +351,7 @@ export function spawnBounded(
         try { process.kill(-child.pid, 'SIGKILL'); } catch { /* group already reaped */ }
       }
       if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (idleTimer) clearTimeout(idleTimer);
       if (killTimer) clearTimeout(killTimer);
       if (reapTimer) clearTimeout(reapTimer);
       if (!overflow) deliver(outDecoder.end());
@@ -354,6 +363,7 @@ export function spawnBounded(
     };
     child.stdout?.on('data', (chunk: Buffer | string) => {
       if (settled || overflow) return;
+      armIdle();
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const remaining = Math.max(0, maxStdout - stdoutBytes);
       stdoutBytes += bytes.length;
@@ -362,6 +372,7 @@ export function spawnBounded(
     });
     child.stderr?.on('data', (chunk: Buffer | string) => {
       if (settled) return;
+      armIdle();
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       deliverStderr(errDecoder.write(bytes.subarray(0, Math.max(0, maxStderr - stderrBytes))));
       stderrBytes += bytes.length;
@@ -370,6 +381,7 @@ export function spawnBounded(
     child.once('close', (code) => finish(code));
   }) as Promise<SpawnBoundedResult> & {child: ChildProcess; cancel: () => Promise<void>};
   if (opts.timeoutMs && opts.timeoutMs > 0) timeoutTimer = setTimeout(() => { timedOut = true; stop(); }, opts.timeoutMs);
+  armIdle();
   promise.child = child;
   promise.cancel = () => { stop(); return promise.then(() => undefined, () => undefined); };
   return promise;
