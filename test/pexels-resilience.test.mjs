@@ -12,8 +12,9 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
 
 test('PRV-7 exact photo and video search/detail paths', async t => {
  const paths = []; const {client} = setup(t, async url => {paths.push(url.pathname); return json(url.pathname.endsWith('search') ? {photos: [row(1)], videos: [row(1)]} : row(1));});
- await client.search('photo', 'studio', 1); await client.search('video', 'studio', 1); await client.load('photo', 1); await client.load('video', 1);
- assert.deepEqual(paths, ['/v1/search', '/videos/search', '/v1/photos/1', '/videos/videos/1']);
+ // Details first: a search would seed them into the cache.
+ await client.load('photo', 1); await client.load('video', 1); await client.search('photo', 'studio', 1); await client.search('video', 'studio', 1);
+ assert.deepEqual(paths, ['/v1/photos/1', '/videos/videos/1', '/v1/search', '/videos/search']);
 });
 test('PRV-12 independent detail calls do not cancel one another', async t => {
  let release; const {client} = setup(t, async (url, init) => url.pathname.endsWith('/1') ? new Promise((resolve, reject) => {release = () => resolve(json(row(1))); init.signal.addEventListener('abort', () => reject(Error('aborted')));}) : json(row(2)));
@@ -79,6 +80,20 @@ test('a slow download that keeps moving past 30 minutes completes; a stalled one
   await turn(); stream.enqueue(new Uint8Array(1024)); await turn(); await turn();
   timers.advance(30_000); await outcome;
   assert.deepEqual(readdirSync(root), [done.fileName]);
+});
+
+test('opening Pexels search results reuses the search response until the cache expires', async t => {
+  let now = 0; const paths = [];
+  const {client} = setup(t, async url => { paths.push(url.pathname); return json(url.pathname.endsWith('search') ? {photos: [row(1), row(2), row(3)]} : row(Number(url.pathname.split('/').at(-1)))); }, {now: () => now});
+  await client.search('photo', 'studio', 1);
+  for (const id of [1, 2, 3]) assert.equal((await client.load('photo', id)).files[0].url, `https://images.pexels.com/${id}.jpg`);
+  // The download step re-reads the asset in main and finds it there too.
+  assert.equal((await client.load('photo', 2, {jobId: 'job'})).id, 2);
+  assert.deepEqual(paths, ['/v1/search']);
+  await client.load('photo', 4);
+  now = 60_000;
+  await client.load('photo', 1);
+  assert.deepEqual(paths, ['/v1/search', '/v1/photos/4', '/v1/photos/1']);
 });
 
 test('PRV-19 cooldown accepts reset-only and HTTP date headers and stays account scoped', async t => {

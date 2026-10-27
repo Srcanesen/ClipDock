@@ -119,6 +119,23 @@ test('a repeated search within 24 hours is served from the cache', async t => {
   assert.equal(fetches, 2);
 });
 
+test('opening Pixabay search results reuses the search response until the 24-hour cache expires', async t => {
+  let now = 1_000_000; const requests = [];
+  const {client} = fixture(t, async url => {
+    const params = new URL(String(url)).searchParams; requests.push(params.get('id') ?? `q=${params.get('q')}`);
+    return json(params.has('id') ? {totalHits: 1, hits: [hit(Number(params.get('id')))]} : {totalHits: 3, hits: [hit(7), hit(8), hit(9, false)]});
+  }, () => now);
+  await client.search('video', 'ocean', 1);
+  for (const id of [7, 8, 9]) assert.equal((await client.load('video', id)).files[0].url, `https://cdn.pixabay.com/video/2024/01/01/${id}_${id === 9 ? 'medium' : 'large'}.mp4`);
+  // The download step re-reads the asset in main and finds it there too.
+  assert.equal((await client.load('video', 8, {jobId: 'job'})).id, 8);
+  assert.deepEqual(requests, ['q=ocean']);
+  await client.load('video', 10);
+  now += 24 * 60 * 60 * 1000;
+  await client.load('video', 7);
+  assert.deepEqual(requests, ['q=ocean', '10', '7']);
+});
+
 test('cancelling a Pixabay download removes the partial file', async t => {
   let started;
   const ready = new Promise(resolve => { started = resolve; });

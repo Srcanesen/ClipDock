@@ -89,6 +89,11 @@ const PIXABAY: StockSource = {
     const hit = Array.isArray(raw.hits) ? normalize(raw.hits[0]) : null;
     return hit && hit.id === id && hit.files.length ? hit : null;
   },
+  // The `id=` lookup answers with the same hit wrapped in `hits`.
+  loadEntries: raw => (Array.isArray(raw.hits) ? raw.hits : []).flatMap((hit): Array<[number, Record<string, unknown>]> => {
+    const id = hit && typeof hit === 'object' && !Array.isArray(hit) ? positiveInteger((hit as Record<string, unknown>).id) : null;
+    return id === null ? [] : [[id, {hits: [hit]}]];
+  }),
 };
 
 export class PixabayClient extends StockClient {

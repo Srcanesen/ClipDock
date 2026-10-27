@@ -41,6 +41,8 @@ export interface StockSource {
   loadUrl(kind: StockKind, id: number): URL;
   parsePage(raw: unknown, kind: StockKind, query: string, page: number): StockPage;
   parseAsset(raw: Record<string, unknown>, kind: StockKind, id: number): StockAsset | null;
+  /** Each search hit as [id, the body loadUrl(kind, id) would return]. */
+  loadEntries(raw: Record<string, unknown>, kind: StockKind): Array<[number, Record<string, unknown>]>;
 }
 
 const MAX_API_BYTES = 1024 * 1024;
@@ -246,7 +248,7 @@ export class StockClient {
     } finally { this.#clearTimeout(timeout); }
   }
 
-  async #requestJson(url: URL, signal: AbortSignal, key = this.#key, reusable = true, validating = false): Promise<Record<string, unknown>> {
+  async #requestJson(url: URL, signal: AbortSignal, key = this.#key, reusable = true, validating = false, seed?: (raw: Record<string, unknown>) => Array<[URL, Record<string, unknown>]>): Promise<Record<string, unknown>> {
     if (!key) throw new Error(this.#noKey);
     // The URL never carries the key here; query authentication is added at fetch time.
     const cacheKey = `${key}:${url}`;
@@ -260,7 +262,11 @@ export class StockClient {
       if (!reusable) return this.#fetchJson(url, signal, key, validating);
       const controller = new AbortController();
       const promise = this.#fetchJson(url, controller.signal, key).then(raw => {
-        if (!controller.signal.aborted && key === this.#key) this.#metadataCache.set(cacheKey, structuredClone(raw));
+        if (!controller.signal.aborted && key === this.#key) {
+          // Seeded entries share the fresh response's lifetime, so a cached search never extends them.
+          for (const [loadUrl, entry] of seed?.(raw) ?? []) this.#metadataCache.set(`${key}:${loadUrl}`, structuredClone(entry));
+          this.#metadataCache.set(cacheKey, structuredClone(raw));
+        }
         return raw;
       }).finally(() => {
         entry.settled = true;
@@ -341,7 +347,10 @@ export class StockClient {
     }
     if (!Number.isInteger(page) || (page as number) < 1 || (page as number) > maxPage) throw new Error(`${this.#label} page must be between 1 and ${maxPage}.`);
     return this.#runApi('search', async (signal, metadataReady) => {
-      const raw = await this.#requestJson(this.#source.searchUrl(kind as StockKind, query.trim(), page as number), signal);
+      // Search hits already carry the provider's full asset; opening one then costs no request.
+      const seed = (raw: Record<string, unknown>): Array<[URL, Record<string, unknown>]> => this.#source.loadEntries(raw, kind as StockKind)
+        .flatMap(([id, entry]): Array<[URL, Record<string, unknown>]> => this.#source.parseAsset(entry, kind as StockKind, id) ? [[this.#source.loadUrl(kind as StockKind, id), entry]] : []);
+      const raw = await this.#requestJson(this.#source.searchUrl(kind as StockKind, query.trim(), page as number), signal, this.#key, true, false, seed);
       metadataReady();
       return this.#source.parsePage(raw, kind as StockKind, query.trim(), page as number);
     });

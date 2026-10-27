@@ -178,6 +178,12 @@ const PEXELS: StockSource = {
   loadUrl: (kind, id) => new URL(kind === 'photo' ? `/v1/photos/${id}` : `/videos/videos/${id}`, `https://${API}`),
   parsePage: parsePexelsPage,
   parseAsset: (raw, kind) => normalize(raw, kind),
+  // A search item has the same shape as the detail response.
+  loadEntries: (raw, kind) => (Array.isArray(raw[kind === 'photo' ? 'photos' : 'videos']) ? raw[kind === 'photo' ? 'photos' : 'videos'] as unknown[] : [])
+    .flatMap((item): Array<[number, Record<string, unknown>]> => {
+      const id = item && typeof item === 'object' && !Array.isArray(item) ? positiveInteger((item as Record<string, unknown>).id) : null;
+      return id === null ? [] : [[id, item as Record<string, unknown>]];
+    }),
 };
 
 export class PexelsClient extends StockClient {
