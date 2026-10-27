@@ -34,11 +34,11 @@ test('managed workspace containment and cleanup', async (t) => {
     writeFileSync(outside, 'outside');
     symlinkSync(outside, path.join(managed, 'youtube', 'outside-link.mp4'));
     const before = inspectWorkspace(managed, [path.join(managed, 'youtube', 'current.mp4')]);
-    workspaceExpect('workspace: only provider regular files are candidates', [before.fileCount, before.cleanupFileCount, before.cleanupBytes], [3, 2, 6]);
+    workspaceExpect('workspace: provider and top-level regular files are candidates', [before.fileCount, before.cleanupFileCount, before.cleanupBytes], [3, 2, 6]);
     const cleaned = cleanupWorkspace(managed, [path.join(managed, 'youtube', 'current.mp4')]);
-    workspaceExpect('workspace: cleanup preserves current card and deletes only old provider file', [cleaned.deletedFileCount, cleaned.deletedBytes, cleaned.fileCount, cleaned.totalBytes], [2, 6, 1, 7]);
+    workspaceExpect('workspace: cleanup preserves current card and deletes the old provider file and top-level file', [cleaned.deletedFileCount, cleaned.deletedBytes, cleaned.fileCount, cleaned.totalBytes], [2, 6, 1, 7]);
     workspaceExpect('workspace: symlink target is never deleted', existsSync(outside), true);
-    workspaceExpect('workspace: marker, top-level files, and unrelated directories survive', [existsSync(path.join(managed, '.clipdock-owned')), existsSync(path.join(managed, 'top-level.txt')), existsSync(path.join(managed, 'unrelated', 'nested', 'keep.txt'))], [true, false, true]);
+    workspaceExpect('workspace: marker and unrelated directories survive, top-level files are deleted', [existsSync(path.join(managed, '.clipdock-owned')), existsSync(path.join(managed, 'top-level.txt')), existsSync(path.join(managed, 'unrelated', 'nested', 'keep.txt'))], [true, false, true]);
     workspaceExpect('workspace: empty managed directories are pruned', existsSync(path.join(managed, 'youtube', 'old')), false);
     rmSync(temp, { recursive: true, force: true });
   }

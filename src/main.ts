@@ -40,8 +40,8 @@ import { DownloadHistory, safeHistorySource } from './history';
 import { MEDIA_EXTENSIONS } from './media-extensions';
 import { loadDownloadFolder, claimDownloadFolder, saveDownloadFolder, defaultDownloadFolder } from './settings';
 
-// Must match the <Id> element in manifest.xml (Resolve requirement).
-// PLUGIN_ID is canonical in scripts/lib/contracts.mjs via src/shared.ts
+// PLUGIN_ID (imported above) must match the <Id> element in manifest.xml (Resolve requirement).
+// It is canonical in scripts/lib/contracts.mjs via src/shared.ts
 const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_MAX_START_SECONDS = 604800;
 

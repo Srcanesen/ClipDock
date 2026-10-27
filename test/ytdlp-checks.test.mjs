@@ -155,7 +155,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
 
   const metadataJson = (extra = {}) => JSON.stringify({ id: 'dQw4w9WgXcQ', title: 'Safe title', duration: 61, channel: 'Safe channel', formats: [360, 720, 1080, 1440, 2160, 2160].map((height) => ({ height })), ...extra });
 
-  // Phase 6 slice 1 starts red: search input must be validated before it reaches yt-dlp.
+  // Search input must be validated before it reaches yt-dlp.
   expect('search validator trims Unicode input', validateYoutubeSearch('  café  '), 'café');
   expect('search validator rejects controls and invalid lengths', [validateYoutubeSearch('a'), validateYoutubeSearch('ok\nno'), validateYoutubeSearch('x'.repeat(101))], [null, null, null]);
   const searchEntry = (n, extra = {}) => ({ id: `search${String(n).padStart(5, '0')}`, title: `Search title ${n}`, channel: 'Search channel', duration: n, view_count: 10000 * n, timestamp: 1700000000 + n, channel_is_verified: n % 2 === 0, ...extra });
@@ -215,7 +215,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     calls[0].child.emit('close', null); await rejected('search dispose is controlled', pending, 'Could not search YouTube.');
   }
 
-  // Metadata is narrow, canonical, busy-safe, and its thumbnail policy is bounded.
+  // Metadata is narrow, canonical, and its thumbnail policy is bounded.
   {
     const calls = [];
     const fetchCalls = [];

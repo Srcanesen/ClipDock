@@ -43,6 +43,8 @@ test('cloneOutputOverrides preserves undefined vs null for selection', () => {
   assert.notEqual(cloned.selection, withSel.selection);
   const empty = {};
   assert.equal(cloneOutputOverrides(empty).selection, undefined);
+  assert.equal('selection' in cloneOutputOverrides(empty), false);
+  assert.equal(cloneOutputOverrides({ selection: null }).selection, null);
 });
 
 test('outputOverridesFrom is byte-identical JSON comparison', () => {

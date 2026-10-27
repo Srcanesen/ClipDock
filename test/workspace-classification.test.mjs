@@ -118,7 +118,7 @@ test('symlinked and outside-root files are never counted or deleted', () => {
   }
 });
 
-test('classification is case-insensitive for extensions and scoped to the managed provider roots', () => {
+test('classification is case-insensitive for extensions and covers provider and top-level files', () => {
   const root = tempRoot('clipdock-ws-class-');
   try {
     const social = path.join(root, 'social');
@@ -136,7 +136,7 @@ test('classification is case-insensitive for extensions and scoped to the manage
     assert.equal(summary.fileCount, 3, 'media + companion + unclassified CLIPDOCK.LOG');
     assert.equal(summary.cleanupFileCount, 4);
 
-    // Top-level files directly under managedRoot are now counted (except dotfiles); root log is diagnostic.
+    // Top-level files directly under managedRoot are counted (except dotfiles); root log is diagnostic.
     writeFileSync(path.join(root, 'root.mp4'), 'root-level');
     writeFileSync(path.join(root, 'clipdock.log'), 'root-log');
     const scoped = inspectWorkspace(root, []);

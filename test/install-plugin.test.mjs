@@ -420,6 +420,7 @@ test('topology guard: same-ID backup sibling fails with canonical/conflict and m
     assert.match(error.message, /Move backup/);
     assert.match(error.message, /No files were moved/);
     // Guard is non-mutating: both dirs still exist
+    assert.equal(existsSyncWorkaround(path.join(workflowRoot, CANONICAL_ID, 'manifest.xml')), true);
     assert.equal(existsSyncWorkaround(path.join(workflowRoot, backupName, 'manifest.xml')), true);
   } finally {
     rmSync(workflowRoot, {recursive: true, force: true});
@@ -564,6 +565,7 @@ test('stage-swap failure plus restore failure preserves recoverable backup and s
   const deletedBackup = rmTargets.some((t) => t.includes(path.join(workDirName, 'backup')) && !t.includes('stage'));
   // The only allowed rm is stage; workDir/backup must not be removed
   assert.equal(deletedWorkDir, false, 'workDir must not be deleted on restore failure');
+  assert.equal(deletedBackup, false, 'workDir/backup must not be deleted on restore failure');
   // Verify no sibling residue check would be false-green
   assert.equal(siblings.some((n) => n.includes('__clipdock_work_')), true, 'work dir residue must be detectable');
 

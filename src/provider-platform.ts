@@ -28,7 +28,7 @@ export function absoluteForPlatform(p: string, platform: NodeJS.Platform): boole
 
 export type VersionProbe = (candidate: string) => { code: number | null; text: string } | null;
 
-/** Bounded shell:false version probe; null when the candidate cannot run. */
+/** Bounded shell:false version probe; null (or a null code) when the candidate cannot run. */
 export function probeVersion(candidate: string, versionArgs: string[]): { code: number | null; text: string } | null {
   try {
     const result = spawnSync(candidate, versionArgs, {

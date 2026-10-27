@@ -1,7 +1,7 @@
 // gallery-dl boundary for the approved, narrow Pinterest Pin integration.
-// Node-only and Electron-free. The main process owns one GalleryDlWorker; this
-// module owns executable discovery, bounded JSONL parsing, download containment,
-// cancellation, and media-signature checks. No provider URL or filesystem path
+// Node-only and Electron-free. The main process owns one GalleryDlWorker per role;
+// this module owns executable discovery, bounded JSONL parsing, download containment,
+// cancellation, and media-signature checks. No media URL or filesystem path
 // other than validated thumbnail URLs is ever sent to the renderer.
 
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';

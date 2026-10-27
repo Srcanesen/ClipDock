@@ -42,7 +42,7 @@ test('operationId dedupes in-flight and completed imports, queue stays serial', 
   const opId = 'op-123';
   const p1 = transfer.importToMediaPool('/tmp/a.mp4', 'active', opId);
   const p2 = transfer.importToMediaPool('/tmp/a.mp4', 'active', opId); // same path and same opId should dedupe (cache key includes args)
-  const p3 = transfer.importToMediaPool('/tmp/b.mp4', 'active'); // different opId, should not dedupe
+  const p3 = transfer.importToMediaPool('/tmp/b.mp4', 'active'); // no opId, should not dedupe
   const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
   assert.equal(r1.kind, 'imported');
   assert.equal(r2.kind, 'imported');

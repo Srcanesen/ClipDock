@@ -22,7 +22,7 @@ for (const boundary of ['final progress', 'publication']) {
       pending = f.start().then(() => 'completed', error => error.message);
       if (boundary === 'publication') {await reachedRename; cancellation = f.cancel('job'); release();}
       assert.equal(await pending, 'Download cancelled.');
-      assert.equal(await cancellation, true, 'preload returns the same boolean as c3b9fe0');
+      assert.equal(await cancellation, true, 'preload returns true for the accepted cancellation');
       assert.deepEqual(f.events(), [
         {state: 'downloading', message: 'Downloading from Pexels…', percent: 0},
         {state: 'downloading', message: 'Downloading from Pexels…', percent: 99.9},

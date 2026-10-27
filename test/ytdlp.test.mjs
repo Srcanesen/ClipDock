@@ -49,7 +49,7 @@ test('yt-dlp discovery honors executable absolute overrides and PATH candidates'
   }
 });
 
-test('subtitle parser returns bounded, cleaned cues', () => {
+test('subtitle parser returns cleaned cues and drops reversed ranges', () => {
   const cues = parseSubtitleCues(`WEBVTT\n\n00:00:01.000 --> 00:00:02.500\n<b>Hello</b>  world\n\n00:00:03.000 --> 00:00:02.000\ninvalid\n`);
   assert.deepEqual(cues, [{start: 1, end: 2.5, text: 'Hello world'}]);
 });

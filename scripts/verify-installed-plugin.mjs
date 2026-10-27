@@ -7,7 +7,7 @@ import { hashFile, inventory } from './lib/release-artifact.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
-const PLUGIN_ID = 'com.clipdock.app';
+import { PLUGIN_ID } from './lib/contracts.mjs';
 
 const isWin = process.platform === 'win32';
 const option = (name) => process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);

@@ -230,7 +230,7 @@ test('Finding 7: at zero selections Clear is hidden and Enqueue is visible-disab
   assert.equal(selectAll.classList.contains('hidden'), false);
 });
 
-test('Finding 7: when staged count >0 count chip appears with sage intent and Clear/Enqueue reappear', () => {
+test('Finding 7: when staged count >0 count chip appears and Clear/Enqueue reappear', () => {
   const h = createHarness();
   const toolbar = h.elements.get('selection-toolbar');
   const clear = h.elements.get('clear-selection-btn');
@@ -248,7 +248,7 @@ test('Finding 7: when staged count >0 count chip appears with sage intent and Cl
   assert.equal(toolbar.getAttribute('data-has-selection'), 'true');
   assert.equal(toolbar.classList.contains('has-selection'), true);
   assert.equal(countEl.textContent, '1 selected');
-  // Count chip should be visible; sage chip is via CSS :has, but harness checks not hidden
+  // Count chip should be visible (not hidden)
   assert.equal(countEl.hidden, false);
 
   assert.equal(clear.hidden, false, 'Clear visible when >0');
@@ -282,7 +282,7 @@ test('Finding 7: when staged count >0 count chip appears with sage intent and Cl
   assert.equal(toolbar.getAttribute('data-has-selection'), 'false');
 });
 
-// ---- Finding 2: bridge compact pill at narrow ----
+// ---- Finding 2: bridge host pill ----
 test('Finding 2: HTML keeps bridge ids and wraps project/timeline in pill with dot', () => {
   assert.ok(html.includes('id="bridge-state"'), 'keeps #bridge-state');
   assert.ok(html.includes('id="project-name"'), 'keeps #project-name');

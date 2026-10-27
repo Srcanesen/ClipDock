@@ -55,6 +55,8 @@ test('Pexels URL and external-link allowlists reject credential, port, host, and
   assert.equal(safePexelsExternal('https://www.pexels.com/video/42/'), 'https://www.pexels.com/video/42/');
   assert.equal(safePexelsExternal('https://pexels.com/video/42/'), null);
   assert.equal(safePexelsExternal('https://evil.test/video/42/'), null);
+  assert.equal(safePexelsUrl('https://videos.pexels.com:8443/video.mp4'), null);
+  assert.equal(safePexelsExternal('https://www.pexels.com:8443/video/42/'), null);
 });
 
 test('Pexels normalization exposes honest media types and provider file IDs', () => {

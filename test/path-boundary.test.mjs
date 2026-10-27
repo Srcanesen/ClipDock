@@ -27,8 +27,7 @@ test('canonicalRoot accepts real directory and rejects symlink / file / relative
     assert.equal(canonicalRoot(file), null, 'file as root must be rejected');
     assert.equal(canonicalRoot('relative/path'), null);
     assert.equal(canonicalRoot(path.join(root, 'missing')), null);
-    // resolved symlink directory is directory but original lstat is symlink => reject
-    // also ensure canonical after realpath not symlink
+    // a plain directory is accepted and returned as its realpath, even when its ancestors are symlinks
     assert.equal(canonicalRoot(root), realpathSync(root));
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -131,8 +130,7 @@ test('contains tightens with isAbsolute check for absolute relative edge', () =>
     const file = path.join(root, 'a.txt');
     writeFileSync(file, 'x');
     // On posix relative never returns absolute, but we verify contains handles isAbsolute correctly
-    // Simulate Windows-style: we check that contains rejects when relative would be absolute (different drive)
-    // On posix, we can verify that an absolute file outside still fails, and contains returns false for non-absolute root
+    // The Windows cross-drive case is not simulated here; check that non-absolute root and file are rejected
     assert.equal(contains('relative', file), false, 'relative root must fail');
     assert.equal(contains(root, 'relative.txt'), false, 'relative file must fail');
     // absolute-rel edge: if file is absolute and root is absolute, relative is not absolute => normal check

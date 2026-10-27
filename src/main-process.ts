@@ -394,7 +394,7 @@ async function prepareRequestedProfile(
   return {filePath: prepared.filePath, fileName: prepared.fileName, profile: request.profile, warning: downloaded.warning, subtitle: downloaded.subtitle};
 }
 
-/** The single completion service seam; main constructs one per provider channel. */
+/** The single completion service seam; runJob constructs one per provider job. */
 export function createArtifactCompletionService(deps: ArtifactCompletionDependencies): ArtifactCompletionService {
   async function completeDownload(request: CompleteDownloadRequest): Promise<CompletedDownloadResult> {
     const {jobId, automation, history} = request;
@@ -442,11 +442,11 @@ export function createArtifactCompletionService(deps: ArtifactCompletionDependen
 }
 
 // ---- Provider download orchestration seam ---------------------------------
-// This is the deep module for the four provider download flows. Its interface
-// is four provider-shaped handlers; its implementation owns validation, provider
+// This is the deep module for the five provider download flows. Its interface
+// is five provider-shaped handlers; its implementation owns validation, provider
 // metadata authority, profile/rendition rules, optional preparation, artifact
-// completion, and history/card facts. main.ts supplies only Electron wiring and
-// adapters for workers, event channels, the Pinterest snapshot, and cards.
+// completion, and history/card facts. engine-host.ts supplies the
+// adapters for workers, event channels, the Pinterest snapshot, and cards; main.ts passes in only Electron wiring.
 
 export type ProviderEventEmitter = (event: unknown, update: unknown) => void;
 

@@ -1,7 +1,7 @@
 // ClipDock bridge-status provider. Owns the Resolve scripting calls through an
 // INJECTED WorkflowIntegration module. The native module is never required here:
 // main.ts requires ./WorkflowIntegration.node and passes it in, so this module
-// can be exercised in plain Node with a fake adapter (scripts/verify-plugin.mjs).
+// can be exercised in plain Node with a fake adapter (test/status-provider-checks.test.mjs).
 //
 // This is the approved test seam: createStatusProvider(workflowIntegration, pluginId)
 // returns { getStatus(): Promise<StatusSnapshot>, noteResolveQuit(): void }.

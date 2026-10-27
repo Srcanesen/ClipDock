@@ -468,7 +468,7 @@ function renderPexelsConnection(status: PexelsConnectionStatus | null, error = '
   input.disabled = stockConnecting[source];
 }
 // Just-in-time disclosure: the credential details element is opened only when setup or
-// recovery is required, never persisted, and never force-focused except from a failed search.
+// recovery is required, never persisted, and focus moves only from a failed search or a successful connect.
 function setPexelsSetupOpen(open: boolean, source: StockProvider = 'pexels'): void { const setup = $(`${source}-setup`) as HTMLDetailsElement; if (setup.open !== open) setup.open = open; }
 function formatDuration(seconds: number | null): string {
   if (seconds === null) return 'Duration unavailable';
@@ -1145,7 +1145,7 @@ function appendResultCardControls(row: HTMLElement, key: string, selection: Resu
   const nowButton = button(downloadQueue.activeId ? 'Download next' : 'Download now', () => { void enqueueResultCard(key, selection, 'after-active'); }); nowButton.className = 'result-now-action'; nowButton.dataset.cardControl = 'true'; nowButton.dataset.cardAction = 'now'; nowButton.setAttribute('aria-label', `${downloadQueue.activeId ? 'Download next' : 'Download now'}: ${selection.title}`);
   for (const control of [playButton, queueButton, nowButton]) { control.addEventListener('click', (event) => event.stopPropagation?.()); control.addEventListener('keydown', (event) => event.stopPropagation?.()); }
   actions.append(queueButton, nowButton);
-  // The quick actions ride on the frame's lower-left corner, like the play pill.
+  // The quick actions ride on the frame's lower-left corner, on the thumbnail like the play pill.
   if (thumbnail) thumbnail.append(actions); else controls.append(actions);
   const options = document.createElement('div'); options.className = `result-options download-options${optionsOpen ? '' : ' hidden'}`; options.id = resultOptionsId(key); options.dataset.field = 'options'; options.hidden = !optionsOpen; options.setAttribute('aria-hidden', String(!optionsOpen));
   if (!photo) options.append(createResultOptionSelect('Profile', 'profile', effective.profile, [['original', 'Original'], ['fast', 'Fast'], ['editing', 'Edit-ready']], false, (value) => updateResultOption(key, 'profile', value, row, photo)));

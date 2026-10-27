@@ -24,8 +24,8 @@ test('Library completed empty is CSS sibling after completed list with 88px comp
   assert.match(css, /\.library-empty-state[^{]*\{[^}]*min-height:\s*88px/);
 });
 
-// History empty truthful while loading: hidden during loading via data-loading or JS guard
-test('History empty does not lie while loading: JS guards history empty hidden when loading and CSS suppresses during data-loading', () => {
+// History empty truthful while loading: CSS hides it while data-loading is set
+test('History empty does not lie while loading: CSS suppresses the empty state during data-loading', () => {
   assert.ok(html.includes('id="history-empty-state"'), 'history empty exists');
   assert.ok(html.includes('id="history-list"'), 'history list exists');
   assert.match(css, /#history-list\[data-loading="true"\] \+ #history-empty-state|history-empty-state\[data-loading="true"\]/);

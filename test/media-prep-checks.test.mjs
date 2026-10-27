@@ -174,7 +174,7 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
     expect(`media-prep validation ${label} retains input`, existsSync(file), true);
   }
 
-  // Binary/path limits fail before spawn, including symlink escape and oversized probe JSON.
+  // Missing binaries and symlink escape fail before spawn; oversized probe JSON is rejected.
   {
     const { dir, file } = prepFile('prep-missing-bin'); const calls = [];
     await rejected('media-prep missing ffmpeg before spawn', createMediaPrep({ ffmpegPath: null, ffprobePath: '/fake/ffprobe', spawn: queuedSpawn([], calls) }).prepare({ jobId: 'missing-ffmpeg', inputPath: file, allowedRoot: dir, profile: 'fast', emit: () => undefined }), 'ffmpeg was not found. Install ffmpeg or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.');
@@ -199,7 +199,7 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
     expect('ffprobe discovery prefers ffmpeg executable sibling', discoverFfprobe(ffmpeg, { PATH: '' }, process.platform), ffprobe);
   }
 
-  // Prep is single-job, job-scoped cancellable, and lifecycle cleanup matches yt-dlp.
+  // Prep is job-scoped cancellable, and lifecycle cleanup matches yt-dlp.
   {
     const { dir, file } = prepFile('prep-cancel-unix'); const calls = [], events = [];
     const worker = prepWorker([null], calls, { platform: 'darwin', killGraceMs: 5 });

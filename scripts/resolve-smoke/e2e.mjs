@@ -17,7 +17,7 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(DIR, '../..');
 const require = createRequire(import.meta.url);
 const PREFIX = 'ClipDock-E2E-';
-const PLUGIN_ID = 'com.clipdock.app';
+import { PLUGIN_ID } from '../lib/contracts.mjs';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 export const USAGE = `ClipDock Resolve headless end-to-end gate (opt-in).
 Usage: node scripts/resolve-smoke/e2e.mjs [options]

@@ -162,7 +162,7 @@ test('directory mutations and cleanup refuse a replaced ancestor chain', t => {
   assert.equal(fs.readFileSync(path.join(base, 'parent', name, 'user'), 'utf8'), 'precious');
 });
 
-test('publication checks the destination identity and cleans its link if the source changes', t => {
+test('publication cleans its link if the source changes', t => {
   const {dir} = fixture(t), destination = createDirectory(dir, 'destination'), source = write(dir, 'source');
   const link = fs.linkSync;
   t.mock.method(fs, 'linkSync', (...args) => {

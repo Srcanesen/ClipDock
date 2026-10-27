@@ -63,7 +63,7 @@ export interface QueueItem {
 
 // Key format is provider identity: `provider:id` except stock sources which include kind
 // (`pexels:kind:id`) so photo/video pages cannot move a selection onto the wrong kind.
-// This string is the identity for stagedSelections and cardRendererStates.
+// This string is the identity for staged selections and per-card output and option state.
 export function resultKeyFor(providerValue: Provider, id: string, kind: PexelsKind = 'video'): string {
   return `${providerValue}:${isStock(providerValue) ? `${kind}:` : ''}${id}`;
 }

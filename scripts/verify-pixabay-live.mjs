@@ -1,4 +1,4 @@
-// Live Pixabay check through ClipDock's own client: two API requests and one CDN download.
+// Live Pixabay check through ClipDock's own client: one API request (the load reuses the search hits) and one CDN download.
 // Usage: node scripts/verify-pixabay-live.mjs <file containing the API key>
 // The key is read at runtime only and never printed.
 import assert from 'node:assert/strict';

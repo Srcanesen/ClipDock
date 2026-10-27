@@ -42,7 +42,6 @@ test('injected WorkflowIntegration status lifecycle', async (t) => {
     };
   };
 
-  // Shared lifecycle: status and transfer providers must not initialize the native
   // 1. READY FLOW — regression for the live bug: values arrived but Status stayed
   //    "Not connected". Root cause: facts.initialized was never set true after a
   //    successful Initialize. This test fails (bridge.connected === false) on the

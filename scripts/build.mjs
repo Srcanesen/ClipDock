@@ -56,7 +56,7 @@ try {
     }
   }
 
-  // Static assets land in dist/ verbatim (manifest.xml, index.html, css/, plugin package.json).
+  // Static assets land in dist/ verbatim (manifest.xml, index.html, css/, fonts/, plugin package.json).
   for (const entry of ['manifest.xml', 'index.html', 'css', 'fonts', 'package.json']) {
     cpSync(path.join(staticDir, entry), path.join(dist, entry), { recursive: true });
   }

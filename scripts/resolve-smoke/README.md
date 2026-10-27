@@ -20,10 +20,10 @@ Resolve Scripting README documents):
 - **`transferApi`: the read-only Resolve API shape `src/transfer.ts`
   depends on**, as compact `required`/`optional` callable-presence maps:
   - required: `resolve.GetMediaStorage/GetProjectManager/OpenPage`,
-    `projectManager.GetCurrentProject`, `project.GetCurrentTimeline/GetMediaPool/GetSetting`,
-    `timeline.GetStartFrame/GetStartTimecode/GetCurrentTimecode`,
+    `projectManager.GetCurrentProject`, `project.GetCurrentTimeline/GetMediaPool/GetSetting/GetUniqueId`,
+    `timeline.GetStartFrame/GetStartTimecode/GetCurrentTimecode/GetUniqueId/GetSetting`,
     `mediaPool.GetCurrentFolder/GetRootFolder/AddSubFolder/SetCurrentFolder/AppendToTimeline`,
-    `folder.GetName/GetSubFolderList/GetClipList`,
+    `folder.GetName/GetSubFolderList/GetClipList/GetUniqueId`,
     `mediaStorage.AddItemListToMediaPool`, `clip.GetClipProperty`
   - optional (feature-detected by `transfer.ts`, recorded but never red):
     `timeline.AddMarker/GetEndFrame`, `clip.SetClipColor`
@@ -32,8 +32,8 @@ Resolve Scripting README documents):
     `AppendToTimeline`, `AddMarker`, `SetClipColor`); the bounded `mutating`
     list makes that explicit in the report
   - safe read-only calls verify getters actually answer: `GetMediaStorage`,
-    `GetSetting('timelineFrameRate')`, `GetCurrentFolder`, `GetRootFolder`,
-    `GetSubFolderList`, `GetClipList`, `GetName`, `GetStartFrame`,
+    `GetSetting('timelineFrameRate')` (and `'useCustomSettings'` on the timeline), `GetCurrentFolder`, `GetRootFolder`,
+    `GetSubFolderList`, `GetClipList`, `GetName`, `GetUniqueId`, `GetStartFrame`,
     `GetStartTimecode`, `GetCurrentTimecode`, and `GetClipProperty('File Path')`
     on an existing clip from the current folder only
   - a required callable **missing on a reachable object fails the probe
@@ -49,8 +49,8 @@ the WI plugin (no menu, undocumented behavior).
 
 ## Safety invariants
 
-- Refuses to run when **any Resolve process is already active** (pre-flight
-  `pgrep -x Resolve` check).
+- Refuses to run when **any Resolve or fuscript process is already active**
+  (pre-flight `pgrep -x Resolve` / `pgrep -x fuscript` check).
 - Launches the **bundle binary directly with `-nogui`** — never `open -a`
   (LaunchServices silently drops `-nogui`).
 - Configures the **official scripting env paths** for both spawned processes.

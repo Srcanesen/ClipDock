@@ -1,7 +1,7 @@
 // ClipDock — Resolve transfer logic with a
 // destination bin (active | clipdock) and duplicate-safe import.
 // The WorkflowIntegration native module is INJECTED (never required
-// here), so this file runs in plain Node under scripts/verify-plugin.mjs with a
+// here), so this file runs in plain Node under test/transfer-checks.test.mjs with a
 // fake adapter. It has no Electron imports and no runtime requires of local files.
 //
 // Fallback chain follows Blackmagic's official scripting API:
@@ -434,7 +434,7 @@ export function createTransfer(
     if (folder) indexFor(project, folder).clips.set(await pathKey(filePath), clip);
   }
   function noteResolveQuit(): void { binIndex = null; }
-  /** Initialize once, then GetResolve. Returns {resolve} or a controlled bridge-error result. */
+  /** Initialize (shared, so repeat calls reuse one init), then GetResolve. Returns {resolve} or a controlled bridge-error result. */
   async function resolveResolve(): Promise<{ resolve: unknown } | { error: TransferResult }> {
     try {
       const initOk = await workflowIntegration.Initialize(pluginId);

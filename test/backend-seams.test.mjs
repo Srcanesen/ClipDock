@@ -78,7 +78,7 @@ test('history stores public metadata without paths and safely deletes only the f
   }
 });
 
-test('workspace only counts provider files and cleanup preserves protected media', () => {
+test('workspace counts provider and top-level files, skips symlinks, and cleanup preserves protected media', () => {
   const root = tempRoot('clipdock-workspace-');
   const outside = tempRoot('clipdock-workspace-outside-');
   try {

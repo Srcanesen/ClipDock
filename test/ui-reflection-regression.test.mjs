@@ -1,5 +1,5 @@
-// Plan adım 1 — kırmızı baseline. Production/source/install kodu değiştirmez.
-// Yalnız topoloji ve kaynak contract semptomlarını yakalar; bu adım sonunda kırmızı kalması beklenir.
+// Production/source/install kodu değiştirmez.
+// Yalnız topoloji ve kaynak contract semptomlarını yakalar; contract karşılandığında yeşildir.
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -94,10 +94,11 @@ test('B — canonical UI contracts: valid Common output disclosure + thumbnail f
   const hasSingleStatus = /id=["']youtube-search-status["']/.test(feedToolbarMatch);
   const hasNoExtraHintInToolbar = !hasProviderHintNode;
   const hasStatusProviderContext = /YouTube.*Search to browse videos|Pexels.*search|Pinterest.*Pins/i.test(feedToolbarMatch) || /YouTube.*Search/i.test(html.match(/id=["']youtube-search-status["'][^>]*>([^<]*)/i)?.[1] ?? '');
-  if (hasProviderHintNode || !hasSingleStatus || !hasNoExtraHintInToolbar) {
+  if (hasProviderHintNode || !hasSingleStatus || !hasNoExtraHintInToolbar || !hasStatusProviderContext) {
     const hint2 = [
       hasProviderHintNode ? 'found #provider-hint (must be removed; single live status line remains)' : null,
       !hasSingleStatus ? 'missing #youtube-search-status in feed toolbar' : null,
+      !hasStatusProviderContext ? 'status line carries no provider context' : null,
     ].filter(Boolean).join('; ');
     errors.push(`Feed toolbar must have exactly one live status line (#youtube-search-status) carrying provider context — ${hint2 || 'contract not met'}`);
   }

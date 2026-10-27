@@ -155,7 +155,7 @@ test('MAIN-5: failed engine discovery yields a clear service error and folder ch
     ['searchPexels', 'video', 'cats', 1], ['loadPexels', 'video', 1], ['cancelPexelsRequests'],
     ['chooseDownloadFolder'],
   ];
-  // Inspect the chosen folder first: the old path leaves a marker and four provider directories behind.
+  // Inspect the chosen folder first: the old path leaves a marker and five provider directories behind.
   const folderOutcome = await f.invoke('chooseDownloadFolder').then(() => null, error => error.message);
   assert.deepEqual(fs.readdirSync(chosen), []);
   assert.equal(folderOutcome, expected);

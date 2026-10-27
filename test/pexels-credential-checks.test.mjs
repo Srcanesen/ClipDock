@@ -308,7 +308,7 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
     const result = await store.load();
     if (result.key !== null || result.message !== 'Disconnected. Saved credential was invalid and removed.' || calls.length !== 2 || calls[1].args[0] !== 'delete-generic-password' || JSON.stringify(result).includes(TEST_KEY)) throw new Error('invalid Keychain value was not discarded safely');
   });
-  await pexelsTest('macOS Keychain clear accepts not-found and sanitizes failures/timeouts', async () => {
+  await pexelsTest('macOS Keychain clear accepts not-found and sanitizes save/clear failures and load timeouts', async () => {
     const notFound = fakeCredentialStore(keychainSpawn([keychainClose('', 44)])); await notFound.clear();
     const secretError = `${TEST_KEY} /private/client/login.keychain`; const failed = fakeCredentialStore(keychainSpawn([keychainClose('', 1, secretError)]));
     const message = await expectReject(failed.save(TEST_KEY), /^Could not save the Pexels credential securely\.$/);
@@ -323,7 +323,7 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
     } finally { globalThis.setTimeout = realSetTimeout; }
   });
   } finally { rmSync(credentialCheckRoot, { recursive: true, force: true }); }
-  await pexelsTest('credential persistence encrypts atomically, restores, clears, and rejects corrupt blobs', async () => {
+  await pexelsTest('credential persistence encrypts privately, restores, clears, and rejects corrupt blobs', async () => {
     const temp = mkdtempSync(path.join(fixtureDir(), 'clipdock-credential-')); const file = path.join(temp, 'userData', 'pexels-credential.json');
     const cipher = { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from([...Buffer.from(value)].map((byte) => byte ^ 0x5a)), decryptString: (value) => Buffer.from([...value].map((byte) => byte ^ 0x5a)).toString() };
     const store = new PexelsCredentialStore(file, cipher); if (!await store.save(TEST_KEY)) throw new Error('credential was not saved');

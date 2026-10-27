@@ -12,7 +12,7 @@ import { assertNoDuplicatePluginIds, reconcileDirectoryContents, recoverInterrup
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
-const PLUGIN_ID = 'com.clipdock.app';
+import { PLUGIN_ID } from './lib/contracts.mjs';
 const DRY_RUN = process.argv.includes('--dry-run');
 
 const isWin = process.platform === 'win32';

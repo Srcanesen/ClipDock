@@ -1,6 +1,6 @@
 // Pure bridge-status shape logic for the ClipDock panel.
 // This module has NO electron or native-module imports on purpose: it can be
-// unit-checked in plain Node (scripts/verify-plugin.mjs) without Resolve running.
+// unit-checked in plain Node (test/status-provider-checks.test.mjs) without Resolve running.
 
 export type BridgePhase = 'bridge-error' | 'no-project' | 'no-timeline' | 'ready';
 

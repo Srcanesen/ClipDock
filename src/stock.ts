@@ -21,7 +21,7 @@ export type StockEvent = { jobId: string; state: 'downloading' | 'processing' | 
 export type StockConnectionStatus = { connected: boolean; persisted: boolean; message: string };
 
 export interface StockSource {
-  /** Display name; every user-facing message starts with it. */
+  /** Display name used in user-facing messages. */
   label: string;
   /** Downloaded file names start with `${prefix}-`. */
   prefix: string;

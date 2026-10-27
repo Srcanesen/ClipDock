@@ -37,7 +37,6 @@ export interface DownloadFolderStatus {
   userSelected: boolean;
 }
 
-/** Narrow API surface exposed to the renderer via contextBridge (see preload.ts). */
 export type YoutubeQuality = 'best' | `${number}p`;
 export type MediaProfile = 'original' | 'fast' | 'editing';
 export type MediaMode = 'video' | 'audio';
@@ -79,6 +78,7 @@ export type WorkspaceCleanupResult = { deletedFileCount: number; deletedBytes: n
 export type PreviewBounds = { x: number; y: number; width: number; height: number };
 export type YoutubePreviewState = { state: 'closed' | 'failed'; reason: 'closed' | 'escape' | 'load' | 'crash' };
 
+/** Narrow API surface exposed to the renderer via contextBridge (see preload.ts). */
 export interface ClipdockApi {
   /** Latest Resolve bridge status snapshot. Main never caches; every call is fresh. */
   getStatus(): Promise<StatusSnapshot>;

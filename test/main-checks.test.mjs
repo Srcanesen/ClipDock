@@ -25,8 +25,8 @@ test('pin IPC validates its boolean and returns the window state after applying 
   assert.deepEqual(calls, [true, false]);
 });
 
-// Run the complete built entry point. Only native/Electron, engine discovery and
-// credential persistence are substituted; session state uses the real client.
+// Run the complete built entry point. Only native/Electron, engine workers and
+// discovery, and credential persistence are substituted; session state uses the real client.
 async function credentialMainFixture(t) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), 'clipdock-main-credential-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

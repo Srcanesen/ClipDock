@@ -1,6 +1,6 @@
 // Single contract source for the verifier and runtime.
 // This file is the ONLY definition site for the literals below.
-// src/shared.ts imports from here; scripts/verify-plugin.mjs imports from here.
+// src/shared.ts imports from here; scripts/lib/shipped-surface-rules.mjs imports from here.
 export const PLUGIN_ID = 'com.clipdock.app';
 
 export const MANIFEST_FILE_PATH = 'main.js';
