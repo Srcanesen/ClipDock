@@ -138,9 +138,11 @@ let observedResultListWidth = 0;
 const statusSession = new StatusRefreshSession();
 let statusRefreshTimer: number | null = null;
 let hostStatus: StatusSnapshot | null = null;
-// The host message last written to #message. A refresh repaints the footer only when it
-// changes, so a transient action result stays readable under the 3s poll.
-let shownHostMessage: string | null = null;
+// An action result owns #message for ACTION_RESULT_MS (about three 3s polls), or until
+// the next action writes its own; after that the host refresh repaints the host message.
+const ACTION_RESULT_MS = 9_000;
+let actionResultUntil = 0;
+function showActionResult(text: string, ok?: boolean): void { actionResultUntil = Date.now() + ACTION_RESULT_MS; setText('message', text, ok); }
 let settingsOpen = false;
 let settingsTrigger: HTMLElement | null = null;
 let currentSurface: Surface = 'search';
@@ -546,10 +548,10 @@ function refresh(): void {
     setText('module-version', s.bridge.moduleVersion ?? '-'); setText('resolve-version', s.bridge.resolveVersion ?? '-');
     setText('project-name', s.project.loaded ? (s.project.name?.trim() || 'Untitled project') : 'No project open', s.project.loaded); setText('timeline-name', s.timeline.loaded ? (s.timeline.name?.trim() || 'Untitled timeline/comp') : (s.project.loaded ? 'No active timeline/comp' : 'No timeline'), s.timeline.loaded);
     { const bridgeDot = document.getElementById('bridge-state'); if (bridgeDot) { const stateText = s.bridge.connected ? 'Connected' : 'Not connected'; bridgeDot.setAttribute('aria-label', stateText); bridgeDot.setAttribute('title', stateText); } const pill = document.querySelector('.bridge-pill') as HTMLElement | null; if (pill) { const projectText = s.project.loaded ? (s.project.name?.trim() || 'Untitled project') : 'No project open'; const timelineText = s.timeline.loaded ? (s.timeline.name?.trim() || 'Untitled timeline/comp') : (s.project.loaded ? 'No active timeline/comp' : 'No timeline'); const pillText = `${projectText} - ${timelineText}`; pill.setAttribute('aria-label', pillText); pill.setAttribute('title', pillText); } }
-    if (s.message !== shownHostMessage) { shownHostMessage = s.message; setText('message', s.message); }
+    if (Date.now() >= actionResultUntil) setText('message', s.message);
     setText('refresh-hint', s.refreshHint ?? ''); setText('last-updated', `Updated ${new Date().toLocaleTimeString()}`);
     if (hostChanged) { if (queue.length) renderQueue(); else updateControls(); refreshHistoryHostState(); }
-  }).catch((err) => { if (statusSession.accepts(flight)) { shownHostMessage = null; setText('message', `Renderer call failed: ${(err as Error).message}`); } }).finally(() => {
+  }).catch((err) => { if (statusSession.accepts(flight)) setText('message', `Renderer call failed: ${(err as Error).message}`); }).finally(() => {
     if (!statusSession.holds(flight)) return; // the bounded timeout already released this flight
     release();
   });
@@ -612,7 +614,7 @@ async function togglePinOnTop(): Promise<void> {
     const pinned = await window.clipdockAPI.setAlwaysOnTop(requested);
     renderPinState(pinned);
   } catch (err) {
-    setText('message', `Could not ${requested ? 'pin' : 'unpin'} window: ${(err as Error).message}`);
+    showActionResult(`Could not ${requested ? 'pin' : 'unpin'} window: ${(err as Error).message}`);
   } finally {
     pinBusy = false; button.disabled = false;
   }
@@ -956,21 +958,21 @@ async function startYoutubePreview(id: string, startAt?: number, resultKey: stri
   try {
     const opened = await window.clipdockAPI.openYoutubePreview(id, startAt, bounds);
     if (previewSession.isStale(request)) return;
-    if (!opened) { previewSession.setFailure(true); clearPreviewState(); setText('message', 'YouTube preview could not load. Use Open on YouTube.'); }
+    if (!opened) { previewSession.setFailure(true); clearPreviewState(); showActionResult('YouTube preview could not load. Use Open on YouTube.'); }
     else updateYoutubePreviewBounds();
-  } catch { if (previewSession.isCurrent(request)) { previewSession.setFailure(true); clearPreviewState(); setText('message', 'YouTube preview could not load. Use Open on YouTube.'); } }
+  } catch { if (previewSession.isCurrent(request)) { previewSession.setFailure(true); clearPreviewState(); showActionResult('YouTube preview could not load. Use Open on YouTube.'); } }
 }
 async function watchYoutube(id: string, startAt?: number): Promise<void> {
   if (searchBusy || youtubeBusy || !VIDEO_ID.test(id)) return;
   try {
     const opened = await window.clipdockAPI.openYoutubeExternal(id, startAt);
-    if (!opened) { setText('message', 'Could not open YouTube. Check your default browser and try again.'); return; }
-    setText('message', 'Opened YouTube in your browser.');
-  } catch { setText('message', 'Could not open YouTube. Check your default browser and try again.'); }
+    if (!opened) { showActionResult('Could not open YouTube. Check your default browser and try again.'); return; }
+    showActionResult('Opened YouTube in your browser.');
+  } catch { showActionResult('Could not open YouTube. Check your default browser and try again.'); }
 }
 function handleYoutubePreviewState(state: YoutubePreviewState): void {
   if (previewSession.receiveYoutubeState(state) !== 'ended') return;
-  if (state.state === 'failed') { setText('message', 'YouTube preview could not play here. Use Open on YouTube.'); }
+  if (state.state === 'failed') { showActionResult('YouTube preview could not play here. Use Open on YouTube.'); }
   clearPreviewState(state.reason === 'escape');
 }
 function startPexelsPreview(asset: PexelsAsset, resultKey: string | null = outputSession.selected?.key ?? null): void {
@@ -2279,14 +2281,14 @@ function closeHistoryActions(restoreFocus = false): void { if (!openHistoryMenu)
 function openHistoryActions(menu: HTMLElement, trigger: HTMLButtonElement): void { if (openHistoryMenu !== menu) closeHistoryActions(); const rect = trigger.getBoundingClientRect(); menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`; menu.style.bottom = `${Math.max(8, window.innerHeight - rect.top)}px`; openHistoryMenu = menu; historyMenuTrigger = trigger; menu.classList.remove('hidden'); trigger.setAttribute('aria-expanded', 'true'); (menu.querySelector('button') as HTMLButtonElement | null)?.focus(); }
 async function useHistoryRecord(record: HistoryRecord, placement?: TimelinePlacement): Promise<void> {
   const reason = hostActionReason(placement ? 'timeline' : 'import');
-  if (reason) { setText('message', reason, false); return; }
+  if (reason) { showActionResult(reason, false); return; }
   const card = await window.clipdockAPI.historyReuse(record.id);
-  if (!card) { setText('message', `${record.fileName} is missing. Relink it first.`); return; }
+  if (!card) { showActionResult(`${record.fileName} is missing. Relink it first.`); return; }
   const bin = outputSession.defaults.targetBin;
   const result = placement
     ? await window.clipdockAPI.addToTimeline(card.cardId, bin, placement)
     : await window.clipdockAPI.importToMediaPool(card.cardId, bin);
-  setText('message', result.message, result.ok);
+  showActionResult(result.message, result.ok);
 }
 function invalidateDeletedCards(cardIds: string[] = []): void { downloadQueue.invalidateCards(cardIds); }
 async function historyAction(record: HistoryRecord, action: string): Promise<void> {
@@ -2305,14 +2307,14 @@ async function historyAction(record: HistoryRecord, action: string): Promise<voi
       const message = result.deleted && result.removed && result.warning === 'Download history could not be updated.'
         ? 'File deleted, but download history could not be updated.'
         : [outcome, result.warning].filter(Boolean).join(' ');
-      setText('message', message, result.deleted && result.removed && !result.warning);
+      showActionResult(message, result.deleted && result.removed && !result.warning);
     } else if (action === 'reveal') await window.clipdockAPI.historyReveal(record.id);
     else if (action === 'reveal-subtitle') await window.clipdockAPI.historyRevealSubtitle(record.id);
     else if (action === 'source') await window.clipdockAPI.historySource(record.id);
     else if (action === 'copy') await window.clipdockAPI.historyCopy(record.id);
     else if (action === 'relink') await window.clipdockAPI.historyRelink(record.id);
   } catch (err) {
-    setText('message', (err as Error).message);
+    showActionResult((err as Error).message);
   } finally {
     closeHistoryActions();
     await refreshHistory();
@@ -2534,7 +2536,7 @@ window.addEventListener('DOMContentLoaded', () => {
     setText('bridge-state', 'Not connected', false);
     setText('module-version', '-'); setText('resolve-version', '-');
     setText('project-name', 'No project open', false); setText('timeline-name', 'No timeline', false);
-    shownHostMessage = hostStatus.message; setText('message', hostStatus.message); setText('refresh-hint', hostStatus.refreshHint ?? '');
+    setText('message', hostStatus.message); setText('refresh-hint', hostStatus.refreshHint ?? '');
     updateControls();
     if (queue.length) renderQueue();
     refreshHistoryHostState();

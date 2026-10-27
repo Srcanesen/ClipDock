@@ -33,20 +33,30 @@ async function open(h, index = 0) {
   await h.flush();
 }
 
-test('a host status refresh keeps an action result readable until the host message changes', async () => {
-  let hostMessage = 'Ready';
+test('an action result outlives host polls for a bounded window, then the host message returns', async (t) => {
+  let now = 1_000_000;
+  const realNow = Date.now; Date.now = () => now; t.after(() => { Date.now = realNow; });
   const h = await boot({ historyList: async () => [record('one')] });
-  const status = h.api.getStatus;
-  h.api.getStatus = async () => ({ ...(await status()), message: hostMessage });
   h.test.setSurface('library'); await h.flush();
-  const list = h.elements.get('history-list');
-  find(list.children[0], (e) => e.tagName === 'BUTTON' && e.textContent === 'Media Pool').click(); await h.flush();
+  find(h.elements.get('history-list').children[0], (e) => e.tagName === 'BUTTON' && e.textContent === 'Media Pool').click(); await h.flush();
   assert.equal(h.elements.get('message').textContent, 'one.mp4 is missing. Relink it first.');
+  now += 8_000;
   h.elements.get('refresh-btn').click(); await h.flush();
-  assert.equal(h.elements.get('message').textContent, 'one.mp4 is missing. Relink it first.', 'an unchanged host message must not repaint over the action result');
-  hostMessage = 'Open a timeline.';
+  assert.equal(h.elements.get('message').textContent, 'one.mp4 is missing. Relink it first.', 'a poll inside the window keeps the result');
+  now += 1_500;
   h.elements.get('refresh-btn').click(); await h.flush();
-  assert.equal(h.elements.get('message').textContent, 'Open a timeline.');
+  assert.equal(h.elements.get('message').textContent, 'Ready', 'a poll past the window restores the unchanged host message');
+});
+
+test('a second action result replaces the first one', async () => {
+  const h = await boot({ historyList: async () => [record('one')], historyCopy: async () => { throw new Error('Could not copy the path.'); } });
+  h.test.setSurface('library'); await h.flush();
+  const row = () => h.elements.get('history-list').children[0];
+  find(row(), (e) => e.tagName === 'BUTTON' && e.textContent === 'Media Pool').click(); await h.flush();
+  assert.equal(h.elements.get('message').textContent, 'one.mp4 is missing. Relink it first.');
+  find(row(), (e) => e.tagName === 'BUTTON' && e.textContent === 'More').click(); await h.flush();
+  find(row(), (e) => e.getAttribute?.('role') === 'menuitem' && e.textContent === 'Copy path').click(); await h.flush();
+  assert.equal(h.elements.get('message').textContent, 'Could not copy the path.');
 });
 
 test('a host status refresh after a failed status call replaces the failure text', async () => {
