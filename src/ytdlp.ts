@@ -593,6 +593,9 @@ export class YtdlpWorker {
       let raw: Record<string, unknown>; try { raw = JSON.parse(result.stdout.trim()) as Record<string, unknown>; } catch { this.log('social metadata returned invalid JSON'); throw new Error('Could not load public social video metadata.'); }
       const entry = socialVideoEntry(raw);
       const metadata = narrowSocialMetadata(raw, entry, valid, null);
+      // Reused by the download, as for YouTube; ClipDock owns the single URL retry.
+      const reusable = {...raw}; delete reusable.webpage_url;
+      this.metadataStore.raw.set(valid.url, JSON.stringify(reusable));
       this.metadataStore.social.set(valid.url, {metadata, thumbnail: typeof entry.thumbnail === 'string' ? entry.thumbnail : null});
       return metadata;
     }, context ? 'Download cancelled.' : 'Could not load public social video metadata.', error => {
@@ -613,6 +616,7 @@ export class YtdlpWorker {
     const formatSort = fastHeight !== null && fastHeight <= 1080 ? ['-S', `res:${fastHeight},vcodec:h264,acodec:aac`] : [];
     const ffmpegPath = this.ffmpegPath!;
     const jobDir = join(this.sessionDir, `download-${randomUUID()}`);
+    const infoKey = 'videoId' in valid ? valid.videoId : valid.url;
     // A stall is silence, not slowness: every progress line rearms the window. Silent
     // phases (merge, audio extraction, a range's keyframe re-encode) scale with the media;
     // an unknown duration is budgeted as one hour.
@@ -636,7 +640,7 @@ export class YtdlpWorker {
         return overall;
       };
       const subtitleLanguage = subtitleTag('videoId' in valid && options.subtitles ? await this.subtitleInfo(valid, context) : null, options.subtitleLanguage);
-      const cachedInfo = 'videoId' in valid && !selection ? this.metadataStore.raw.get(valid.videoId) : null;
+      const cachedInfo = !selection ? this.metadataStore.raw.get(infoKey) : null;
       const infoPath = join(jobDir, 'source.info.json');
       if (cachedInfo) writeExclusive(this.session.jobDirectories.get(jobDir)!, basename(infoPath), cachedInfo);
       let bytesWritten = false;
@@ -675,7 +679,7 @@ export class YtdlpWorker {
         return file.isFile() && file.size > 0;
       });
       if (cachedInfo && result.code !== 0 && (/HTTP.*(?:403|410)|expired|Requested format is not available/i.test(result.stderr) || (!bytesWritten && !wroteMedia()))) {
-        if ('videoId' in valid) this.metadataStore.raw.delete(valid.videoId);
+        this.metadataStore.raw.delete(infoKey);
         cleanJobDirectory(this.session.jobDirectories.get(jobDir)!, [infoPath]);
         output = null; streams = []; weights = []; overall = 0;
         result = await runDownload(false);

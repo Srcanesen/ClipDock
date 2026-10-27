@@ -123,3 +123,33 @@ test('a silent ffmpeg conversion is stopped after its stall window and keeps the
   assert.deepEqual(ffmpeg[0].child.signals, ['SIGTERM']);
   assert.equal(readFileSync(input, 'utf8'), 'source');
 });
+
+const socialInfo = {id: 'ABC123', title: 'Reel', webpage_url: reel, formats: [{height: 720, vcodec: 'h264'}]};
+test('social download reuses the extracted info instead of extracting the post again', async t => {
+  let extractions = 0;
+  const {worker, downloads} = ytdlp(t, root(t, 'clipdock-social-info-'), child => { extractions++; child.stdout.emit('data', Buffer.from(JSON.stringify(socialInfo))); });
+  await worker.metadataSocial(reel);
+  const pending = worker.downloadSocial(reel, 'best', 'social', () => {});
+  await until(() => downloads.length > 0);
+  const {args} = downloads[0];
+  assert.equal(args.includes(reel), false);
+  const info = JSON.parse(readFileSync(args[args.indexOf('--load-info-json') + 1], 'utf8'));
+  assert.deepEqual([info.id, info.webpage_url], ['ABC123', undefined]);
+  finish(downloads[0]);
+  assert.equal((await pending).fileName, 'clip.mp4');
+  assert.equal(extractions, 1);
+});
+
+test('social download retries from the URL when the reused info has expired', async t => {
+  const {worker, downloads} = ytdlp(t, root(t, 'clipdock-social-retry-'), child => child.stdout.emit('data', Buffer.from(JSON.stringify(socialInfo))));
+  await worker.metadataSocial(reel);
+  const pending = worker.downloadSocial(reel, 'best', 'social-retry', () => {});
+  await until(() => downloads.length > 0);
+  downloads[0].child.stderr.emit('data', Buffer.from('ERROR: unable to download video data: HTTP Error 403: Forbidden\n'));
+  downloads[0].child.emit('close', 1);
+  await until(() => downloads.length === 2);
+  assert.deepEqual([downloads[0].args.includes('--load-info-json'), downloads[1].args.includes('--load-info-json'), downloads[1].args.at(-1)], [true, false, reel]);
+  finish(downloads[1]);
+  assert.equal((await pending).fileName, 'clip.mp4');
+  assert.equal(existsSync(join(downloads[1].dir, 'source.info.json')), false);
+});
