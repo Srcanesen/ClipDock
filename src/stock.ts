@@ -48,7 +48,8 @@ const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
 const API_TIMEOUT_MS = 15_000;
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000;
-const DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
+// Backstop only; the idle timer catches stalls. Lets the 2 GB cap finish at ~100 KB/s.
+const DOWNLOAD_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const METADATA_CACHE_MAX = 60;
 const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const MAX_REDIRECTS = 3;

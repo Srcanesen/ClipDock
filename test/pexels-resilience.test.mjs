@@ -53,7 +53,32 @@ test('PRV-11 media progress renews idle deadline while overall deadline stays bo
  stream.enqueue(new Uint8Array([1,2,3])); await turn();
  assert.equal(timers.timers.has(firstIdle),false);
  assert.equal([...timers.timers.values()].filter(timer=>timer.ms===30000).length,1);
- timers.fire(30*60*1000); await outcome; assert.deepEqual(readdirSync(root),[]); assert.equal(timers.timers.size,0);
+ timers.fire(6*60*60*1000); await outcome; assert.deepEqual(readdirSync(root),[]); assert.equal(timers.timers.size,0);
+});
+
+// Virtual clock: advance() fires every timer that falls due, in order.
+const virtualClock = () => { let now = 0; const timers = new Map(); return {
+  setTimeout: (fn, ms) => { const token = {}; timers.set(token, {fn, at: now + ms}); return token; }, clearTimeout: token => timers.delete(token),
+  advance(ms) { const end = now + ms; for (;;) { const due = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0]; if (!due) break; timers.delete(due[0]); now = due[1].at; due[1].fn(); } now = end; },
+}; };
+
+test('a slow download that keeps moving past 30 minutes completes; a stalled one still times out', async t => {
+  const timers = virtualClock(); let stream;
+  const {client, root} = setup(t, async () => new Response(new ReadableStream({start(c) {stream = c;}}), {headers: {'content-type': 'video/mp4'}}), timers);
+  const pending = client.download('slow', {url: 'https://videos.pexels.com/1.mp4', mime: 'video/mp4'}, () => {});
+  await turn();
+  // 20 s between chunks for 45 minutes: never idle for 30 s, well past the old 30-minute cap.
+  for (let step = 0; step < 45 * 3; step++) { timers.advance(20_000); stream.enqueue(new Uint8Array(1024)); await turn(); await turn(); }
+  stream.close();
+  const done = await pending;
+  assert.match(done.fileName, /^pexels-.+\.mp4$/);
+  assert.deepEqual(readdirSync(root), [done.fileName]);
+
+  const stalled = client.download('stalled', {url: 'https://videos.pexels.com/2.mp4', mime: 'video/mp4'}, () => {});
+  const outcome = assert.rejects(stalled, {message: 'Pexels media download timed out.'});
+  await turn(); stream.enqueue(new Uint8Array(1024)); await turn(); await turn();
+  timers.advance(30_000); await outcome;
+  assert.deepEqual(readdirSync(root), [done.fileName]);
 });
 
 test('PRV-19 cooldown accepts reset-only and HTTP date headers and stays account scoped', async t => {
