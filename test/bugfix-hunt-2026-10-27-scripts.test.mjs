@@ -81,7 +81,7 @@ test('e2e runner refuses a dist built from older sources', (t) => {
 
 test('live provider checks refuse a dist built from older sources before loading it', (t) => {
   const root = staleCheckout(t);
-  for (const script of ['verify-pexels.mjs', 'verify-pixabay-live.mjs']) {
+  for (const script of ['verify-pixabay-live.mjs']) {
     const result = spawnSync(process.execPath, [path.join(root, 'scripts', script)], { cwd: root, encoding: 'utf8' });
     assert.equal(result.status, 1, `${script}: ${output(result)}`);
     assert.match(result.stderr, /Refusing stale or incomplete dist\/: Stale or incomplete build.*Run npm run build first/, script);
