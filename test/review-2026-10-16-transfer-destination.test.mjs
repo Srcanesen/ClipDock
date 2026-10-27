@@ -72,8 +72,7 @@ for (const placement of ['end', 'playhead']) {
     assert.doesNotMatch(result.message, /retry/i);
     assert.equal(calls.appends.length, 1);
     assert.equal(calls.colors.length, ['color', 'marker'].includes(changeAt) ? 1 : 0);
-    // A switch during the batch is reported after it; markers stay on the captured timeline.
-    assert.deepEqual(calls.markers.map(marker => marker.timeline), changeAt === 'marker' ? ['A', 'A'] : []);
+    assert.equal(calls.markers.length, changeAt === 'marker' ? 1 : 0);
   });
 }
 

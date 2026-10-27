@@ -239,6 +239,8 @@ interface TargetContext {
   binLabel: string;
   restore: () => Promise<void>;
   check: DestinationCheck;
+  /** One identity pass for repeated calls; a switch mid-pass is caught by the next call. */
+  markerCheck: DestinationCheck;
 }
 
 /**
@@ -258,16 +260,17 @@ async function openTargetContext(mediaPool: unknown, targetBin: TargetBin, check
     /* best-effort */
   }
   const previousId = await destinationIdentity(previous);
-  const checkFolder = (...ids: unknown[]): DestinationCheck => async () => {
+  const folderCheck = (ids: unknown[], recheck: boolean): DestinationCheck => async () => {
     const changed = await checkDestination();
     if (changed) return changed;
     try {
       if (!ids.includes(await destinationIdentity(await (mediaPool as MediaPoolLike).GetCurrentFolder()))) return destinationChanged();
       // Folder lookup can itself wait on Resolve after the project check.
-      return await checkDestination();
+      return recheck ? await checkDestination() : null;
     } catch { return destinationChanged(); }
   };
-  if (targetBin === 'active') return { folder: previous, binLabel: 'Active', restore: async () => undefined, check: checkFolder(previousId) };
+  const checkFolder = (...ids: unknown[]): DestinationCheck => folderCheck(ids, true);
+  if (targetBin === 'active') return { folder: previous, binLabel: 'Active', restore: async () => undefined, check: checkFolder(previousId), markerCheck: folderCheck([previousId], false) };
   let check = checkFolder(previousId);
   const restore = async (): Promise<void> => {
     if (previous == null) return;
@@ -315,7 +318,7 @@ async function openTargetContext(mediaPool: unknown, targetBin: TargetBin, check
       });
     }
     check = checkFolder(folderId);
-    return { folder, binLabel: 'ClipDock', restore, check };
+    return { folder, binLabel: 'ClipDock', restore, check, markerCheck: folderCheck([folderId], false) };
   } catch (err) {
     return await fail({ ok: false, kind: 'bin-error', message: `Resolve API call failed: ${msg(err)}.` });
   }
@@ -324,7 +327,7 @@ async function openTargetContext(mediaPool: unknown, targetBin: TargetBin, check
 type AutomationWarning = 'unavailable' | 'destination-changed' | null;
 
 /** The append is committed: checks can stop automation, never fail the handoff. */
-async function applyAutomation(project: unknown, timeline: unknown, clip: unknown, recordFrame: number | null, check: DestinationCheck, automation?: TimelineAutomation): Promise<AutomationWarning> {
+async function applyAutomation(project: unknown, timeline: unknown, clip: unknown, recordFrame: number | null, check: DestinationCheck, markerCheck: DestinationCheck, automation?: TimelineAutomation): Promise<AutomationWarning> {
   const changed = await check();
   if (changed) return 'destination-changed';
   if (!automation) return null;
@@ -341,10 +344,10 @@ async function applyAutomation(project: unknown, timeline: unknown, clip: unknow
     const addMarker = (timeline as TimelineLike).AddMarker;
     if (!Number.isFinite(fps) || fps < 1 || fps > 240 || recordFrame === null || timelineStart === null || typeof addMarker !== 'function') return await check() ? 'destination-changed' : 'unavailable';
     const offset = automation.selection?.start ?? 0;
-    // Markers target the captured timeline handle: check the destination around the batch, not per marker.
     if (await check()) return 'destination-changed';
     for (const chapter of automation.chapters.slice(0, 100)) {
       if (automation.selection && (chapter.start < automation.selection.start || chapter.start >= automation.selection.end)) continue;
+      if (await markerCheck()) return 'destination-changed';
       if (await addMarker.call(timeline, recordFrame - timelineStart + Math.round((chapter.start - offset) * fps), markerColor, chapter.title, `${automation.source} · original ${chapter.start.toFixed(3)}s`, 1) === false) warning = 'unavailable';
     }
   } catch { warning = 'unavailable'; }
@@ -645,7 +648,7 @@ export function createTransfer(
             if (!items) {
               return { ok: false, kind: 'append-failed', message: 'Append to timeline failed: Resolve returned no usable appended clips.' };
             }
-            const warning = await applyAutomation(project, timeline, clip, automation ? await itemStart(items[0]) : null, ctx.check, automation);
+            const warning = await applyAutomation(project, timeline, clip, automation ? await itemStart(items[0]) : null, ctx.check, ctx.markerCheck, automation);
             return timelineSuccess('playhead', warning, automation);
           } catch (err) {
             return unsupported(`Playhead insertion is unsupported: ${msg(err)}.`);
@@ -665,7 +668,7 @@ export function createTransfer(
         if (!items) {
           return { ok: false, kind: 'append-failed', message: 'Append to timeline failed: Resolve returned no usable appended clips.' };
         }
-        const warning = await applyAutomation(project, timeline, clip, automation ? await itemStart(items[0]) : null, ctx.check, automation);
+        const warning = await applyAutomation(project, timeline, clip, automation ? await itemStart(items[0]) : null, ctx.check, ctx.markerCheck, automation);
         return timelineSuccess('end', warning, automation);
       } finally {
         await ctx.restore();
