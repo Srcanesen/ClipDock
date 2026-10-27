@@ -309,7 +309,7 @@ export function runStartupSequence(sequence: StartupSequence): void {
 
 // ---- Shared download-completion artifact service ----
 // One Electron-free completion seam for every provider's successful download
-// path (YouTube, Social, Pexels). main.ts supplies the card registry, history
+// path (YouTube, Social, Pinterest, Pexels, Pixabay). main.ts supplies the card registry, history
 // store, project refresh, provider event channel, and the media-prep runner;
 // this service owns the common orchestration: optional media preparation for
 // the requested profile, final artifact validation, history record
