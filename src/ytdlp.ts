@@ -672,9 +672,10 @@ export class YtdlpWorker {
         result = await runDownload(false);
         context.check();
       }
-      // With --quiet, yt-dlp's max-filesize skip exits successfully without
-      // a final path or any diagnostic. Nonzero exits remain ordinary failures.
-      if (result.code === 0 && !output && !result.stdout.trim() && !result.stderr.trim()) throw new Error('This video exceeds ClipDock’s 2 GB download limit.');
+      // With --quiet, yt-dlp's max-filesize skip exits successfully without a final
+      // path or any diagnostic (before_dl and the other stream's progress still print).
+      // Nonzero exits remain ordinary failures.
+      if (result.code === 0 && !output) throw new Error('This video exceeds ClipDock’s 2 GB download limit.');
       if (result.code !== 0 || !output) { failureDetail = result.stderr || 'missing final path'; this.log(`download failed code=${result.code}: ${failureDetail}`); throw new Error(downloadFailureMessage(failureDetail)); }
       if (!isAbsolute(output) || !existsSync(output) || !statSync(output).isFile()) throw new Error('Downloaded file failed the safety check.');
       const filePath = realpathSync(output);

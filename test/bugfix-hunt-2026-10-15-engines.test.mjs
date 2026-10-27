@@ -31,10 +31,13 @@ function fixture(t) {
 test('bug 1: yt-dlp silent successful size skip reports the 2 GB limit', async t => {
   const {worker} = fixture(t);
   const events = [];
-  await assert.rejects(providerDownload(worker('process.exit(0);'), {url: youtube, jobId: 'size-skip', emit: event => events.push(event)}),
+  // Real yt-dlp prints before_dl first, skips the oversize stream silently under
+  // --quiet, still downloads the other stream, then exits 0 without after_move.
+  await assert.rejects(providerDownload(worker(`console.log('S|137+140|2500000000, 3000000|NA'); console.log('C|downloading|100.0|3000000|3000000|1000|0|140'); process.exitCode = 0;`), {url: youtube, jobId: 'size-skip', emit: event => events.push(event)}),
     {message: 'This video exceeds ClipDock’s 2 GB download limit.'});
   assert.deepEqual(events, [
     {jobId: 'size-skip', state: 'downloading', percent: null, message: 'Starting download…'},
+    {jobId: 'size-skip', state: 'downloading', percent: 100, message: 'Downloading stream 2 of 2…', speedBytesPerSecond: 1000, etaSeconds: 0},
     {jobId: 'size-skip', state: 'failed', percent: null, message: 'This video exceeds ClipDock’s 2 GB download limit.'},
   ]);
   await assert.rejects(worker('process.exit(1);').download(youtube, 'best', 'failure', () => {}), {message: 'Download failed.'});

@@ -317,7 +317,8 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   ]);
   for (const [label, run, message] of [
     ['download nonzero is controlled', closeWith('', 2, 'parser failed'), 'Download failed.'],
-    ['download missing final path is controlled', closeWith('C|downloading|oops|1|2\n', 0), 'Download failed.'],
+    // A zero exit without after_move is yt-dlp's silent max-filesize skip, even after progress output.
+    ['download missing final path after a zero exit is the size skip', closeWith('C|downloading|oops|1|2\n', 0), 'This video exceeds ClipDock’s 2 GB download limit.'],
     ['download private/login error is actionable', closeWith('', 2, 'ERROR: Private video. Sign in to confirm access.'), 'This video is private or requires login. Only public videos are supported.'],
     ['download removed error is actionable', closeWith('', 2, 'ERROR: Video unavailable. This video has been removed.'), 'This video was removed or is no longer available.'],
     ['download 2 GB limit error is actionable', closeWith('', 2, 'File is larger than max-filesize (2147483648 bytes), aborting'), 'This video exceeds ClipDock’s 2 GB download limit.'],
