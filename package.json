@@ -8,7 +8,7 @@
     "verify": "node scripts/verify-plugin.mjs",
     "check": "npm run build && npm run verify",
     "test": "npm run build && node --import ./scripts/test-process-safety.mjs --test test/*.test.mjs",
-    "validate": "npm test && npm run check",
+    "validate": "npm test && npm run verify",
     "test:resolve:headless": "node scripts/resolve-smoke/run.mjs",
     "preview": "npm run build && node scripts/preview.mjs",
     "install:plugin": "npm run build && node scripts/install-plugin.mjs",

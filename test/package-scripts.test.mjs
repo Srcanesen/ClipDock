@@ -5,7 +5,7 @@ import {test} from 'node:test';
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 test('validate combines deterministic tests and artifact verification without live Resolve', () => {
-  assert.equal(packageJson.scripts.validate, 'npm test && npm run check');
+  assert.equal(packageJson.scripts.validate, 'npm test && npm run verify');
   assert.doesNotMatch(packageJson.scripts.validate, /test:resolve:headless/);
 });
 
