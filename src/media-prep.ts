@@ -1,9 +1,9 @@
 // Resolve compatibility preparation boundary: Node-only, Electron-free.
-import { spawn as nodeSpawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { accessSync, constants, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, win32 } from 'node:path';
-import { spawnBounded } from './provider-platform';
+import { probeVersion, spawnBounded } from './provider-platform';
 import { ProviderJobRunner, requireFfprobe, type ProviderJobContext } from './provider-job';
 import { ManagedRoot } from './managed-root';
 import { AnchoredDir, SafeFsError, captureFile, createPrivateDir, publishNoReplace, removeOwned, removePrivateDir, verifyFile, type OwnedFile } from './safe-fs';
@@ -19,24 +19,16 @@ type Probe = { video: { codec: string; pixFmt: string; width: number; height: nu
 
 const MAX_PROBE = 2 * 1024 * 1024;
 const MAX_STDERR = 64 * 1024;
-const VERSION_PROBE_TIMEOUT_MS = 3_000;
-const VERSION_PROBE_MAX_BYTES = 256 * 1024;
 
 function executable(p: string): boolean { try { accessSync(p, constants.X_OK); return true; } catch { return false; } }
 function absoluteForPlatform(p: string, platform: NodeJS.Platform): boolean { return platform === 'win32' ? win32.isAbsolute(p) : isAbsolute(p); }
 type VersionProbe = (candidate: string) => { code: number | null; text: string } | null;
-function probeVersion(candidate: string): { code: number | null; text: string } | null {
-  try {
-    const result = spawnSync(candidate, ['-version'], { shell: false, timeout: VERSION_PROBE_TIMEOUT_MS, encoding: 'utf8', maxBuffer: VERSION_PROBE_MAX_BYTES });
-    return { code: result.status, text: `${result.stdout ?? ''}${result.stderr ?? ''}` };
-  } catch { return null; }
-}
 function versionMatches(candidate: string, identity: string, probe: VersionProbe): boolean {
   const result = probe(candidate);
   return result !== null && result.code === 0 && result.text.toLowerCase().includes(identity);
 }
 
-export function discoverFfprobe(ffmpegPath: string | null = null, env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':'), probe: VersionProbe = probeVersion): string | null {
+export function discoverFfprobe(ffmpegPath: string | null = null, env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':'), probe: VersionProbe = candidate => probeVersion(candidate, ['-version'])): string | null {
   const configured = env.CLIPDOCK_FFPROBE_PATH;
   const name = platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
   const candidates = [

@@ -16,7 +16,7 @@ interface PexelsConnectionStatus { connected: boolean; persisted: boolean; messa
 interface WorkspaceSummary { fileCount: number; totalBytes: number; cleanupFileCount: number; cleanupBytes: number; }
 interface WorkspaceCleanupResult { deletedFileCount: number; deletedBytes: number; fileCount: number; totalBytes: number; }
 interface StatusSnapshot { phase: 'bridge-error' | 'no-project' | 'no-timeline' | 'ready'; bridge: { connected: boolean; moduleVersion: string | null; resolveVersion: string | null; error: string | null }; project: { loaded: boolean; name: string | null }; timeline: { loaded: boolean; name: string | null }; message: string; refreshHint: string | null; }
-interface DownloadFolderStatus { folder: string; userSelected: boolean; }
+interface DownloadFolderStatus { folder: string; userSelected: boolean; error?: string; }
 interface PreviewBounds { x: number; y: number; width: number; height: number; }
 interface YoutubePreviewState { state: 'closed' | 'failed'; reason: 'closed' | 'escape' | 'load' | 'crash'; }
 interface TransferResult { ok: boolean; kind: string; message: string; }
@@ -421,9 +421,9 @@ function renderDownloadFolderStatus(status: DownloadFolderStatus): void {
   setOptionalText('settings-download-folder', status.folder);
   const path = document.getElementById('settings-download-folder');
   if (path) path.title = status.folder;
-  setOptionalText('settings-folder-note', status.userSelected
+  setOptionalText('settings-folder-note', status.error ?? (status.userSelected
     ? 'Custom folder: new downloads and the managed workspace use this location. Files already elsewhere are kept.'
-    : 'Default folder: new downloads land in the ClipDock subfolder of your Downloads folder.');
+    : 'Default folder: new downloads land in the ClipDock subfolder of your Downloads folder.'));
 }
 async function refreshDownloadFolder(): Promise<void> {
   if (typeof window.clipdockAPI?.downloadFolderStatus !== 'function') return;
@@ -1216,18 +1216,6 @@ function stageResultFromKey(key: string, selection: ResultSelection, checkbox: H
   checkbox.setAttribute('aria-label', `${selected ? 'Remove' : 'Add'} ${selection.title} ${selected ? 'from' : 'to'} the staged selection`);
   renderSelectionToolbar();
 }
-function syncResultCardThumbnailHeights(): void {
-  // CSS aspect-ratio owns 16:9 since D Home Grid port
-  return;
-}
-function scheduleResultCardThumbnailHeights(): void {
-  // CSS aspect-ratio owns 16:9 since D Home Grid port
-  return;
-}
-function observeResultCardThumbnailContainer(): void {
-  // CSS aspect-ratio owns 16:9 since D Home Grid port
-  return;
-}
 function renderPexelsSearchResults(): void {
   stopPreview(); const list = $('youtube-search-results'); list.replaceChildren(); searchButtons = [];
   const source: StockProvider = provider === 'pixabay' ? 'pixabay' : 'pexels'; const label = stockLabel(source);
@@ -1250,7 +1238,7 @@ function renderPexelsSearchResults(): void {
     decorateResultCard(row, key, frameNumber(index, pexelsSearch), source === 'pixabay' ? 'PB' : 'PX', details, open, item.kind === 'photo');
     searchButtons.push(row); list.append(row);
   }
-  setText('youtube-search-status', pexelsSearch ? (pexelsSearch.results.length ? `${label} ${stockKind()}s · page ${pexelsSearch.page}` : `No ${label} results found.`) : `Connect ${label} and search.`); setSearchBusy(searchBusy); renderSelectionToolbar(); scheduleResultCardThumbnailHeights();
+  setText('youtube-search-status', pexelsSearch ? (pexelsSearch.results.length ? `${label} ${stockKind()}s · page ${pexelsSearch.page}` : `No ${label} results found.`) : `Connect ${label} and search.`); setSearchBusy(searchBusy); renderSelectionToolbar();
 }
 function renderSearchResults(): void {
   clearMetadataPrefetchTimers();
@@ -1279,7 +1267,7 @@ function renderSearchResults(): void {
     searchButtons.push(row); list.append(row);
   }
   const diagnostic = searchPage?.thumbnailDiagnostic; const thumbnailWarning = diagnostic && diagnostic.total > 0 && (diagnostic.failed === diagnostic.total || diagnostic.failed >= Math.ceil(diagnostic.total / 2)) ? ` · Thumbnails ${diagnostic.total - diagnostic.failed}/${diagnostic.total} · ${diagnostic.reason} · Node ${diagnostic.node}` : '';
-  setText('youtube-search-status', searchPage ? (searchPage.results.length ? `Page ${searchPage.page} of ${searchPage.pageCount} · ${searchPage.totalResults} results${thumbnailWarning}` : 'No results found.') : 'Search YouTube to browse videos.'); setSearchBusy(searchBusy); renderSelectionToolbar(); scheduleResultCardThumbnailHeights();
+  setText('youtube-search-status', searchPage ? (searchPage.results.length ? `Page ${searchPage.page} of ${searchPage.pageCount} · ${searchPage.totalResults} results${thumbnailWarning}` : 'No results found.') : 'Search YouTube to browse videos.'); setSearchBusy(searchBusy); renderSelectionToolbar();
 }
 function renderPinterestSearchResults(): void {
   stopPreview(); const list = $('youtube-search-results'); list.replaceChildren(); searchButtons = [];
@@ -1299,7 +1287,7 @@ function renderPinterestSearchResults(): void {
     searchButtons.push(row); list.append(row);
   }
   const diagnostic = pinterestSearch?.thumbnailDiagnostic; const thumbnailWarning = diagnostic && diagnostic.total > 0 && (diagnostic.failed === diagnostic.total || diagnostic.failed >= Math.ceil(diagnostic.total / 2)) ? ` · Thumbnails ${diagnostic.total - diagnostic.failed}/${diagnostic.total} · ${diagnostic.reason} · Node ${diagnostic.node}` : '';
-  setText('youtube-search-status', pinterestSearch ? (pinterestSearch.results.length ? `Page ${pinterestSearch.page} of ${pinterestSearch.pageCount} · ${pinterestSearch.totalResults} results${thumbnailWarning}` : 'No Pinterest results found.') : 'Search Pinterest to browse Pins.'); setSearchBusy(searchBusy); renderSelectionToolbar(); scheduleResultCardThumbnailHeights();
+  setText('youtube-search-status', pinterestSearch ? (pinterestSearch.results.length ? `Page ${pinterestSearch.page} of ${pinterestSearch.pageCount} · ${pinterestSearch.totalResults} results${thumbnailWarning}` : 'No Pinterest results found.') : 'Search Pinterest to browse Pins.'); setSearchBusy(searchBusy); renderSelectionToolbar();
 }
 // Shared search-transition seam: every new search and pagination pass starts here so an
 // open detail Inspector from a previous selection can never survive into the next result
@@ -2670,7 +2658,6 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('choose-download-folder-btn')?.addEventListener('click', () => { void chooseDownloadFolder(); });
   document.getElementById('cleanup-workspace-btn')?.addEventListener('click', () => { void cleanupWorkspace(); });
   wireResizableRegions();
-  // CSS aspect-ratio owns 16:9 since D Home Grid port - no JS height sync wiring
   window.clipdockAPI.onYoutubeEvent(handleYoutubeEvent);
   applyRememberedPreferences();
   setSurface('search', false);

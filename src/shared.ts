@@ -35,6 +35,8 @@ export interface DownloadFolderStatus {
   folder: string;
   /** True when the user explicitly chose this folder (vs the Downloads/ClipDock default). */
   userSelected: boolean;
+  /** Why the folder or the download services are unusable, when they are. */
+  error?: string;
 }
 
 export type YoutubeQuality = 'best' | `${number}p`;

@@ -163,14 +163,6 @@ export class LruCache<K, V> {
     return cloneValue(entry.value);
   }
 
-  /** Peek without LRU move or clone — internal use */
-  private peekRaw(key: K): V | null {
-    const entry = this.store.get(key);
-    if (!entry) return null;
-    if (this.now() - entry.createdAt >= this.ttlMs) { this.store.delete(key); return null; }
-    return entry.value;
-  }
-
   set(key: K, value: V): void {
     const createdAt = (value as unknown as { createdAt?: unknown })?.createdAt != null
       && typeof (value as unknown as { createdAt: unknown }).createdAt === 'number'

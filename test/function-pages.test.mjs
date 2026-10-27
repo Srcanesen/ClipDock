@@ -59,7 +59,6 @@ test('result-card thumbnails rely on CSS aspect-ratio and leave inline heights a
   const thumbs = rows.map((row) => row.children.find((child) => child.dataset.field === 'thumbnail'));
   thumbs[0].getBoundingClientRect = () => ({ width: 722 });
   thumbs[1].getBoundingClientRect = () => ({ width: 406 });
-  h.test.scheduleResultCardThumbnailHeights();
   // CSS aspect-ratio owns 16:9 since D Home Grid port - inline heights must stay absent
   assert.equal(thumbs[0].style.height, undefined, 'CSS aspect-ratio owns 16:9 since D Home Grid port');
   assert.equal(thumbs[1].style.height, undefined, 'CSS aspect-ratio owns 16:9 since D Home Grid port');
@@ -75,15 +74,6 @@ test('result-card thumbnails rely on CSS aspect-ratio and leave inline heights a
   assert.equal(thumbs[1].style.height, undefined, 'CSS aspect-ratio owns 16:9 since D Home Grid port');
   assert.equal(rows[0].style.minHeight, undefined, 'CSS aspect-ratio owns 16:9 since D Home Grid port');
   assert.equal(rows[1].style.minHeight, undefined, 'CSS aspect-ratio owns 16:9 since D Home Grid port');
-
-  thumbs[0].getBoundingClientRect = () => ({ width: 0 });
-  thumbs[1].getBoundingClientRect = () => ({ width: Number.NaN });
-  h.test.syncResultCardThumbnailHeights();
-  // CSS aspect-ratio owns 16:9 since D Home Grid port - invalid widths must not create stale inline heights
-  assert.equal(thumbs[0].style.height, undefined, 'CSS aspect-ratio owns 16:9 since D Home Grid port');
-  assert.equal(rows[0].style.minHeight, undefined, 'CSS aspect-ratio owns 16:9 since D Home Grid port');
-  h.test.syncResultCardThumbnailHeights();
-  assert.equal(thumbs[0].style.height, undefined, 'CSS aspect-ratio owns 16:9 since D Home Grid port');
 });
 
 test('fixed navigation and staged selections preserve common snapshots and queue FIFO', async () => {

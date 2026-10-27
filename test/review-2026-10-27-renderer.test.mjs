@@ -129,3 +129,13 @@ test('a run of completed downloads scans the workspace once, when the queue goes
   assert.equal(scans, before + 1);
   assert.equal(h.elements.get('workspace-status').textContent, `${before + 1} stored files · 0 B`);
 });
+
+test('Settings shows why the download folder is unusable', async () => {
+  const error = 'The download folder changed or became unavailable. Choose the download folder again to restore access.';
+  const h = await boot({ downloadFolderStatus: async () => ({ folder: '/Volumes/T7/ClipDock', userSelected: true, error }) });
+  h.test.setSurface('settings'); await h.flush();
+  assert.equal(h.elements.get('settings-folder-note').textContent, error);
+  h.api.downloadFolderStatus = async () => ({ folder: '/Volumes/T7/ClipDock', userSelected: true });
+  h.test.setSurface('search'); h.test.setSurface('settings'); await h.flush();
+  assert.equal(h.elements.get('settings-folder-note').textContent, 'Custom folder: new downloads and the managed workspace use this location. Files already elsewhere are kept.');
+});
