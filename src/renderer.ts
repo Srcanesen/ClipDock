@@ -101,7 +101,8 @@ downloadQueue.subscribe(({ item, progress, settled, action }) => {
     else showYoutubeStatus(item.message, item.percent, item.speedBytesPerSecond, item.etaSeconds);
   }
   if (action && item) { $('youtube-queue-status').textContent = item.message; if (!metadataSession.busy) showYoutubeStatus(item.message); }
-  if (settled && document.getElementById('workspace-status')) void refreshWorkspace();
+  // One workspace scan per run of downloads: only once nothing is downloading or queued.
+  if (settled && !downloadQueue.activeId && !queue.some((entry) => entry.status === 'queued') && document.getElementById('workspace-status')) void refreshWorkspace();
 });
 // Result staging is renderer-session-only. Keys include the provider (and Pexels
 // media kind) so switching pages or providers cannot move a selection onto a
@@ -137,10 +138,10 @@ let observedResultListWidth = 0;
 const statusSession = new StatusRefreshSession();
 let statusRefreshTimer: number | null = null;
 let hostStatus: StatusSnapshot | null = null;
-let settingsOpen = false;
 // The host message last written to #message. A refresh repaints the footer only when it
 // changes, so a transient action result stays readable under the 3s poll.
 let shownHostMessage: string | null = null;
+let settingsOpen = false;
 let settingsTrigger: HTMLElement | null = null;
 let currentSurface: Surface = 'search';
 let previousSurface: Surface = 'search';
@@ -638,7 +639,7 @@ function renderEffectiveOutputSummary(): void {
   summary.classList.remove('hidden'); (summary as HTMLElement).hidden = false; summary.setAttribute('aria-hidden', 'false');
 }
 function renderSelectionToolbar(): void {
-  const count = outputSession.staged.size;
+  const count = outputSession.stagedCount;
   const toolbar = document.getElementById('selection-toolbar');
   const countEl = document.getElementById('selection-count');
   if (countEl) countEl.textContent = `${count} selected`;
@@ -667,7 +668,7 @@ function renderSelectionToolbar(): void {
   }
   const selectAll = document.getElementById('select-all-results-btn') as HTMLButtonElement | null;
   const keys = currentResultKeys();
-  const allSelected = keys.length > 0 && keys.every((key) => outputSession.staged.has(key));
+  const allSelected = keys.length > 0 && keys.every((key) => outputSession.isStaged(key));
   if (selectAll) { selectAll.disabled = keys.length === 0 || selectedQueueLoadBusy; selectAll.setAttribute('aria-pressed', String(allSelected)); }
   renderEffectiveOutputSummary(); refreshInlineResultCards();
 }
@@ -705,6 +706,7 @@ function commitInspectorEdit(patch: RawItemOutput, preserveRangeText = false): v
   outputSession.edit('inspector', patch);
   applyDetailOutput(preserveRangeText); renderSelectionToolbar();
 }
+// applyDetailOutput repaints the selection, subtitle cues and range UI; callers do not render first.
 function commitRangeEdit(preserveRangeText = false): void {
   commitInspectorEdit({ selection: currentSelection(), selectionPlan: currentSelectionPlan() }, preserveRangeText);
 }
@@ -1029,8 +1031,8 @@ function wireSearchResultRow(row: HTMLElement, checkbox: HTMLInputElement): void
   checkbox.addEventListener('keydown', (event) => event.stopPropagation());
 }
 function appendResultSelection(row: HTMLElement, key: string, title: string, selection: ResultSelection): HTMLInputElement {
-  const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'result-selection'; checkbox.dataset.field = 'selection'; checkbox.checked = outputSession.staged.has(key); checkbox.disabled = selectedQueueLoadBusy; checkbox.setAttribute('aria-label', `${checkbox.checked ? 'Remove' : 'Add'} ${title} ${checkbox.checked ? 'from' : 'to'} the staged selection`);
-  checkbox.addEventListener('change', () => { stageResultFromKey(key, selection, checkbox.checked); });
+  const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'result-selection'; checkbox.dataset.field = 'selection'; checkbox.checked = outputSession.isStaged(key); checkbox.disabled = selectedQueueLoadBusy; checkbox.setAttribute('aria-label', `${checkbox.checked ? 'Remove' : 'Add'} ${title} ${checkbox.checked ? 'from' : 'to'} the staged selection`);
+  checkbox.addEventListener('change', () => { stageResultFromKey(key, selection, checkbox); });
   row.append(checkbox); return checkbox;
 }
 function isWithin(node: Node | null, root: HTMLElement): boolean { for (let current = node; current; current = current.parentElement) if (current === root) return true; return false; }
@@ -1066,7 +1068,6 @@ function resultOutputLine(value: OutputDefaults, photo = false): string { return
 // The SVG strings are constant markup; no result data is ever written through innerHTML.
 const GREASE_SVG = '<svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path vector-effect="non-scaling-stroke" d="M9 4.5C30 2.2 64 1.6 93 3.6c3.4 9 4.2 29 2.2 51.6C70 58.2 31 58.6 5.4 56.4 3.2 40 2.6 19 5.6 3.4c4.2-.9 9.8-1.6 16-1.4"/></svg>';
 const RING_SVG = '<svg viewBox="0 0 40 24" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path vector-effect="non-scaling-stroke" d="M30 3.5C22 1 8 2 3.5 9 .5 15 7 21.5 19 21.8 31 22 38.5 17 37.5 10.5 36.5 5 29 2.6 22 2.5"/></svg>';
-let justMarkedKey: string | null = null;
 function frameNumber(index: number, page: { page: number; pageSize: number } | null): string {
   const value = (Math.max(1, page?.page ?? 1) - 1) * Math.max(0, page?.pageSize ?? 0) + index + 1;
   return String(value).padStart(2, '0');
@@ -1087,7 +1088,6 @@ function decorateResultCard(row: HTMLElement, key: string, frame: string, code: 
   const grease = document.createElement('span'); grease.className = 'grease'; grease.setAttribute('aria-hidden', 'true'); grease.innerHTML = GREASE_SVG;
   row.append(rebate, grease);
   row.dataset.override = String(Object.keys(outputSession.overrides(key)).length > 0);
-  if (justMarkedKey === key && !reducedMotion()) row.classList.add('just-marked');
   details.setAttribute('aria-label', `Open clip detail: ${row.dataset.resultTitle ?? ''}`);
   details.addEventListener('click', (event) => { event.stopPropagation?.(); open(event); });
 }
@@ -1202,14 +1202,17 @@ function refreshInlineResultCards(): void {
   }
   updateInlineCardStates();
 }
-function stageResultFromKey(key: string, selection: ResultSelection, selected: boolean): void {
+function stageResultFromKey(key: string, selection: ResultSelection, checkbox: HTMLInputElement): void {
   if (selectedQueueLoadBusy) { renderSearchResults(); return; }
-  if (selected) { outputSession.stage(key, selection); justMarkedKey = key; }
+  const selected = checkbox.checked;
+  if (selected) outputSession.stage(key, selection);
   else outputSession.unstage(key);
-  renderSelectionToolbar(); renderSearchResults(); justMarkedKey = null;
-  // Keep keyboard focus on the mark the user just toggled; the rebuild replaced it.
-  const row = Array.from(document.getElementById('youtube-search-results')?.children ?? []).find((child) => (child as HTMLElement).dataset.resultKey === key) as HTMLElement | undefined;
-  if (row && document.body && document.activeElement === document.body) (findResultDescendant(row, (element) => element.dataset.field === 'selection') as HTMLElement | null)?.focus?.();
+  // Update the toggled frame in place: a sheet rebuild reloads every thumbnail and drops focus.
+  const row = checkbox.parentElement;
+  row?.setAttribute('aria-selected', String(selected));
+  row?.classList.toggle('just-marked', selected && !reducedMotion());
+  checkbox.setAttribute('aria-label', `${selected ? 'Remove' : 'Add'} ${selection.title} ${selected ? 'from' : 'to'} the staged selection`);
+  renderSelectionToolbar();
 }
 function syncResultCardThumbnailHeights(): void {
   // CSS aspect-ratio owns 16:9 since D Home Grid port
@@ -1231,7 +1234,7 @@ function renderPexelsSearchResults(): void {
     const duration = item.kind === 'video' && item.duration !== null ? formatDuration(item.duration) : 'Still image';
     const metadata = [item.creator ? `Creator: ${item.creator}` : null, item.width && item.height ? `Dimensions: ${item.width}×${item.height}` : null, kind].filter(Boolean).join(' · ');
     const selection: ResultSelection = { provider: source, resultId: String(item.id), source: item.sourceUrl, title: item.title, channel: item.creator, thumbnailDataUrl: item.thumbnailUrl, pexelsKind: stockKind() };
-    const row = document.createElement('div'); row.className = 'youtube-search-result source-row clipdock-result-card result-card'; row.dataset.resultId = String(item.id); row.dataset.resultKey = key; row.dataset.resultTitle = item.title; row.dataset.cardPhoto = String(item.kind === 'photo'); row.dataset.provider = source; row.dataset.source = source; row.setAttribute('aria-pressed', String(String(item.id) === outputSession.selected?.resultId)); row.setAttribute('aria-selected', String(outputSession.staged.has(key))); row.setAttribute('aria-label', sourceRowAriaLabel(`${label} ${kind}`, item.title, duration, metadata));
+    const row = document.createElement('div'); row.className = 'youtube-search-result source-row clipdock-result-card result-card'; row.dataset.resultId = String(item.id); row.dataset.resultKey = key; row.dataset.resultTitle = item.title; row.dataset.cardPhoto = String(item.kind === 'photo'); row.dataset.provider = source; row.dataset.source = source; row.setAttribute('aria-pressed', String(String(item.id) === outputSession.selected?.resultId)); row.setAttribute('aria-selected', String(outputSession.isStaged(key))); row.setAttribute('aria-label', sourceRowAriaLabel(`${label} ${kind}`, item.title, duration, metadata));
     if (String(item.id) === outputSession.selected?.resultId) { row.classList.add('selected'); row.setAttribute('aria-current', 'true'); }
     const thumb = document.createElement('span'); thumb.className = 'youtube-thumb source-row-thumbnail result-card-thumbnail card-thumb'; thumb.dataset.field = 'thumbnail';
     appendResultThumbnail(thumb, item.thumbnailUrl, item.title);
@@ -1260,7 +1263,7 @@ function renderSearchResults(): void {
   for (const [index, item] of (searchPage?.results ?? []).entries()) {
     const metadata = formatMeta(item); const duration = item.duration === null ? 'Duration unavailable' : formatDuration(item.duration); const key = resultKeyFor('youtube', item.id);
     const selection: ResultSelection = { provider: 'youtube', resultId: item.id, source: item.url, title: item.title, channel: item.channel, thumbnailDataUrl: item.thumbnailUrl };
-    const row = document.createElement('div'); row.className = 'youtube-search-result source-row clipdock-result-card result-card'; row.dataset.resultId = item.id; row.dataset.resultKey = key; row.dataset.resultTitle = item.title; row.dataset.cardPhoto = 'false'; row.dataset.provider = 'youtube'; row.dataset.source = 'youtube'; row.setAttribute('aria-pressed', String(item.id === outputSession.selected?.resultId)); row.setAttribute('aria-selected', String(outputSession.staged.has(key))); row.setAttribute('aria-label', sourceRowAriaLabel('YouTube', item.title, duration, metadata));
+    const row = document.createElement('div'); row.className = 'youtube-search-result source-row clipdock-result-card result-card'; row.dataset.resultId = item.id; row.dataset.resultKey = key; row.dataset.resultTitle = item.title; row.dataset.cardPhoto = 'false'; row.dataset.provider = 'youtube'; row.dataset.source = 'youtube'; row.setAttribute('aria-pressed', String(item.id === outputSession.selected?.resultId)); row.setAttribute('aria-selected', String(outputSession.isStaged(key))); row.setAttribute('aria-label', sourceRowAriaLabel('YouTube', item.title, duration, metadata));
     if (item.id === outputSession.selected?.resultId) { row.classList.add('selected'); row.setAttribute('aria-current', 'true'); }
     const thumb = document.createElement('span'); thumb.className = 'youtube-thumb source-row-thumbnail result-card-thumbnail card-thumb'; thumb.dataset.field = 'thumbnail';
     appendResultThumbnail(thumb, item.thumbnailUrl, item.title);
@@ -1281,7 +1284,7 @@ function renderPinterestSearchResults(): void {
   for (const [index, item] of (pinterestSearch?.results ?? []).entries()) {
     const kindLabel = item.kind === 'carousel' ? 'Carousel' : item.kind === 'image' ? 'Image' : 'Video'; const key = resultKeyFor('pinterest', item.id);
     const selection: ResultSelection = { provider: 'pinterest', resultId: item.id, source: item.url, title: item.title, channel: item.creator, thumbnailDataUrl: item.thumbnailUrl };
-    const row = document.createElement('div'); row.className = 'youtube-search-result source-row clipdock-result-card result-card'; row.dataset.resultId = item.id; row.dataset.resultKey = key; row.dataset.resultTitle = item.title; row.dataset.cardPhoto = String(item.kind === 'image'); row.dataset.provider = 'pinterest'; row.dataset.source = 'pinterest'; row.setAttribute('aria-pressed', String(item.id === outputSession.selected?.resultId)); row.setAttribute('aria-selected', String(outputSession.staged.has(key))); row.setAttribute('aria-label', sourceRowAriaLabel('Pinterest', item.title, kindLabel, item.creator ? `Creator: ${item.creator}` : ''));
+    const row = document.createElement('div'); row.className = 'youtube-search-result source-row clipdock-result-card result-card'; row.dataset.resultId = item.id; row.dataset.resultKey = key; row.dataset.resultTitle = item.title; row.dataset.cardPhoto = String(item.kind === 'image'); row.dataset.provider = 'pinterest'; row.dataset.source = 'pinterest'; row.setAttribute('aria-pressed', String(item.id === outputSession.selected?.resultId)); row.setAttribute('aria-selected', String(outputSession.isStaged(key))); row.setAttribute('aria-label', sourceRowAriaLabel('Pinterest', item.title, kindLabel, item.creator ? `Creator: ${item.creator}` : ''));
     if (item.id === outputSession.selected?.resultId) { row.classList.add('selected'); row.setAttribute('aria-current', 'true'); }
     const thumb = document.createElement('span'); thumb.className = 'youtube-thumb source-row-thumbnail result-card-thumbnail card-thumb'; thumb.dataset.field = 'thumbnail';
     appendResultThumbnail(thumb, item.thumbnailUrl, item.title);
@@ -1705,7 +1708,7 @@ function chapterSelectionRange(chapters: YoutubeChapter[], selected: Iterable<nu
   const state = selectSourceSegments(sourceSelection, 'chapters', chapters, [...selected]);
   return selectionEnvelope(state.ranges, state.ranges.length === 1 ? state.ranges[0].label : `${state.ranges.length} chapters`);
 }
-function applyChapterSelection(): void { sourceSelection = selectSourceSegments(sourceSelection, 'chapters', youtube?.chapters ?? [], [...selectedChapters]); const range = chapterSelectionRange(youtube?.chapters ?? [], selectedChapters); writeRangeInput('range-in', range?.start); writeRangeInput('range-out', range?.end); selectedSubtitleCues.clear(); renderSubtitleCues(); renderRangeUi(); commitRangeEdit(); }
+function applyChapterSelection(): void { sourceSelection = selectSourceSegments(sourceSelection, 'chapters', youtube?.chapters ?? [], [...selectedChapters]); const range = chapterSelectionRange(youtube?.chapters ?? [], selectedChapters); writeRangeInput('range-in', range?.start); writeRangeInput('range-out', range?.end); selectedSubtitleCues.clear(); commitRangeEdit(); }
 function renderSelection(): void {
   const chapters = document.getElementById('chapter-list'); if (!chapters) return; chapters.replaceChildren();
   for (const [index, chapter] of (youtube?.chapters ?? []).entries()) {
@@ -1732,7 +1735,7 @@ function resetSourceSelection(source = '', clearCues = true): void {
 }
 function selectManualRange(event?: Event): void {
   sourceSelection = transitionSourceSelection(sourceSelection, { type: 'manual', start: readRangeInput('range-in'), end: readRangeInput('range-out') });
-  selectedChapters.clear(); selectedSubtitleCues.clear(); renderSelection(); renderSubtitleCues(); renderRangeUi(); commitRangeEdit(event?.type === 'input');
+  selectedChapters.clear(); selectedSubtitleCues.clear(); commitRangeEdit(event?.type === 'input');
 }
 function filterSubtitleCues(cues: SubtitleCue[], query: string): Array<{ index: number; cue: SubtitleCue }> { const needle = query.trim().toLocaleLowerCase(); return cues.flatMap((cue, index) => !needle || cue.text.toLocaleLowerCase().includes(needle) ? [{ index, cue }] : []); }
 function subtitleSelectionRange(cues: SubtitleCue[], selected: Iterable<number>): YoutubeSelection {
@@ -1743,7 +1746,7 @@ function applySubtitleSelection(): void {
   sourceSelection = selectSourceSegments(sourceSelection, 'cues', subtitleCues, [...selectedSubtitleCues]);
   const range = subtitleSelectionRange(subtitleCues, selectedSubtitleCues);
   writeRangeInput('range-in', range?.start); writeRangeInput('range-out', range?.end);
-  selectedChapters.clear(); renderSelection(); renderRangeUi(); commitRangeEdit();
+  selectedChapters.clear(); commitRangeEdit();
 }
 function renderSubtitleCues(): void {
   const list = document.getElementById('subtitle-results'); if (!list) return; const query = (document.getElementById('subtitle-search-query') as HTMLInputElement | null)?.value ?? ''; const matches = filterSubtitleCues(subtitleCues, query); list.replaceChildren();
@@ -2125,7 +2128,7 @@ async function enqueueResultCard(key: string, selection: ResultSelection, mode: 
   }
 }
 async function enqueueSelected(): Promise<void> {
-  if (selectedQueueLoadBusy || !outputSession.staged.size) return;
+  if (selectedQueueLoadBusy || !outputSession.stagedCount) return;
   const snapshot = [...outputSession.staged.values()].map((stage) => ({ ...stage, snapshot: cloneOutputDefaults(stage.snapshot), overrides: cloneOutputOverrides(stage.overrides) }));
   selectedQueueLoadBusy = true; renderSelectionToolbar(); renderSearchResults(); setOptionalText('selection-status', `Loading metadata for ${snapshot.length} selected item${snapshot.length === 1 ? '' : 's'}…`);
   let added = 0; const failures: string[] = [];
@@ -2602,7 +2605,7 @@ window.addEventListener('DOMContentLoaded', () => {
   clickButtonOnPlainEnter('pixabay-api-key', 'pixabay-connect-btn');
   document.getElementById('search-subtitles-btn')?.addEventListener('click', () => { void searchSubtitles(); });
   document.getElementById('subtitle-search-query')?.addEventListener('input', renderSubtitleCues);
-  document.getElementById('range-full-btn')?.addEventListener('click', () => { resetSourceSelection(youtube?.id ?? '', false); renderSelection(); renderSubtitleCues(); renderRangeUi(); commitRangeEdit(); });
+  document.getElementById('range-full-btn')?.addEventListener('click', () => { resetSourceSelection(youtube?.id ?? '', false); commitRangeEdit(); });
   wireRangeRuler(); wireIntentMenu(); wireBinChoice();
   document.getElementById('search-retry-btn')?.addEventListener('click', () => { (document.getElementById('youtube-search-form') as HTMLFormElement | null)?.requestSubmit(); });
   document.getElementById('audio-only-toggle')?.addEventListener('change', () => {

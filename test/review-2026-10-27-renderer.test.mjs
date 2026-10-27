@@ -90,3 +90,32 @@ test('Cmd+Enter downloads only while the clip detail with its download control i
   h.keydown({ key: 'Enter', metaKey: true }); await h.flush();
   assert.deepEqual(h.downloads.map((entry) => entry.url), ['https://www.youtube.com/watch?v=aaaaaaaaaaa']);
 });
+
+test('marking a result updates its frame in place instead of rebuilding the sheet', async () => {
+  const h = await boot();
+  await search(h);
+  const row = rows(h)[1];
+  const mark = find(row, (e) => e.dataset?.field === 'selection');
+  mark.checked = true; fire(mark, 'change'); await h.flush();
+  assert.equal(rows(h)[1], row, 'the marked frame is the same element');
+  assert.equal(row.getAttribute('aria-selected'), 'true');
+  assert.equal(mark.getAttribute('aria-label'), 'Remove B from the staged selection');
+  assert.equal(h.elements.get('selection-count').textContent, '1 selected');
+  mark.checked = false; fire(mark, 'change'); await h.flush();
+  assert.equal(row.getAttribute('aria-selected'), 'false');
+  assert.equal(h.elements.get('selection-count').textContent, '0 selected');
+});
+
+test('a run of completed downloads scans the workspace once, when the queue goes idle', async () => {
+  let scans = 0;
+  const h = await boot({ workspaceStatus: async () => { scans += 1; return { fileCount: scans, totalBytes: 0, cleanupFileCount: 0, cleanupBytes: 0 }; } });
+  await search(h);
+  await open(h, 0); fire(h.elements.get('download-youtube-btn'), 'click'); await h.flush();
+  await open(h, 1); fire(h.elements.get('download-youtube-btn'), 'click'); await h.flush();
+  const before = scans;
+  h.downloads[0].resolve({ cardId: 'card-1', fileName: 'A.mp4' }); await h.flush();
+  assert.equal(scans, before, 'a queued download is still pending');
+  h.downloads[1].resolve({ cardId: 'card-2', fileName: 'B.mp4' }); await h.flush();
+  assert.equal(scans, before + 1);
+  assert.equal(h.elements.get('workspace-status').textContent, `${before + 1} stored files · 0 B`);
+});

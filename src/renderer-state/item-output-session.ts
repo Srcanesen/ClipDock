@@ -60,6 +60,9 @@ export class ItemOutputSession {
   get defaults(): OutputDefaults { return cloneOutputDefaults(this.common); }
   get selected(): SelectedResult | null { return this.identity ? { ...this.identity } : null; }
   get staged(): ReadonlyMap<string, StagedSelection> { return new Map([...this.stages].map(([key, stage]) => [key, copyStage(stage)])); }
+  // Copy-free reads for per-row rendering; `staged` copies every stage.
+  get stagedCount(): number { return this.stages.size; }
+  isStaged(key: string): boolean { return this.stages.has(key); }
 
   select(next: Selection): OutputDefaults {
     if (next && 'source' in next) {
