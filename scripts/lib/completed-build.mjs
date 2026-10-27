@@ -68,3 +68,10 @@ export function validateCompletedBuild(root, dist, withNative = false) {
   if (record.version !== 1 || record.source !== sourceIdentity(root)) throw new Error('Stale or incomplete build; run npm run build');
   if (JSON.stringify(record.files) !== JSON.stringify(artifactIdentity(dist, withNative))) throw new Error('Artifact differs from completed build; run npm run build');
 }
+
+/** Gate for scripts that load dist/ code: refuse anything but a completed build of the current sources. */
+export function requireCompletedBuild(root) {
+  try { validateCompletedBuild(root, path.join(root, 'dist')); } catch (error) {
+    throw new Error(`Refusing stale or incomplete dist/: ${error.message}. Run npm run build first.`);
+  }
+}

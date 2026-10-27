@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import {PexelsClient, parsePexelsPage} from '../dist/pexels.js';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {requireCompletedBuild} from './lib/completed-build.mjs';
+
+requireCompletedBuild(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+const {PexelsClient, parsePexelsPage} = await import('../dist/pexels.js');
 
 const raw = {
   photos: [

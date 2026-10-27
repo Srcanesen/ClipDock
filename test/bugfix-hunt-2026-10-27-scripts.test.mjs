@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { loadClipDock } from '../scripts/resolve-smoke/e2e.mjs';
 
 const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const installer = path.join(repo, 'scripts', 'install-plugin.mjs');
@@ -63,4 +64,26 @@ test('installer accepts an existing empty com.clipdock.app folder', (t) => {
   assert.equal(result.status, 0, output(result));
   assert.equal(readFileSync(path.join(destination, 'WorkflowIntegration.node'), 'utf8'), 'HOST NATIVE');
   assert.match(readFileSync(path.join(destination, 'manifest.xml'), 'utf8'), /<Id>com\.clipdock\.app<\/Id>/);
+});
+
+function staleCheckout(t) {
+  const root = mkdtempSync(path.join(tmpdir(), 'clipdock-stale-dist-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const entry of ['scripts', 'src', 'static', 'dist', 'tsconfig.json', 'package.json', 'package-lock.json']) cpSync(path.join(repo, entry), path.join(root, entry), { recursive: true });
+  appendFileSync(path.join(root, 'src', 'transfer.ts'), '\n// edited after the last build\n');
+  return root;
+}
+
+test('e2e runner refuses a dist built from older sources', (t) => {
+  const root = staleCheckout(t);
+  assert.throws(() => loadClipDock(root), /Refusing stale or incomplete dist\/: Stale or incomplete build.*Run npm run build first/);
+});
+
+test('live provider checks refuse a dist built from older sources before loading it', (t) => {
+  const root = staleCheckout(t);
+  for (const script of ['verify-pexels.mjs', 'verify-pixabay-live.mjs']) {
+    const result = spawnSync(process.execPath, [path.join(root, 'scripts', script)], { cwd: root, encoding: 'utf8' });
+    assert.equal(result.status, 1, `${script}: ${output(result)}`);
+    assert.match(result.stderr, /Refusing stale or incomplete dist\/: Stale or incomplete build.*Run npm run build first/, script);
+  }
 });

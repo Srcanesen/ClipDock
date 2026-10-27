@@ -6,7 +6,11 @@ import {execFileSync} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {PixabayClient} from '../dist/pixabay.js';
+import {fileURLToPath} from 'node:url';
+import {requireCompletedBuild} from './lib/completed-build.mjs';
+
+requireCompletedBuild(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+const {PixabayClient} = await import('../dist/pixabay.js');
 
 const keyFile = process.argv[2];
 if (!keyFile) throw new Error('Pass the path of a file containing a Pixabay API key.');

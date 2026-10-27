@@ -149,8 +149,9 @@ and odd video dimensions), then reads back project status, duplicate-safe Media
 Pool imports, the ClipDock bin, timeline appends, chapter markers, playhead
 insertion, and a fast-profile preparation/import. Default runs need no network;
 `--download-url` adds the real ClipDock yt-dlp worker and an import read-back.
-ffmpeg and ffprobe must be discoverable by ClipDock. Build first; the runner
-refuses a missing `dist/transfer.js`. Each JSON check includes expected/actual
+ffmpeg and ffprobe must be discoverable by ClipDock. Run `npm run build` first;
+the runner refuses a `dist/` that is missing, incomplete or built from older
+sources, before it starts Resolve. Each JSON check includes expected/actual
 values and `pass`, `fail`, or `unavailable` (absent AddMarker or unsupported
 playhead insertion). Exit codes: 0 passed/unavailable, 2 usage, 3 setup failure,
 4 Resolve already running, 5 failed check, 6 cleanup failure.

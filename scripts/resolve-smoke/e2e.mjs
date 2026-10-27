@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -11,6 +11,7 @@ import { BoundedBuffer, activeProcessMessage, assertNoResolveRunning, collectPro
 import { checkPython, runProbe } from './lib/probe.mjs';
 import { EXIT, renderReport, sanitizeError, sanitizeMessage } from './lib/report.mjs';
 import { createPythonBridge } from './lib/bridge.mjs';
+import { requireCompletedBuild } from '../lib/completed-build.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(DIR, '../..');
@@ -56,9 +57,9 @@ export function parseE2eArgs(argv) {
   return { ...parseArgs(smokeArgs), downloadUrl };
 }
 
-export function loadClipDock() {
-  if (!existsSync(path.join(ROOT, 'dist/transfer.js'))) throw new Error('dist/transfer.js is missing; run npm run build first');
-  return Object.assign({}, ...['transfer', 'status-provider', 'media-prep', 'path-boundary', 'ytdlp', 'ytdlp-url'].map(name => require(path.join(ROOT, `dist/${name}.js`))));
+export function loadClipDock(root = ROOT) {
+  requireCompletedBuild(root);
+  return Object.assign({}, ...['transfer', 'status-provider', 'media-prep', 'path-boundary', 'ytdlp', 'ytdlp-url'].map(name => require(path.join(root, `dist/${name}.js`))));
 }
 
 export function generateFixtures(root, ffmpeg) {

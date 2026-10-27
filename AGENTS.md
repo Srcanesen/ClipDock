@@ -11,7 +11,7 @@ The agent proves every change itself before reporting it; the user verifies only
 1. `npm test` and `npm run check`: logic, file safety, engines, tooling.
 2. Preview (`npm run preview`, open `/?preview=ready`; the bare `/` has no host API by design): drive the panel in the browser for every renderer change, exercising the flow the fix touched.
 3. `npm run test:resolve:headless`: the Resolve scripting API surface.
-4. `npm run test:resolve:e2e`: ClipDock's real transfer, status and media-prep code against Resolve `-nogui` in a throwaway `ClipDock-E2E-` project, read back from Resolve. Default gate for anything on the download → prepare → import → timeline chain.
+4. `npm run build`, then `npm run test:resolve:e2e`: ClipDock's real transfer, status and media-prep code against Resolve `-nogui` in a throwaway `ClipDock-E2E-` project, read back from Resolve. The runner refuses a `dist/` that is not a completed build of the current sources. Default gate for anything on the download → prepare → import → timeline chain.
 
 Rungs 3 and 4 start a real Resolve Studio; run them only while Resolve and `fuscript` are closed, and keep their active-process refusal, project-name and ownership checks intact. When the user's Resolve is open, ask them to close it rather than skipping the rung.
 
