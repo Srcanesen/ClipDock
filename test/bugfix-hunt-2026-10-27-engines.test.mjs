@@ -124,6 +124,43 @@ test('a silent ffmpeg conversion is stopped after its stall window and keeps the
   assert.equal(readFileSync(input, 'utf8'), 'source');
 });
 
+// ffmpeg 9.0.1 measured: the +faststart rewrite runs silently after the last progress
+// block and before progress=end, which arrives together with the exit.
+async function finishingPhase(t, totalSize) {
+  t.mock.timers.enable({apis: ['setTimeout']});
+  const dir = root(t, 'clipdock-faststart-prep-');
+  const {prep, ffmpeg, input} = mediaPrep(t, dir);
+  let settled = false;
+  const pending = prep.prepare({jobId: 'faststart', inputPath: input, allowedRoot: dir, profile: 'fast', emit: () => {}});
+  void pending.catch(() => {}).finally(() => { settled = true; });
+  await until(() => ffmpeg.length > 0);
+  ffmpeg[0].child.stdout.emit('data', Buffer.from(`total_size=${totalSize}\nout_time_us=10000000\nprogress=continue\n`));
+  return {pending, ffmpeg, input, settled: () => settled};
+}
+
+test('a large output survives a silent +faststart rewrite longer than the stall floor', async t => {
+  // 25 GB (a 10-minute 4K ProRes clip) on a slow disk: an hour of silence before progress=end.
+  const {pending, ffmpeg, settled} = await finishingPhase(t, 25e9);
+  t.mock.timers.tick(60 * MINUTE); await turn();
+  assert.equal(settled(), false);
+  writeFileSync(ffmpeg[0].output, 'prepared');
+  ffmpeg[0].child.stdout.emit('data', Buffer.from('progress=end\n'));
+  ffmpeg[0].child.emit('close', 0);
+  const result = await pending;
+  assert.equal(readFileSync(result.filePath, 'utf8'), 'prepared');
+  assert.deepEqual(ffmpeg[0].child.signals, []);
+});
+
+test('a small output that goes silent is still stopped by the stall floor', async t => {
+  const {pending, ffmpeg, input, settled} = await finishingPhase(t, 1_000_000);
+  t.mock.timers.tick(4 * MINUTE); await turn();
+  assert.equal(settled(), false);
+  t.mock.timers.tick(2 * MINUTE); await until(settled);
+  await assert.rejects(pending, {message: 'Media preparation failed: Media tool timed out.'});
+  assert.deepEqual(ffmpeg[0].child.signals, ['SIGTERM']);
+  assert.equal(readFileSync(input, 'utf8'), 'source');
+});
+
 const socialInfo = {id: 'ABC123', title: 'Reel', webpage_url: reel, formats: [{height: 720, vcodec: 'h264'}]};
 test('social download reuses the extracted info instead of extracting the post again', async t => {
   let extractions = 0;

@@ -263,8 +263,9 @@ export type SpawnBoundedOptions = {
   onLine?: (line: string) => void;
   onStderrLine?: (line: string) => void;
   timeoutMs?: number;
-  /** Stall window: stop when neither stream has produced output for this long. */
-  idleTimeoutMs?: number;
+  /** Stall window: stop when neither stream has produced output for this long.
+   * A function is re-evaluated after each output, so the window can follow it. */
+  idleTimeoutMs?: number | (() => number);
   killGraceMs?: number;
   platform?: NodeJS.Platform;
   processSpawn?: Spawn;
@@ -323,9 +324,10 @@ export function spawnBounded(
     signalTree('SIGTERM');
   }
   function armIdle(): void {
-    if (!opts.idleTimeoutMs || opts.idleTimeoutMs <= 0 || stopping) return;
+    const idleMs = typeof opts.idleTimeoutMs === 'function' ? opts.idleTimeoutMs() : opts.idleTimeoutMs;
+    if (!idleMs || idleMs <= 0 || stopping) return;
     if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => { timedOut = true; stop(); }, opts.idleTimeoutMs);
+    idleTimer = setTimeout(() => { timedOut = true; stop(); }, idleMs);
   }
   function deliver(text: string): void {
     stdout += text;
@@ -363,11 +365,11 @@ export function spawnBounded(
     };
     child.stdout?.on('data', (chunk: Buffer | string) => {
       if (settled || overflow) return;
-      armIdle();
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const remaining = Math.max(0, maxStdout - stdoutBytes);
       stdoutBytes += bytes.length;
       deliver(outDecoder.write(bytes.subarray(0, remaining)));
+      armIdle();
       if (stdoutBytes > maxStdout) { overflow = true; pending = ''; stop(); }
     });
     child.stderr?.on('data', (chunk: Buffer | string) => {

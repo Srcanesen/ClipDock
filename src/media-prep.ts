@@ -138,7 +138,7 @@ export function createMediaPrep(options: Options = {}) {
   const killGraceMs = options.killGraceMs ?? 3_000;
   const jobs = new ProviderJobRunner({cancelledMessage: 'Media preparation cancelled.', busyMessage: 'Another media preparation job is already active.', disposedMessage: 'Media preparation is shut down.'});
 
-  async function run(context: ProviderJobContext, binary: string, args: string[], progress?: (chunk: string) => void, stallMs?: number): Promise<{ stdout: string; stderr: string; overflow: boolean }> {
+  async function run(context: ProviderJobContext, binary: string, args: string[], progress?: (chunk: string) => void, stallMs?: () => number): Promise<{ stdout: string; stderr: string; overflow: boolean }> {
     context.check();
     const bounded = spawnBounded(binary, args, spawn, {
       maxStdout: progress ? 16 * 1024 * 1024 : MAX_PROBE, maxStderr: MAX_STDERR,
@@ -175,17 +175,19 @@ export function createMediaPrep(options: Options = {}) {
       try {
         const convert = async (attempt: MediaPrepResult['action']): Promise<OwnedFile | null> => {
           const temporary = privateDir.child(`${attempt}${request.profile === 'fast' ? '.mp4' : '.mov'}`);
-          let pending = '';
+          let pending = '', written = 0;
           const progressLine = (line: string) => {
             const [key, value] = line.split('=', 2);
-            if (key === 'progress' && value === 'end') request.emit({ jobId: request.jobId, state: 'processing', percent: 100, message: preparing });
+            if (key === 'total_size' && Number.isFinite(Number(value))) written = Number(value);
+            else if (key === 'progress' && value === 'end') request.emit({ jobId: request.jobId, state: 'processing', percent: 100, message: preparing });
             else if ((key === 'out_time_ms' || key === 'out_time_us') && source.duration && Number.isFinite(Number(value))) request.emit({ jobId: request.jobId, state: 'processing', percent: Math.max(0, Math.min(99.9, Number(value) / 1_000_000 / source.duration * 100)), message: preparing });
         };
         const progress = (chunk: string) => { pending += chunk; const lines = pending.split(/[\r\n]+/); pending = lines.pop() ?? ''; lines.forEach(progressLine); };
         verifySource(ownedSource); privateDir.verify();
-        // -progress reports twice a second; the silent +faststart rewrite scales with the
-        // output, so the window grows with duration (unknown: budgeted as one hour).
-        const stallMs = Math.max(5 * 60 * 1000, (source.duration ?? 3600) * 500);
+        // -progress reports twice a second, then the +faststart rewrite runs silently
+        // before progress=end (ffmpeg 9.0.1, measured). That rewrite reads and writes the
+        // whole output, so the window covers the bytes written so far at 4 MiB/s.
+        const stallMs = () => Math.max(5 * 60 * 1000, written / (4 * 1024 * 1024) * 1000);
         await run(context, ffmpeg!, ffmpegArgs(attempt, request.profile, input, temporary, source.video), progress, stallMs);
         if (pending) progressLine(pending);
         const prepared = captureFile(privateDir, temporary);
