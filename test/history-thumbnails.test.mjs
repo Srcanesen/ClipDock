@@ -33,6 +33,51 @@ function dimensions(file) {
   return JSON.parse(execFileSync(ffprobePath, ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'json', file], { encoding: 'utf8' })).streams.map(({ width, height }) => [width, height]);
 }
 
+function frameTools(bytes) {
+  return { tools: async () => ({ ffmpegPath: '/fixture/ffmpeg', ffprobePath: '/fixture/ffprobe' }), spawn: (_binary, args) => {
+    const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    child.kill = () => { child.emit('close', null); return true; };
+    queueMicrotask(() => {
+      child.stdout.emit('data', args.includes('-show_entries') ? '{"format":{"duration":"10"}}' : bytes);
+      child.emit('close', 0);
+    });
+    return child;
+  } };
+}
+
+for (const [label, bytes] of [
+  ['empty', Buffer.alloc(0)],
+  ['non-JPEG', Buffer.from('not a JPEG')],
+  ['missing SOI', Buffer.from([0, 0, 1, 2, 0xff, 0xd9])],
+  ['missing EOI', Buffer.from([0xff, 0xd8, 1, 2, 0, 0])],
+]) {
+  test(`successful ffmpeg with ${label} output publishes no History thumbnail`, async t => {
+    const f = fixture(t, frameTools(bytes));
+    const file = path.join(f.root, 'clip.mp4'); fs.writeFileSync(file, 'media');
+    const record = f.history.add(historyInput(file));
+    assert.equal(await f.history.thumbnail(record.id), null);
+    assert.deepEqual(fs.existsSync(f.thumbnails) ? fs.readdirSync(f.thumbnails) : [], [], 'no invalid cache or temp file is published');
+  });
+}
+
+test('a rejected History cache file is replaced by a valid generated JPEG', async t => {
+  const bytes = Buffer.from([0xff, 0xd8, 1, 2, 0xff, 0xd9]);
+  for (const invalid of [Buffer.alloc(0), Buffer.from('corrupt'), Buffer.alloc(32 * 1024 + 1)]) {
+    const f = fixture(t, frameTools(bytes));
+    const file = path.join(f.root, 'clip.mp4'); fs.writeFileSync(file, 'media');
+    const record = f.history.add(historyInput(file));
+    fs.mkdirSync(f.thumbnails);
+    const cached = path.join(f.thumbnails, nameFor(record.id)); fs.writeFileSync(cached, invalid);
+    const foreign = path.join(f.thumbnails, 'keep.jpg'); fs.writeFileSync(foreign, 'foreign');
+    const expected = `data:image/jpeg;base64,${bytes.toString('base64')}`;
+    assert.equal(await f.history.thumbnail(record.id), expected);
+    assert.deepEqual(fs.readFileSync(cached), bytes);
+    assert.equal(await f.history.thumbnail(record.id), expected, 'the repaired frame is reusable');
+    assert.equal(fs.readFileSync(foreign, 'utf8'), 'foreign');
+    assert.deepEqual(fs.readdirSync(f.thumbnails).sort(), [nameFor(record.id), 'keep.jpg'].sort());
+  }
+});
+
 test('failed decoding and oversized frames do not respawn on a second History rebuild, but changed and relinked files retry', async t => {
   for (const oversized of [false, true]) {
     let starts = 0;

@@ -15,6 +15,7 @@ const MAX_BYTES = 32 * 1024;
 const PREFIX = 'clipdock-history-';
 const OWN_NAME = /^clipdock-history-[a-f0-9]{64}(?:\.jpg|\.[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.tmp)$/;
 const nameFor = (id: string) => `${PREFIX}${createHash('sha256').update(id).digest('hex')}.jpg`;
+const isJpeg = (bytes: Buffer) => bytes.length > 4 && bytes.length <= MAX_BYTES && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9;
 
 export class HistoryThumbnails {
   private directory: AnchoredDir | null = null;
@@ -56,10 +57,12 @@ export class HistoryThumbnails {
       const fd = openSync(verifyFile(file), constants.O_RDONLY | constants.O_NOFOLLOW);
       try {
         const stat = fstatSync(fd, { bigint: true });
-        if (stat.dev !== file.identity.dev || stat.ino !== file.identity.ino || stat.size > BigInt(MAX_BYTES)) return null;
+        if (stat.dev !== file.identity.dev || stat.ino !== file.identity.ino) return null;
+        if (stat.size > BigInt(MAX_BYTES)) { removeOwned(file); return null; }
         const bytes = readFileSync(fd);
         verifyFile(file);
-        return bytes.length > 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9 ? `data:image/jpeg;base64,${bytes.toString('base64')}` : null;
+        if (!isJpeg(bytes)) { removeOwned(file); return null; }
+        return `data:image/jpeg;base64,${bytes.toString('base64')}`;
       } finally { closeSync(fd); }
     } catch { return null; }
   }
@@ -86,6 +89,7 @@ export class HistoryThumbnails {
       const seek = !image && Number.isFinite(duration) && duration > 0 ? ['-ss', String(Math.min(30, duration * 0.1))] : [];
       // Decode one frame only, with input seeking for videos; output and stderr are bounded.
       const bytes = await this.run(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '1', '-protocol_whitelist', 'file,pipe', ...seek, '-i', verifyFile(input), '-map', '0:v:0', '-frames:v', '1', '-vf', 'scale=224:126:force_original_aspect_ratio=increase,crop=224:126,setsar=1', '-threads', '1', '-c:v', 'mjpeg', '-q:v', '4', '-f', 'image2pipe', 'pipe:1'], MAX_BYTES);
+      if (!isJpeg(bytes)) throw new Error('History thumbnail generation failed.');
       if (this.disposed || !retained() || source()?.path !== input.path) return null;
       verifyFile(input);
       const directory = this.directory ??= ensureDirectory(this.store, 'history-thumbnails');

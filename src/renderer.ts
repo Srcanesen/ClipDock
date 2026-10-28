@@ -1420,12 +1420,14 @@ function setOrientation(value: Orientation): void {
   if (next === orientation) return;
   orientation = next;
   renderOrientation();
+  const input = ($('youtube-search-input') as HTMLInputElement).value;
+  if ((provider === 'youtube' && youtubeUrlFromSearch(input)) || (provider === 'pinterest' && pinterestUrlFromSearch(input))) return;
   beginSearchTransition();
   searchGuard.invalidate();
   searchBusy = false; searchPage = null; pinterestSearch = null; pexelsSearch = null;
   searchError = null; youtubeSearchFailure = null;
   renderSearchResults();
-  const query = ($('youtube-search-input') as HTMLInputElement).value.trim();
+  const query = input.trim();
   if (query.length >= 2) submitSourceSearch();
 }
 

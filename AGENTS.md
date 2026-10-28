@@ -22,7 +22,7 @@ The residue is `WorkflowIntegration.node`, panel loading in the Resolve GUI, nat
 For changes that reach the residue:
 
 1. Run the relevant check, then install with `npm run install:plugin`. This command builds before copying.
-2. If macOS requires elevation, run `npm run build` before the administrator install. Never install an unverified existing `dist/`.
+2. If macOS requires elevation, run `npm run build`, then `sudo node scripts/install-plugin.mjs`. Never run `sudo npm run install:plugin`: it rebuilds `dist/` as root and later builds fail with EACCES. Never install an unverified existing `dist/`.
 3. Run `npm run verify:installed`. It verifies the completed build identity, every shipped file, and the Resolve-native module.
 4. Restart Resolve completely; Workflow Integration files may remain loaded until restart.
 5. Claim that Resolve shows the current UI only after the installed artifact matches and the restarted panel is read back. A repository build or preview alone is not live Resolve evidence.
