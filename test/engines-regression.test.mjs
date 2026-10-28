@@ -198,7 +198,7 @@ test('ENG-11: cached listing retains worker cancellation ownership without image
       init.signal.addEventListener('abort', () => {clearTimeout(timer); reject(new Error('aborted'));}, {once: true});
     });
   }});
-  worker.searchCache.set('ocean', {query: 'ocean', createdAt: Date.now(), results: [{id: '123', title: 'Ocean', kind: 'image', url: 'https://www.pinterest.com/pin/123/'}], thumbnailUrls: new Map([['123', 'https://i.pinimg.com/236x/ocean.jpg']])});
+  worker.searchCache.set('ocean', {query: 'ocean', createdAt: Date.now(), results: [{id: '123', title: 'Ocean', kind: 'image', url: 'https://www.pinterest.com/pin/123/'}], thumbnailUrls: new Map([['123', 'https://i.pinimg.com/236x/ocean.jpg']]), snapshots: []});
   try {
     pending = worker.search('ocean', 1);
     const rejection = assert.rejects(pending, /cancelled/i); void rejection.catch(() => {});

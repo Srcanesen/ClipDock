@@ -5,6 +5,8 @@ import path from 'node:path';
 import {test} from 'node:test';
 import {createEngineHost} from '../dist/engine-host.js';
 import {ManagedRoot} from '../dist/managed-root.js';
+import {EventEmitter} from 'node:events';
+import {GalleryDlWorker} from '../dist/gallerydl.js';
 
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return {promise, resolve, reject}; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -13,7 +15,7 @@ const metadata = {id: 'dQw4w9WgXcQ', title: 'Clip', channel: 'Creator', duration
 const pin = {pinId: '123', url: 'https://www.pinterest.com/pin/123/', creator: 'Creator', items: [{index: 1, kind: 'image', title: 'Pin'}]};
 const asset = {kind: 'video', id: 7, sourceUrl: 'https://www.pexels.com/video/7/', title: 'Clip', files: [{id: '70', label: 'HD'}]};
 
-function fixture(t, {invalidFolder = false, failRole, restoreCredential = async () => {}} = {}) {
+function fixture(t, {invalidFolder = false, failRole, restoreCredential = async () => {}, pinterestFactory} = {}) {
   const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clipdock-engine-host-')));
   t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
   const folder = path.join(directory, 'managed'), runtimeRoot = path.join(directory, 'runtime');
@@ -47,7 +49,7 @@ function fixture(t, {invalidFolder = false, failRole, restoreCredential = async 
     folder, runtimeRoot,
     workers: {
       youtube: (discovered, root) => worker(path.basename(root), root, discovered),
-      pinterest: (discovered, root) => worker(path.basename(root), root, discovered),
+      pinterest: (discovered, root, searchSnapshots) => pinterestFactory ? pinterestFactory(discovered, root, searchSnapshots) : worker(path.basename(root), root, discovered),
       pexels: root => worker('pexels', root),
       pixabay: root => worker('pixabay', root),
       mediaPrep: discovered => worker('media-prep', null, discovered),
@@ -63,6 +65,37 @@ function fixture(t, {invalidFolder = false, failRole, restoreCredential = async 
   return {host, workers, order, events, published, folder, directory, start: () => host.start(Promise.resolve(engines))};
 }
 const event = {sender: {}};
+
+test('Pinterest engine host shares search snapshots through selection, download and artifact completion', async t => {
+  const output = fs.readFileSync(new URL('./fixtures/pinterest-opaque-search.jsonl', import.meta.url), 'utf8');
+  const calls = [];
+  const f = fixture(t, {pinterestFactory: (engines, sessionDir, searchSnapshots) => new GalleryDlWorker(engines.galleryDlPath, (_binary, args) => {
+    calls.push(args);
+    const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    queueMicrotask(() => {
+      if (args.includes('--dump-json')) child.stdout.emit('data', output);
+      else fs.writeFileSync(path.join(args[args.indexOf('-D') + 1], 'pinterest.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+      child.emit('close', 0);
+    });
+    return child;
+  }, {sessionDir, searchSnapshots})});
+  t.after(() => f.host.dispose());
+  await f.start();
+  const provider = f.host.provider('pinterest');
+  const page = await provider.search('ocean', 1);
+  const source = 'https://www.pinterest.com/pin/e1_AfqPShwWJ_9nNp98oMy8EENZLzrcH3zYISwyG7ODp0u4p3s_onow/';
+  assert.equal(page.results[0].url, source);
+  assert.equal((await provider.load(source)).title, 'Sanitized image Pin');
+  const result = await provider.download(event, source, 1, 'original', 'opaque-host');
+  assert.equal(result.cardId, 'card');
+  assert.equal(f.published[0].source, source);
+  assert.equal(f.published[0].mediaMode, 'image');
+  assert.equal(f.events.at(-1).state, 'completed');
+  assert.equal(calls.length, 2, 'only search and the exact image download spawn');
+  assert.equal(calls[1].at(-1), 'https://i.pinimg.com/originals/2b/02/4d/2b024d05a26db6772778b5a9e68f2198.jpg');
+  await assert.rejects(provider.download(event, 'https://evil.test/image.jpg', 1, 'original', 'injected-host'), /Invalid Pinterest download request/);
+  assert.equal(calls.length, 2);
+});
 const startDownload = (host, provider, id = 'job') => {
   const handler = host.provider(provider).download;
   if (provider === 'youtube') return handler(event, 'https://youtu.be/dQw4w9WgXcQ', 'best', 'original', id, {mediaMode: 'video', audioFormat: 'wav', subtitles: false, subtitleLanguage: 'en'});

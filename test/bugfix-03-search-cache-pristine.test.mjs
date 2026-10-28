@@ -78,7 +78,7 @@ test('gallery-dl search cache stores pristine; thumbnail injection mutates copy'
     }));
     const thumbnailUrls = new Map(results.map(r => [r.id, `https://i.pinimg.com/${r.id}.jpg`]));
     const key = 'ocean';
-    worker.searchCache.set(key, { query: key, createdAt: Date.now(), results, thumbnailUrls });
+    worker.searchCache.set(key, { query: key, createdAt: Date.now(), results, thumbnailUrls, snapshots: [] });
     assert.equal(worker.searchCache.get(key).results[0].thumbnailUrl, null);
     const page1 = await worker.search(key, 1);
     assert.equal(worker.searchCache.get(key).results[0].thumbnailUrl, null, 'gallery cache must stay pristine');

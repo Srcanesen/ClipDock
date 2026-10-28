@@ -1364,7 +1364,7 @@ function pinterestUrlFromSearch(input: string): string | null {
     return short ? `https://pin.it/${short[1]}` : null;
   }
   if (host !== 'pinterest.com' && host !== 'www.pinterest.com') return null;
-  const match = parsed['pathname'].match(/^\/pin\/(\d{1,40})\/?$/);  // bracket access keeps file-location wording out of the renderer
+  const match = parsed['pathname'].match(/^\/pin\/(\d{1,40}|e1_[A-Za-z0-9_-]{40,100})\/?$/);  // bracket access keeps file-location wording out of the renderer
   return match ? `https://www.pinterest.com/pin/${match[1]}/` : null;
 }
 function clearResultSelection(): void {

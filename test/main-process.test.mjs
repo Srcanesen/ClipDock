@@ -122,13 +122,17 @@ test('Pinterest metadata snapshots hit, miss, and evict within the bounded sessi
   assert.equal(store.get('1'), null);
   store.remember(metadata('1'));
   assert.equal(store.get('1').pinId, '1');
-  store.remember(metadata('2')); store.remember(metadata('3')); store.remember(metadata('4'));
-  assert.equal(store.size(), 3);
+  for (let id = 2; id <= 301; id++) store.remember(metadata(String(id)));
+  assert.equal(store.size(), 300);
   assert.equal(store.get('1'), null, 'oldest snapshot is evicted');
   assert.equal(store.get('2').pinId, '2');
   assert.equal(store.get('4').pinId, '4');
   store.remember(metadata('not-a-pin'));
-  assert.equal(store.size(), 3, 'non-canonical keys never enter the store');
+  assert.equal(store.size(), 300, 'non-canonical keys never enter the store');
+  const opaqueId = 'e1_AfqPShwWJ_9nNp98oMy8EENZLzrcH3zYISwyG7ODp0u4p3s_onow';
+  store.remember(metadata(opaqueId));
+  assert.equal(store.get(opaqueId).source, `https://www.pinterest.com/pin/${opaqueId}/`);
+  assert.equal(store.size(), 300);
 
   const carousel = createPinterestMetadataSnapshotStore();
   let extractions = 0;
@@ -276,6 +280,36 @@ test('Pinterest orchestration uses the session carousel, rejects non-original im
   assert.equal(fixture.calls.history.at(-1).quality, 'original');
   assert.equal(fixture.calls.history.at(-1).mediaMode, 'video');
   assert.equal(fixture.calls.metadata.filter(([provider]) => provider === 'pinterest').length, 0, 'snapshot avoids a second metadata extraction');
+});
+
+test('opaque Pinterest download revalidates the worker snapshot even when metadata is cached', async t => {
+  let metadataCalls = 0;
+  let downloads = 0;
+  const fixture = providerDownloadFixture(t, {pinterest: {
+    snapshots: {get: () => ({items: [{index: 1, kind: 'image'}]}), remember: () => {}},
+    worker: {
+      metadata: async () => {metadataCalls++; throw new Error('This Pinterest search selection expired. Search again.');},
+      download: async () => {downloads++;},
+    },
+    emit: () => {},
+  }});
+  const source = 'https://www.pinterest.com/pin/e1_AfqPShwWJ_9nNp98oMy8EENZLzrcH3zYISwyG7ODp0u4p3s_onow/';
+  await assert.rejects(fixture.handlers.pinterest(validEvent, source, 1, 'original', 'expired-cache'), /Search again/);
+  assert.equal(metadataCalls, 1);
+  assert.equal(downloads, 0);
+  assert.deepEqual(fixture.calls.history, []);
+});
+
+test('opaque Pinterest video reports unsupported before download or preparation for every profile', async t => {
+  const fixture = providerDownloadFixture(t, {pinterest: {
+    snapshots: {get: () => null, remember: () => {}},
+    worker: {metadata: async () => ({items: [{index: 1, kind: 'video'}]}), download: async () => {throw new Error('must not download');}},
+    emit: () => {},
+  }});
+  const source = 'https://www.pinterest.com/pin/e1_AfqPShwWJ_9nNp98oMy8EENZLzrcH3zYISwyG7ODp0u4p3s_onow/';
+  for (const profile of ['original', 'fast', 'editing']) await assert.rejects(fixture.handlers.pinterest(validEvent, source, 1, profile, `opaque-video-${profile}`), /Video downloads from Pinterest search selections are not supported/);
+  assert.deepEqual(fixture.calls.prepare, []);
+  assert.deepEqual(fixture.calls.history, []);
 });
 
 test('Pexels orchestration reloads authoritative files, keeps photos Original-only, and prepares video renditions', async t => {

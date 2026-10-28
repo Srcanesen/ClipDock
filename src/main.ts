@@ -36,7 +36,7 @@ import { PixabayClient, safePixabayExternal } from './pixabay';
 import type { StockClient } from './stock';
 import { MacKeychainPexelsCredentialStore, PexelsCredentialStore, PEXELS_CREDENTIAL, PIXABAY_CREDENTIAL, type CredentialSource, type PexelsCredentialPersistence } from './pexels-credential';
 import { cleanupWorkspaceAsync, inspectWorkspaceAsync } from './workspace';
-import { DownloadHistory, safeHistorySource } from './history';
+import { DownloadHistory, historySourceUrl } from './history';
 import { MEDIA_EXTENSIONS } from './media-extensions';
 import { loadDownloadFolder, claimDownloadFolder, saveDownloadFolder, defaultDownloadFolder } from './settings';
 
@@ -170,7 +170,7 @@ const engineHost = createEngineHost({
   folder: folderPreference.folder, runtimeRoot, completion: completionDeps,
   workers: {
     youtube: (engines, sessionDir) => new YtdlpWorker(engines.ytdlpPath, undefined, undefined, { ...engines, sessionDir }),
-    pinterest: (engines, sessionDir) => new GalleryDlWorker(engines.galleryDlPath, undefined, { ffmpegPath: engines.ffmpegPath, sessionDir }),
+    pinterest: (engines, sessionDir, searchSnapshots) => new GalleryDlWorker(engines.galleryDlPath, undefined, { ffmpegPath: engines.ffmpegPath, sessionDir, searchSnapshots }),
     pexels: sessionDir => new PexelsClient(sessionDir),
     pixabay: sessionDir => new PixabayClient(sessionDir),
     mediaPrep: engines => createMediaPrep(engines),
@@ -444,7 +444,7 @@ function registerHistoryHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.historyReveal, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => { const hit = history.resolve(id); if (!hit) return false; sessionTransferCards.noteExposed(hit.path); shell.showItemInFolder(hit.path); return true; }));
   // Subtitle companions resolve only in main; the renderer gets a boolean, never a path.
   ipcMain.handle(IPC_CHANNELS.historyRevealSubtitle, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => { const hit = history.resolveSubtitle(id); if (!hit) return false; sessionTransferCards.noteExposed(hit.path); shell.showItemInFolder(hit.path); return true; }));
-  ipcMain.handle(IPC_CHANNELS.historySource, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => { const record = history.get(id); if (!record) return false; const source = safeHistorySource(record.provider, record.source); if (!source) return false; try { await shell.openExternal(source); return true; } catch { return false; } }));
+  ipcMain.handle(IPC_CHANNELS.historySource, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => { const record = history.get(id); if (!record) return false; const source = historySourceUrl(record.provider, record.source); if (!source) return false; try { await shell.openExternal(source); return true; } catch { return false; } }));
   ipcMain.handle(IPC_CHANNELS.historyCopy, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => { const hit = history.resolve(id); if (!hit) return false; sessionTransferCards.noteExposed(hit.path); clipboard.writeText(hit.path); return true; }));
   ipcMain.handle(IPC_CHANNELS.historyRelink, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => { if (typeof id !== 'string') return null; const result = mainWindow ? await dialog.showOpenDialog(mainWindow, { filters: [{ name: 'Supported media', extensions: RELINK_EXTENSIONS }], properties: ['openFile'] }) : await dialog.showOpenDialog({ filters: [{ name: 'Supported media', extensions: RELINK_EXTENSIONS }], properties: ['openFile'] }); return result.canceled || !result.filePaths[0] ? null : history.relink(id, result.filePaths[0]); }));
   ipcMain.handle(IPC_CHANNELS.historyDelete, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => {

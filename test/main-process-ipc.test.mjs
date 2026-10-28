@@ -13,6 +13,34 @@ const ytdlpStart = event('downloading', 'Starting download…');
 const ytdlpCancel = event('cancelling', 'Cancelling download…');
 const pexelsStart = event('downloading', 'Downloading from Pexels…', 0);
 const pinStart = event('downloading', 'Downloading from Pinterest (progress unavailable)…');
+
+test('opaque Pinterest IPC keeps exact media targets main-only through search, selection and download', async t => {
+  const pinterestJsonl = readFileSync(new URL('./fixtures/pinterest-opaque-search.jsonl', import.meta.url), 'utf8');
+  const f = await providerIpcFixture(t, 'pinterest', {pinterestJsonl});
+  try {
+    const page = await f.api.searchPinterest('ocean', 1);
+    const source = 'https://www.pinterest.com/pin/e1_AfqPShwWJ_9nNp98oMy8EENZLzrcH3zYISwyG7ODp0u4p3s_onow/';
+    assert.equal(page.results[0].url, source);
+    const metadata = await f.api.loadPinterest(source);
+    assert.equal(metadata.title, 'Sanitized image Pin');
+    assert.equal(f.requests.metadata, 1, 'metadata selection does not spawn PinResource');
+    const media = 'https://i.pinimg.com/originals/2b/02/4d/2b024d05a26db6772778b5a9e68f2198.jpg';
+    assert.equal(JSON.stringify({page, metadata}).includes(media), false);
+    await assert.rejects(f.api.downloadPinterest('https://evil.test/injected.jpg', 1, 'original', 'injected'), /Invalid Pinterest download request/);
+    const completed = await f.api.downloadPinterest(source, 1, 'original', 'opaque-ipc', {url: 'https://evil.test/injected.jpg'});
+    assert.equal(completed.fileName, 'pinterest.jpg');
+    assert.equal(f.requests.metadata, 1);
+    assert.equal(f.requests.media, 1);
+    const args = f.children.at(-1).args;
+    assert.equal(args.at(-1), media);
+    assert.equal(args[args.indexOf('--range') + 1], '1');
+    assert.equal(JSON.stringify(completed).includes(media), false);
+    const record = f.controls.history.list()[0];
+    assert.equal(record.source, source);
+    await assert.rejects(f.api.historySource(record.id), /Search again to find its source/);
+  } finally {await f.stop();}
+});
+
 const cases = {
   youtube: {
     success: [ytdlpStart, completed],

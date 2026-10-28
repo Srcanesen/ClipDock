@@ -12,12 +12,29 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {test} from 'node:test';
 
-import {DownloadHistory, safeHistorySource} from '../dist/history.js';
+import {DownloadHistory, historySourceUrl, safeHistorySource} from '../dist/history.js';
 
 test('Pinterest history source is canonical and rejects non-Pin persistence', () => {
   assert.equal(safeHistorySource('pinterest', 'https://pinterest.com/pin/123456789/?utm=x'), 'https://www.pinterest.com/pin/123456789/');
   assert.equal(safeHistorySource('pinterest', 'https://www.pinterest.com/board/example/'), null);
   assert.equal(safeHistorySource('pinterest', 'https://www.pinterest.com:443/pin/123456789/'), null);
+});
+
+test('opaque Pinterest history survives restart for local reuse but source opening asks for search', t => {
+  const root = tempRoot('clipdock-pinterest-history-');
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  const filePath = path.join(root, 'pinterest.jpg'); writeFileSync(filePath, 'image');
+  const source = 'https://www.pinterest.com/pin/e1_AfqPShwWJ_9nNp98oMy8EENZLzrcH3zYISwyG7ODp0u4p3s_onow/';
+  const file = path.join(root, 'history.json');
+  const history = new DownloadHistory(file, root, () => 'Project');
+  const record = history.add(historyInput({provider: 'pinterest', source, filePath, mediaMode: 'image', automation: {provider: 'pinterest', source, selection: null, chapters: []}}));
+  const restarted = new DownloadHistory(file, root, () => 'Project');
+  assert.equal(restarted.get(record.id).source, source);
+  assert.equal(restarted.get(record.id).available, true);
+  assert.equal(restarted.resolve(record.id).path, filePath);
+  assert.equal(safeHistorySource('pinterest', source), null);
+  assert.throws(() => historySourceUrl('pinterest', source), /Search again to find its source/);
+  assert.equal(historySourceUrl('pinterest', 'https://pinterest.com/pin/123/'), 'https://www.pinterest.com/pin/123/');
 });
 
 function tempRoot(prefix) {

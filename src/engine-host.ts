@@ -5,7 +5,7 @@ import { ManagedRoot, ManagedRootSelection } from './managed-root';
 import { awaitEngineShutdown } from './provider-platform';
 import { createPinterestMetadataSnapshotStore, createProviderDownloadHandlers, ManagedOperations, type ProviderDownloadDependencies, type ProviderDownloadHandlers, type discoverEnginePaths } from './main-process';
 import type { YtdlpWorker } from './ytdlp';
-import type { GalleryDlWorker } from './gallerydl';
+import { createPinterestSearchSnapshotStore, type PinterestSearchSnapshotStore, type GalleryDlWorker } from './gallerydl';
 import type { StockClient } from './stock';
 import type { createMediaPrep } from './media-prep';
 
@@ -19,7 +19,7 @@ type ProviderName = 'youtube' | 'social' | 'pinterest' | StockProvider;
 interface LifecycleWorker { isActive(): boolean; dispose(): void | Promise<void>; }
 export interface EngineWorkerFactory {
   youtube(engines: Engines, sessionDir: string): YoutubeWorker;
-  pinterest(engines: Engines, sessionDir: string): PinterestWorker;
+  pinterest(engines: Engines, sessionDir: string, searchSnapshots: PinterestSearchSnapshotStore): PinterestWorker;
   pexels(sessionDir: string): StockWorker;
   pixabay(sessionDir: string): StockWorker;
   mediaPrep(engines: Engines): MediaPrep;
@@ -95,7 +95,8 @@ export function createEngineHost(deps: EngineHostDependencies) {
   function createWorkers(engines: Engines) {
     // Each role admits one job at a time. Metadata/search cannot share download workers.
     const yt = (role: string) => { const worker = deps.workers.youtube(engines, path.join(deps.runtimeRoot, role)); lifecycle.push(worker); return worker; };
-    const pin = (role: string) => { const worker = deps.workers.pinterest(engines, path.join(deps.runtimeRoot, role)); lifecycle.push(worker); return worker; };
+    const searchSnapshots = createPinterestSearchSnapshotStore();
+    const pin = (role: string) => { const worker = deps.workers.pinterest(engines, path.join(deps.runtimeRoot, role), searchSnapshots); lifecycle.push(worker); return worker; };
     const roles = {
       youtube: yt('youtube'), social: yt('social'), pinterest: pin('pinterest'),
       pinterestMetadata: pin('pinterest-metadata'), pinterestSearch: pin('pinterest-search'),

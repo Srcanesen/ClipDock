@@ -12,7 +12,7 @@ import { discoverBinary, installCandidates, LruCache, requireBinary, spawnBounde
 import { ProviderJobRunner, ProviderSession, abortableFetch, type ProviderJobContext } from './provider-job';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { pinterestPinHost, validatePinterestSearchQuery, validatePinterestShortUrl, validatePinterestUrl, type ValidPinterestUrl } from './ytdlp-url';
+import { PIN_ID, pinterestPinHost, validatePinterestSearchQuery, validatePinterestShortUrl, validatePinterestUrl, type ValidPinterestUrl } from './ytdlp-url';
 import { literalPath, literalPathEnv } from './ytdlp';
 
 export type PinterestMediaKind = 'image' | 'video';
@@ -80,6 +80,7 @@ type GalleryDlOptions = {
   metadataTimeoutMs?: number;
   downloadTimeoutMs?: number;
   now?: () => number;
+  searchSnapshots?: PinterestSearchSnapshotStore;
   /** Verified absolute ffmpeg from main; its directory is prepended to the spawned gallery-dl child PATH so merged Pinterest video downloads can locate it under Finder-launched Resolve. */
   ffmpegPath?: string | null;
 };
@@ -90,8 +91,16 @@ type SearchCacheEntry = {
   createdAt: number;
   results: PinterestSearchItem[];
   thumbnailUrls: Map<string, string>;
+  snapshots: PinterestSearchSnapshot[];
 };
-type SearchParseResult = { items: PinterestSearchItem[]; thumbnailUrls: Map<string, string> };
+type SearchParseResult = { items: PinterestSearchItem[]; thumbnailUrls: Map<string, string>; snapshots: PinterestSearchSnapshot[] };
+type PinterestSearchSnapshot = { metadata: PinterestMetadata; mediaUrls: string[] };
+export type PinterestSearchSnapshotStore = Pick<LruCache<string, PinterestSearchSnapshot>, 'get' | 'set'>;
+
+/** Main-only bounded store shared by the search, metadata and download roles. */
+export function createPinterestSearchSnapshotStore(now: () => number = Date.now): PinterestSearchSnapshotStore {
+  return new LruCache<string, PinterestSearchSnapshot>(SEARCH_CACHE_MAX * MAX_SEARCH_RESULTS, SEARCH_CACHE_TTL, now);
+}
 
 
 const MIN_GALLERYDL = [1, 28, 0] as const;
@@ -122,6 +131,9 @@ const PINTEREST_SEARCH_ERROR = 'Could not search Pinterest.';
 const PINTEREST_SEARCH_TIMEOUT = 'Pinterest search timed out.';
 const PINTEREST_SEARCH_CANCELLED = 'Pinterest search cancelled.';
 const PINTEREST_SEARCH_TOO_LARGE = 'Search results were too large.';
+const PINTEREST_COMPATIBILITY_ERROR = 'Pinterest search returned media that ClipDock could not use. The provider response may have changed.';
+const PINTEREST_SNAPSHOT_ERROR = 'This Pinterest search selection expired or is unavailable. Search again, then select the Pin.';
+export const PINTEREST_OPAQUE_VIDEO_ERROR = 'Video downloads from Pinterest search selections are not supported. Use a numeric Pin URL instead.';
 const PINTEREST_DOWNLOAD_ERROR = 'Pinterest download failed.';
 const PINTEREST_PRIVATE_ERROR = 'This Pin is private or requires login. Only public Pins are supported.';
 const PINTEREST_YTDLP_ERROR = 'Pinterest video download requires the yt-dlp Python module. Install yt-dlp, then retry.';
@@ -269,11 +281,12 @@ function tupleRecord(value: unknown, type: number): Record<string, unknown> | nu
   return Array.isArray(value) && value[0] === type ? objectValue(value[type === 2 ? 1 : 2]) : null;
 }
 function pinId(record: Record<string, unknown>): string | null {
+  if (typeof record.id === 'string' && record.id.startsWith('e1_')) return PIN_ID.test(record.id) ? record.id : null;
   const value = record.pin_id ?? record.pinId ?? record.id;
-  return typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : typeof value === 'string' && /^\d{1,40}$/.test(value) ? value : null;
+  return typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : typeof value === 'string' && PIN_ID.test(value) ? value : null;
 }
 function storyRecord(record: Record<string, unknown>): boolean {
-  return ['subcategory', 'type', 'kind'].some((key) => /story/i.test(safeText(record[key], 80) ?? '')) || record.story_pin_data != null;
+  return ['subcategory', 'type', 'kind'].some((key) => /story|idea/i.test(safeText(record[key], 80) ?? '')) || record.story_pin_data != null;
 }
 function normalizeArtifact(raw: Record<string, unknown>, parent: Record<string, unknown>, outputIndex: number): InternalArtifact | null {
   const extension = extensionFrom(raw.extension ?? raw.ext) || pathExtension(raw.filename);
@@ -395,6 +408,8 @@ function parsePinterestSearchValues(values: unknown[]): SearchParseResult {
   const firstDirectory = new Map<string, SearchDirectory>();
   const storyIds = new Set<string>();
   let current: SearchDirectory | null = null;
+  let currentRecord: Record<string, unknown> | null = null;
+  let mediaBearing = false;
 
   for (const value of values) {
     if (!Array.isArray(value)) throw new Error('Pinterest search metadata was malformed.');
@@ -407,6 +422,7 @@ function parsePinterestSearchValues(values: unknown[]): SearchParseResult {
       const record = objectValue(value[1]);
       if (!record) throw new Error('Pinterest search metadata was malformed.');
       const id = pinId(record);
+      currentRecord = record;
       current = id ? {id, record, urls: [], mediaUrls: new Set<string>()} : null;
       if (id && storyRecord(record)) storyIds.add(id);
       if (id && current) {
@@ -420,6 +436,7 @@ function parsePinterestSearchValues(values: unknown[]): SearchParseResult {
     if (typeof mediaUrl !== 'string' || mediaUrl.length > 2_048 || /[\u0000-\u0020\u005c\u007f-\u009f]/.test(mediaUrl)) throw new Error('Pinterest search metadata was malformed.');
     const record = objectValue(value[2]);
     if (!record) throw new Error('Pinterest search metadata was malformed.');
+    if (!storyRecord(record) && !storyRecord(currentRecord ?? {}) && !searchPromo(currentRecord ?? {})) mediaBearing = true;
     const id = pinId(record);
     if (!id) continue;
     if (storyRecord(record)) storyIds.add(id);
@@ -433,13 +450,16 @@ function parsePinterestSearchValues(values: unknown[]): SearchParseResult {
 
   const items: PinterestSearchItem[] = [];
   const thumbnailUrls = new Map<string, string>();
+  const snapshots: PinterestSearchSnapshot[] = [];
   const seen = new Set<string>();
   for (const directory of directories) {
     if (seen.has(directory.id) || storyIds.has(directory.id) || storyRecord(directory.record) || directory.urls.some(({record}) => storyRecord(record)) || searchPromo(directory.record) || directory.urls.length === 0) continue;
     const kinds = directory.urls.map(({url, record}) => searchMediaKind(url, record));
     if (kinds.some((kind) => kind === null)) continue;
     const count = typeof directory.record.count === 'number' && Number.isInteger(directory.record.count) ? directory.record.count : 0;
-    if (directory.urls.length > MAX_ARTIFACTS || count > MAX_ARTIFACTS) continue;
+    if (directory.urls.length > MAX_ARTIFACTS || count !== directory.urls.length) continue;
+    // Opaque image targets must be exact provider-supplied HTTPS Pinterest CDN URLs.
+    if (directory.id.startsWith('e1_') && directory.urls.some(({url}, index) => kinds[index] === 'image' && (!safeSearchThumbnailUrl(url) || !IMAGE_EXTENSIONS.has(pathExtension(new URL(url).pathname))))) continue;
     seen.add(directory.id);
     const records = [directory.record, ...directory.urls.map(({record}) => record)];
     const carousel = directory.urls.length > 1 || count > 1 || records.some((record) => record.carousel_data != null);
@@ -451,11 +471,27 @@ function parsePinterestSearchValues(values: unknown[]): SearchParseResult {
       url: `https://www.pinterest.com/pin/${directory.id}/`,
       thumbnailUrl: null,
     });
-    const thumbnail = searchThumbnailCandidate(records);
+    const candidate = searchThumbnailCandidate(records);
+    const thumbnail = directory.id.startsWith('e1_') && directory.urls.some(({url}) => safeSearchThumbnailUrl(url)?.href === candidate) ? null : candidate;
     if (thumbnail) thumbnailUrls.set(directory.id, thumbnail);
+    if (directory.id.startsWith('e1_')) {
+      const item = items[items.length - 1];
+      snapshots.push({
+        metadata: {
+          pinId: item.id, source: item.url, title: item.title, creator: item.creator, kind: item.kind, thumbnailUrl: thumbnail,
+          items: directory.urls.map(({url, record}, index) => ({
+            index: index + 1, kind: kinds[index] as PinterestMediaKind,
+            title: searchTitle([record, directory.record], directory.id), creator: searchCreator([record, directory.record]),
+            extension: kinds[index] === 'video' ? 'mp4' : (extensionFrom(record.extension ?? record.ext) || pathExtension(new URL(url).pathname)).slice(1),
+          })),
+        },
+        mediaUrls: directory.urls.map(({url}) => url),
+      });
+    }
     if (items.length >= MAX_SEARCH_RESULTS) break;
   }
-  return {items, thumbnailUrls};
+  if (!items.length && mediaBearing) throw new Error(PINTEREST_COMPATIBILITY_ERROR);
+  return {items, thumbnailUrls, snapshots};
 }
 
 /** Parse bounded Pinterest search JSONL without exposing media URLs or paths. */
@@ -547,6 +583,7 @@ export class GalleryDlWorker {
   private readonly ffmpegPath: string | null;
   private readonly now: () => number;
   readonly searchCache: LruCache<string, SearchCacheEntry>;
+  private readonly searchSnapshots: PinterestSearchSnapshotStore;
 
   constructor(
     private readonly binary = discoverGalleryDl(),
@@ -563,6 +600,7 @@ export class GalleryDlWorker {
     this.ffmpegPath = options.ffmpegPath === undefined ? null : options.ffmpegPath;
     this.now = options.now ?? Date.now;
     this.searchCache = new LruCache<string, SearchCacheEntry>(SEARCH_CACHE_MAX, SEARCH_CACHE_TTL, this.now);
+    this.searchSnapshots = options.searchSnapshots ?? createPinterestSearchSnapshotStore(this.now);
   }
 
   setSessionDir(directory: string): void { this.session.capture(resolve(directory)); }
@@ -669,7 +707,10 @@ export class GalleryDlWorker {
     const key = query.toLocaleLowerCase('en-US');
     const cached = this.searchCache.get(key);
     if (cached) {
-      return this.runJob({jobDir: '', kind: 'search'}, context => this.searchPage(cached.query, page, cached.results, cached.thumbnailUrls, context.signal));
+      return this.runJob({jobDir: '', kind: 'search'}, context => {
+        for (const snapshot of cached.snapshots) this.searchSnapshots.set(snapshot.metadata.pinId, snapshot);
+        return this.searchPage(cached.query, page, cached.results, cached.thumbnailUrls, context.signal);
+      });
     }
     const jobDir = this.jobDirectory('search');
     return await this.runJob({jobDir, kind: 'search'}, async context => {
@@ -689,14 +730,15 @@ export class GalleryDlWorker {
         if (result.stderr.trim()) throw new Error(mapSearchError(result.stderr));
         throw error;
       }
-      const entry: SearchCacheEntry = {query, createdAt: this.now(), results: parsed.items, thumbnailUrls: parsed.thumbnailUrls};
+      const entry: SearchCacheEntry = {query, createdAt: this.now(), results: parsed.items, thumbnailUrls: parsed.thumbnailUrls, snapshots: parsed.snapshots};
       const pageResult = await this.searchPage(query, page, entry.results, entry.thumbnailUrls, context.signal);
       context.check();
+      for (const snapshot of parsed.snapshots) this.searchSnapshots.set(snapshot.metadata.pinId, snapshot);
       this.searchCache.set(key, entry);
       return pageResult;
     }, error => {
       const message = error instanceof Error ? error.message : '';
-      if (message === PINTEREST_SEARCH_TIMEOUT || message === PINTEREST_SEARCH_CANCELLED || message === PINTEREST_SEARCH_TOO_LARGE || message === PINTEREST_PRIVATE_ERROR || message === PINTEREST_SEARCH_ERROR || message.startsWith('gallery-dl 1.28.0')) return error;
+      if (message === PINTEREST_COMPATIBILITY_ERROR || message === PINTEREST_SEARCH_TIMEOUT || message === PINTEREST_SEARCH_CANCELLED || message === PINTEREST_SEARCH_TOO_LARGE || message === PINTEREST_PRIVATE_ERROR || message === PINTEREST_SEARCH_ERROR || message.startsWith('gallery-dl 1.28.0')) return error;
       return new Error(mapSearchError(message));
     });
   }
@@ -705,6 +747,12 @@ export class GalleryDlWorker {
     return await this.runJob({jobDir, kind: 'metadata', jobId: context?.jobId}, async job => {
       const valid = await this.resolveInput(input, job.signal);
       job.check();
+      if (valid.pinId.startsWith('e1_')) {
+        const snapshot = this.searchSnapshots.get(valid.pinId);
+        if (!snapshot) throw new Error(PINTEREST_SNAPSHOT_ERROR);
+        this.searchSnapshots.set(valid.pinId, snapshot);
+        return snapshot.metadata;
+      }
       const args = ['--config-ignore', '--dump-json', '-o', 'output.jsonl=true', '--post-range', '1', '--range', '1-50', '--http-timeout', HTTP_TIMEOUT_SECONDS, '--retries', HTTP_RETRIES, '--sleep-request', HTTP_SLEEP_SECONDS, valid.url];
       const pending = this.begin(args, {jobDir, kind: 'metadata', jobId: context?.jobId}, () => undefined);
       const result = await pending;
@@ -722,7 +770,7 @@ export class GalleryDlWorker {
       return metadata;
     }, error => {
       const message = error instanceof Error ? error.message : '';
-      if (message === 'Pinterest request timed out.') return new Error(message);
+      if (message === PINTEREST_SNAPSHOT_ERROR || message === 'Pinterest request timed out.') return new Error(message);
       if (message === 'Enter a valid public Pinterest Pin URL.' || message.startsWith('Pinterest short link') || message.startsWith('gallery-dl 1.28.0')) return error;
       if (message === PINTEREST_STORY_ERROR || message.includes('metadata was too large') || message.includes('incomplete') || message === PINTEREST_PRIVATE_ERROR || message === PINTEREST_YTDLP_ERROR) return error;
       return new Error(mapError(message || PINTEREST_ERROR));
@@ -733,11 +781,22 @@ export class GalleryDlWorker {
     if (!valid || typeof itemIndex !== 'number' || !Number.isInteger(itemIndex) || itemIndex < 1 || itemIndex > MAX_ARTIFACTS || (expectedKind !== 'image' && expectedKind !== 'video') || typeof jobId !== 'string') throw new Error('Invalid Pinterest download request.');
     const jobDir = this.jobDirectory('download');
     return await this.runJob({jobDir, kind: 'download', jobId, emit}, async context => {
+      let target = valid.url;
+      let range = String(itemIndex);
+      if (valid.pinId.startsWith('e1_')) {
+        const snapshot = this.searchSnapshots.get(valid.pinId);
+        if (!snapshot) throw new Error(PINTEREST_SNAPSHOT_ERROR);
+        const item = snapshot.metadata.items[itemIndex - 1];
+        if (!item || item.kind !== expectedKind) throw new Error('Pinterest download media did not match its verified metadata.');
+        if (item.kind === 'video') throw new Error(PINTEREST_OPAQUE_VIDEO_ERROR);
+        target = snapshot.mediaUrls[itemIndex - 1];
+        range = '1';
+      }
       emit({jobId, state: 'downloading', percent: null, message: 'Downloading from Pinterest (progress unavailable)…'});
       // Keep gallery-dl's .part behavior enabled: partial files are visible to
       // the worker while the process runs, never accepted as final artifacts,
       // and removed with the private job directory on terminal completion.
-      const args = ['--config-ignore', '-D', literalPath(jobDir, this.platform), '-f', 'pinterest.{extension}', '--post-range', '1', '--range', String(itemIndex), '--filesize-max', expectedKind === 'image' ? '20M' : '2G', '--no-mtime', '--http-timeout', HTTP_TIMEOUT_SECONDS, '--retries', HTTP_RETRIES, '--sleep-request', HTTP_SLEEP_SECONDS, valid.url];
+      const args = ['--config-ignore', '-D', literalPath(jobDir, this.platform), '-f', 'pinterest.{extension}', '--post-range', '1', '--range', range, '--filesize-max', expectedKind === 'image' ? '20M' : '2G', '--no-mtime', '--http-timeout', HTTP_TIMEOUT_SECONDS, '--retries', HTTP_RETRIES, '--sleep-request', HTTP_SLEEP_SECONDS, target];
       const pending = this.begin(args, {jobDir, kind: 'download', jobId, emit}, () => undefined);
       const result = await pending;
       context.check();
@@ -763,7 +822,7 @@ export class GalleryDlWorker {
       return {filePath: safe.path, fileName: basename(safe.path), kind: safe.kind};
     }, error => {
       const message = error instanceof Error ? error.message : '';
-      const userMessage = message === PINTEREST_YTDLP_ERROR || message.startsWith('The download folder path') || message.startsWith('gallery-dl 1.28.0') ? message : message.includes('limit') || message.includes('safety') || message.includes('signature') || message.includes('output') || message.includes('exactly one') ? message : mapError(message || PINTEREST_DOWNLOAD_ERROR, true);
+      const userMessage = message === PINTEREST_SNAPSHOT_ERROR || message === PINTEREST_OPAQUE_VIDEO_ERROR || message === PINTEREST_YTDLP_ERROR || message.startsWith('The download folder path') || message.startsWith('gallery-dl 1.28.0') ? message : message.includes('limit') || message.includes('safety') || message.includes('signature') || message.includes('output') || message.includes('exactly one') ? message : mapError(message || PINTEREST_DOWNLOAD_ERROR, true);
       return new Error(userMessage);
     });
   }

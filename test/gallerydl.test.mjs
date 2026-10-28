@@ -9,6 +9,7 @@ import {providerDownload} from './helpers/provider-job-main.mjs';
 import * as gallerydlModule from '../dist/gallerydl.js';
 import {
   GalleryDlWorker,
+  createPinterestSearchSnapshotStore,
   discoverGalleryDl,
   galleryDlVersionSupported,
   parseGalleryDlJsonl,
@@ -35,6 +36,186 @@ class FakeChild extends EventEmitter {
 const tempRoot = (prefix) => mkdtempSync(path.join(tmpdir(), prefix));
 const imageBytes = () => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(16)]);
 const videoBytes = () => Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom'), Buffer.alloc(16)]);
+
+const opaqueFixture = readFileSync(new URL('./fixtures/pinterest-opaque-search.jsonl', import.meta.url), 'utf8');
+const opaqueId = 'e1_AfqPShwWJ_9nNp98oMy8EENZLzrcH3zYISwyG7ODp0u4p3s_onow';
+const opaqueSource = `https://www.pinterest.com/pin/${opaqueId}/`;
+const opaqueMedia = 'https://i.pinimg.com/originals/2b/02/4d/2b024d05a26db6772778b5a9e68f2198.jpg';
+
+test('opaque Pinterest search selection loads snapshot metadata and downloads the exact cached image', async t => {
+  const root = tempRoot('clipdock-pinterest-opaque-');
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  const calls = [];
+  let now = 0;
+  const spawn = (_binary, args) => {
+    calls.push(args);
+    const child = new FakeChild();
+    setImmediate(() => {
+      if (args.includes('--dump-json')) child.stdout.emit('data', opaqueFixture);
+      else {now = 5 * 60 * 1000; writeFileSync(path.join(args[args.indexOf('-D') + 1], 'pinterest.jpg'), imageBytes());}
+      child.emit('close', 0);
+    });
+    return child;
+  };
+  const searchSnapshots = createPinterestSearchSnapshotStore(() => now);
+  const worker = new GalleryDlWorker('/fixture/gallery-dl', spawn, {sessionDir: path.join(root, 'download'), searchSnapshots});
+  const searchWorker = new GalleryDlWorker('/fixture/gallery-dl', spawn, {sessionDir: path.join(root, 'search'), searchSnapshots});
+  const metadataWorker = new GalleryDlWorker('/fixture/gallery-dl', spawn, {sessionDir: path.join(root, 'metadata'), searchSnapshots});
+  t.after(async () => { await worker.dispose(); await searchWorker.dispose(); await metadataWorker.dispose(); });
+  const page = await searchWorker.search('ocean', 1);
+  assert.deepEqual(page.results.map(({id, title, creator, kind, url}) => ({id, title, creator, kind, url})), [
+    {id: opaqueId, title: 'Sanitized image Pin', creator: 'fixture', kind: 'image', url: opaqueSource},
+  ]);
+  const metadata = await metadataWorker.metadata(opaqueSource);
+  assert.equal(metadata.pinId, opaqueId);
+  assert.equal(metadata.creator, 'fixture');
+  assert.deepEqual(metadata.items, [{index: 1, title: 'Sanitized image Pin', creator: 'fixture', kind: 'image', extension: 'jpg'}]);
+  assert.equal(calls.length, 1, 'opaque metadata must never spawn PinResource');
+  assert.equal(JSON.stringify({page, metadata}).includes(opaqueMedia), false);
+  const result = await worker.download(opaqueSource, 1, 'image', 'opaque-image', () => {});
+  assert.equal(result.kind, 'image');
+  assert.equal(readFileSync(result.filePath).subarray(0, 3).toString('hex'), 'ffd8ff');
+  assert.equal(calls[1].at(-1), opaqueMedia);
+  assert.equal(calls[1][calls[1].indexOf('--range') + 1], '1');
+  await assert.rejects(worker.download('https://evil.test/injected.jpg', 1, 'image', 'injection', () => {}), /Invalid Pinterest download request/);
+  assert.equal(calls.length, 2);
+});
+
+test('Pinterest search snapshots are capped at 300 complete groups', () => {
+  const snapshots = createPinterestSearchSnapshotStore();
+  for (let id = 1; id <= 301; id++) snapshots.set(String(id), {metadata: {pinId: String(id)}, mediaUrls: [`https://i.pinimg.com/${id}.jpg`]});
+  assert.equal(snapshots.get('1'), null);
+  assert.deepEqual(snapshots.get('301'), {metadata: {pinId: '301'}, mediaUrls: ['https://i.pinimg.com/301.jpg']});
+});
+
+test('opaque carousel item 2 downloads its literal cached URL with range 1', async t => {
+  const root = tempRoot('clipdock-pinterest-carousel-');
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  const values = opaqueFixture.trim().split('\n').map(JSON.parse);
+  values[0][1].count = 2;
+  const secondUrl = 'https://i.pinimg.com/originals/second.png?fixture=exact';
+  values.push([3, secondUrl, {...values[1][2], extension: 'png', num: 2}]);
+  const calls = [];
+  const worker = new GalleryDlWorker('/fixture/gallery-dl', (_binary, args) => {
+    calls.push(args);
+    const child = new FakeChild();
+    queueMicrotask(() => {
+      if (args.includes('--dump-json')) child.stdout.emit('data', values.map(JSON.stringify).join('\n'));
+      else writeFileSync(path.join(args[args.indexOf('-D') + 1], 'pinterest.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      child.emit('close', 0);
+    });
+    return child;
+  }, {sessionDir: root});
+  t.after(() => worker.dispose());
+  assert.equal((await worker.search('carousel', 1)).results[0].kind, 'carousel');
+  assert.deepEqual((await worker.metadata(opaqueSource)).items.map(item => [item.index, item.extension]), [[1, 'jpg'], [2, 'png']]);
+  const result = await worker.download(opaqueSource, 2, 'image', 'carousel-two', () => {});
+  assert.equal(result.fileName, 'pinterest.png');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].at(-1), secondUrl);
+  assert.equal(calls[1][calls[1].indexOf('--range') + 1], '1');
+  await assert.rejects(worker.download(opaqueSource, 3, 'image', 'absent-item', () => {}), /Pinterest download failed/);
+  assert.equal(calls.length, 2);
+});
+
+test('opaque snapshots expire, missing handles ask for search, and videos are explicitly unsupported', async t => {
+  const root = tempRoot('clipdock-pinterest-expiry-');
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  let now = 0;
+  let calls = 0;
+  let output = opaqueFixture;
+  const worker = new GalleryDlWorker('/fixture/gallery-dl', () => {
+    calls++;
+    const child = new FakeChild();
+    queueMicrotask(() => {child.stdout.emit('data', output); child.emit('close', 0);});
+    return child;
+  }, {sessionDir: root, now: () => now});
+  t.after(() => worker.dispose());
+  await assert.rejects(worker.metadata(opaqueSource), /Search again/);
+  await assert.rejects(worker.download(opaqueSource, 1, 'image', 'missing', () => {}), /Search again/);
+  assert.equal(calls, 0);
+  await worker.search('expiry', 1);
+  now = 5 * 60 * 1000;
+  await assert.rejects(worker.metadata(opaqueSource), /Search again/);
+  await assert.rejects(worker.download(opaqueSource, 1, 'image', 'expired', () => {}), /Search again/);
+  assert.equal(calls, 1, 'expired handles never trigger PinResource or download');
+  const values = opaqueFixture.trim().split('\n').map(JSON.parse);
+  values[1][1] = 'ytdl:https://v1.pinimg.com/videos/fixture.m3u8';
+  values[1][2].extension = 'mp4';
+  output = values.map(JSON.stringify).join('\n');
+  assert.equal((await worker.search('video', 1)).results[0].kind, 'video');
+  assert.equal((await worker.metadata(opaqueSource)).items[0].kind, 'video');
+  await assert.rejects(worker.download(opaqueSource, 1, 'video', 'unsupported-video', () => {}), /Video downloads from Pinterest search selections are not supported/);
+  assert.equal(calls, 2);
+});
+
+test('unusable media returns an uncached compatibility error; Story, promo and genuine empty stay excluded', async t => {
+  const root = tempRoot('clipdock-pinterest-compatibility-');
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  const fixture = () => opaqueFixture.trim().split('\n').map(JSON.parse);
+  const scenarios = [
+    ['unknown identity', values => {values[0][1].id = values[1][2].id = 'future_opaque';}],
+    ['incomplete', values => {values[0][1].count = 2;}],
+    ['unsafe URL', values => {values[1][1] = 'https://evil.test/arbitrary.jpg';}],
+    ['unsupported', values => {values[1][2].extension = 'gif';}],
+  ];
+  let output = '';
+  let calls = 0;
+  const worker = new GalleryDlWorker('/fixture/gallery-dl', () => {
+    calls++;
+    const child = new FakeChild();
+    queueMicrotask(() => {child.stdout.emit('data', output); child.emit('close', 0);});
+    return child;
+  }, {sessionDir: root});
+  t.after(() => worker.dispose());
+  for (const [query, mutate] of scenarios) {
+    const values = fixture(); mutate(values); output = values.map(JSON.stringify).join('\n');
+    const before = calls;
+    await assert.rejects(worker.search(query, 1), /provider response may have changed/);
+    await assert.rejects(worker.search(query, 1), /provider response may have changed/);
+    assert.equal(calls, before + 2, 'compatibility errors must not be cached');
+    await assert.rejects(worker.metadata(opaqueSource), /Search again/);
+  }
+  for (const query of ['Story', 'Idea', 'promo', 'empty']) {
+    const values = fixture();
+    if (query === 'Story') values[0][1].story_pin_data = {pages: []};
+    if (query === 'Idea') values[0][1].type = 'idea';
+    if (query === 'promo') values[0][1].count = 0;
+    output = query === 'empty' ? '' : values.map(JSON.stringify).join('\n');
+    const before = calls;
+    assert.deepEqual((await worker.search(query, 1)).results, []);
+    assert.deepEqual((await worker.search(query, 1)).results, []);
+    assert.equal(calls, before + 1);
+  }
+});
+
+test('opaque original media cannot leak through the thumbnail fallback', async t => {
+  const root = tempRoot('clipdock-pinterest-original-thumbnail-');
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  const values = opaqueFixture.trim().split('\n').map(JSON.parse);
+  for (const record of [values[0][1], values[1][2]]) record.images = {orig: {url: opaqueMedia}};
+  const worker = new GalleryDlWorker('/fixture/gallery-dl', () => {
+    const child = new FakeChild();
+    queueMicrotask(() => {child.stdout.emit('data', values.map(JSON.stringify).join('\n')); child.emit('close', 0);});
+    return child;
+  }, {sessionDir: root});
+  t.after(() => worker.dispose());
+  const page = await worker.search('original fallback', 1);
+  assert.equal(page.results[0].thumbnailUrl, null);
+  const metadata = await worker.metadata(opaqueSource);
+  assert.equal(metadata.thumbnailUrl, null);
+  assert.equal(JSON.stringify({page, metadata}).includes(opaqueMedia), false);
+});
+
+test('opaque URL grammar is bounded and uses the actual id rather than node or board ids', () => {
+  assert.deepEqual(validatePinterestUrl(opaqueSource), {url: opaqueSource, pinId: opaqueId});
+  for (const id of ['e1_short', `e1_${'a'.repeat(101)}`, `e2_${'a'.repeat(50)}`, `e1_${'a'.repeat(40)}.jpg`, '811211020320072772/extra']) {
+    assert.equal(validatePinterestUrl(`https://www.pinterest.com/pin/${id}/`), null);
+  }
+  const values = opaqueFixture.trim().split('\n').map(JSON.parse);
+  values[0][1].pin_id = values[1][2].pin_id = '811211020320072772';
+  assert.equal(parsePinterestSearchJsonl(values.map(JSON.stringify).join('\n'))[0].id, opaqueId);
+});
 
 test('Pinterest direct URL validation stays exact and canonical', () => {
   assert.deepEqual(validatePinterestUrl('https://pinterest.com/pin/123456789?utm_source=x'), { url: 'https://www.pinterest.com/pin/123456789/', pinId: '123456789' });

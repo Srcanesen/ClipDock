@@ -37,9 +37,22 @@ export function safeHistorySource(provider: HistoryProvider, source: unknown): s
     if (provider === 'pexels' && !['pexels.com', 'www.pexels.com'].includes(host)) return null;
     if (provider === 'pixabay' && host !== 'pixabay.com') return null;
     if (provider === 'social') return validateSocialUrl(source)?.url ?? null;
-    if (provider === 'pinterest') return validatePinterestUrl(source)?.url ?? null;
+    if (provider === 'pinterest') {
+      const valid = validatePinterestUrl(source);
+      return valid && !valid.pinId.startsWith('e1_') ? valid.url : null;
+    }
     return url.toString();
   } catch { return null; }
+}
+
+// Persist opaque source descriptors for local file reuse, never as reloadable URLs.
+function storedHistorySource(provider: HistoryProvider, source: unknown): string | null {
+  return provider === 'pinterest' ? validatePinterestUrl(source)?.url ?? null : safeHistorySource(provider, source);
+}
+
+export function historySourceUrl(provider: HistoryProvider, source: unknown): string | null {
+  if (provider === 'pinterest' && validatePinterestUrl(source)?.pinId.startsWith('e1_')) throw new Error('This Pinterest item came from a temporary search selection. Search again to find its source.');
+  return safeHistorySource(provider, source);
 }
 
 export function recordHistory(history: Pick<DownloadHistory, 'add'>, input: HistoryInput): { record: HistoryRecord | null; warning?: string } { try { return { record: history.add(input) }; } catch { return { record: null, warning: 'Download history could not be updated.' }; } }
@@ -111,7 +124,7 @@ export class DownloadHistory {
       this.records = raw.records.flatMap((value) => {
         const r = value as Partial<StoredRecord>;
         if (!r || typeof r.id !== 'string' || (r.provider !== 'youtube' && r.provider !== 'pexels' && r.provider !== 'pixabay' && r.provider !== 'social' && r.provider !== 'pinterest') || typeof r.filePath !== 'string' || typeof r.fileName !== 'string' || typeof r.source !== 'string') return [];
-        const source = r.provider === 'social' || r.provider === 'pinterest' ? safeHistorySource(r.provider, r.source) : r.source.slice(0, 2048);
+        const source = r.provider === 'social' || r.provider === 'pinterest' ? storedHistorySource(r.provider, r.source) : r.source.slice(0, 2048);
         if (!source) return [];
         const selection = r.provider === 'social' || r.provider === 'pinterest' ? null : finiteRange(r.selection);
         const chapters = r.provider === 'youtube' && Array.isArray(r.automation?.chapters) ? r.automation.chapters.flatMap((chapter) => { const range = finiteRange({ ...chapter, label: chapter?.title }); return range ? [{ start: range.start, end: range.end, title: range.label }] : []; }).slice(0, 100) : [];
@@ -180,7 +193,7 @@ export class DownloadHistory {
   add(input: HistoryInput): HistoryRecord { return this.transaction(() => this.addRecord(input)); }
   private addRecord(input: HistoryInput): HistoryRecord {
     const filePath = regular(input.filePath); if (!filePath || !supportedHistoryMediaPath(filePath)) throw new Error('Downloaded file is no longer available.');
-    const source = safeHistorySource(input.provider, input.source); if (!source) throw new Error('Invalid download source.');
+    const source = storedHistorySource(input.provider, input.source); if (!source) throw new Error('Invalid download source.');
     const selection = input.provider === 'social' ? null : finiteRange(input.selection);
     const chapters = input.provider === 'youtube' ? input.automation.chapters.slice(0, 100) : [];
     const now = Date.now();

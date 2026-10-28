@@ -568,6 +568,20 @@ test('a direct public Pin URL in the Pinterest search box routes to the Pin load
   assert.equal(h.pinterestSearches[0].query, 'moodboard');
 });
 
+test('an opaque Pinterest search handle routes to metadata and preserves snapshot errors', async () => {
+  const h = createHarness();
+  h.setProvider('pinterest');
+  const source = 'https://www.pinterest.com/pin/e1_AfqPShwWJ_9nNp98oMy8EENZLzrcH3zYISwyG7ODp0u4p3s_onow/';
+  h.el('youtube-search-input').value = source;
+  h.submitSourceSearch(); await h.flush();
+  assert.equal(h.pinterestSearches.length, 0);
+  assert.equal(h.pinterestLoads[0].url, source);
+  h.pinterestLoads[0].reject(new Error('This Pinterest search selection expired. Search again.'));
+  await h.flush();
+  assert.equal(h.getPinterest(), null);
+  assert.ok(h.el('youtube-status').textContent.includes('Search again.'));
+});
+
 // ---- Search-transition seam regression (F2) ------------------------------------
 // A new search/pagination pass must start by closing any open detail Inspector,
 // dropping the selected detail identity, invalidating stale metadata/subtitle

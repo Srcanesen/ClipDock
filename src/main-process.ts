@@ -6,7 +6,7 @@
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import {dirname} from 'node:path';
 import { isSafeMediaFile as pathIsSafeMediaFile } from './path-boundary';
-import {validatePinterestUrl, validateSocialUrl} from './ytdlp-url';
+import {PIN_ID, validatePinterestUrl, validateSocialUrl} from './ytdlp-url';
 import type {MediaPrepEvent} from './media-prep';
 import type {PinterestMetadata, TargetBin, TimelinePlacement, MediaProfile, YoutubeDownloadOptions} from './shared';
 import type {HistoryInput, HistoryRecord} from './history';
@@ -16,7 +16,7 @@ import type {OwnedFile} from './safe-fs';
 import {ProviderJobRunner, ProviderJobCancelledError, ProviderJobFailureError, requireFfprobe, type ProviderJobContext} from './provider-job';
 import type {TimelineAutomation, Transfer, TransferResult} from './transfer';
 import type {DownloadEvent, DownloadOptions, Quality, YtdlpWorker} from './ytdlp';
-import type {GalleryDlWorker, PinterestDownloadEvent} from './gallerydl';
+import {PINTEREST_OPAQUE_VIDEO_ERROR, type GalleryDlWorker, type PinterestDownloadEvent} from './gallerydl';
 import type {StockAsset, StockClient, StockEvent} from './stock';
 
 /** Own the entire admitted operation, including provider preflight and host waits. */
@@ -170,7 +170,7 @@ export function normalizePreviewBounds(value: unknown, content: { width: number;
 }
 
 /** Main-only, session-only Pinterest metadata snapshot; deliberately not a generic cache. */
-const PINTEREST_METADATA_SNAPSHOT_LIMIT = 3;
+const PINTEREST_METADATA_SNAPSHOT_LIMIT = 300;
 export interface PinterestMetadataSnapshotStore {
   remember(metadata: PinterestMetadata): void;
   get(pinId: string): PinterestMetadata | null;
@@ -180,7 +180,7 @@ export function createPinterestMetadataSnapshotStore(): PinterestMetadataSnapsho
   const snapshots = new Map<string, PinterestMetadata>();
   return {
     remember(metadata) {
-      if (!/^\d{1,40}$/.test(metadata.pinId)) return;
+      if (!PIN_ID.test(metadata.pinId)) return;
       snapshots.delete(metadata.pinId);
       snapshots.set(metadata.pinId, metadata);
       while (snapshots.size > PINTEREST_METADATA_SNAPSHOT_LIMIT) {
@@ -654,13 +654,15 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
     if (!valid || !validPinterestItemIndex(itemIndex) || typeof jobId !== 'string' || !validProfile(profile) || !hasSender(event)) throw new Error('Invalid Pinterest download request.');
 
     return runJob(jobId, deps.pinterest, event, async (job, emit, artifactCompletion) => {
-      let metadata = deps.pinterest.snapshots.get(valid.pinId);
+      // Opaque handles must still have their exact media snapshot in the worker.
+      let metadata = valid.pinId.startsWith('e1_') ? null : deps.pinterest.snapshots.get(valid.pinId);
       if (!metadata) {
         metadata = await job.perform(() => deps.pinterest.worker.metadata(valid.url, {jobId}), () => deps.pinterest.worker.cancel(jobId));
         deps.pinterest.snapshots.remember(metadata);
       }
       const item = metadata.items.find((candidate) => candidate.index === itemIndex);
       if (!item) throw new Error('The selected Pinterest carousel item is no longer available. Reload the Pin, then retry.');
+      if (valid.pinId.startsWith('e1_') && item.kind === 'video') throw new Error(PINTEREST_OPAQUE_VIDEO_ERROR);
       if (item.kind === 'image' && profile !== 'original') throw new Error('Pinterest images are Original-only.');
       if (item.kind === 'video' && profile !== 'original') requireFfprobe(deps.ffprobeAvailable);
 
