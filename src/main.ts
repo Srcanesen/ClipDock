@@ -259,7 +259,14 @@ function registerProviderHandlers(): void {
   const pinterest = engineHost.provider('pinterest'), pexels = engineHost.provider('pexels'), pixabay = engineHost.provider('pixabay');
   const providers = [
     {cancel: IPC_CHANNELS.cancelYoutube, host: youtube, routes: [
-      [IPC_CHANNELS.searchYoutube, (_event: unknown, query: unknown, page: unknown) => youtube.search(query, page)],
+      [IPC_CHANNELS.searchYoutube, (event: unknown, query: unknown, page: unknown, generation: unknown) => {
+        if (generation !== undefined && (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation < 1)) throw new Error('Invalid search request.');
+        return youtube.search(query, page, typeof generation === 'number' ? snapshot => {
+          const sender = (event as IpcMainInvokeEvent).sender;
+          if (!sender.isDestroyed()) sender.send(IPC_CHANNELS.youtubeSearchPage, {generation, page: snapshot});
+        } : undefined);
+      }],
+      [IPC_CHANNELS.cancelYoutubeSearch, () => youtube.cancelSearch()],
       [IPC_CHANNELS.prefetchYoutube, (_event: unknown, url: unknown) => youtube.prefetch(url)],
       [IPC_CHANNELS.loadYoutube, (_event: unknown, url: unknown) => youtube.load(url)],
       [IPC_CHANNELS.downloadYoutube, youtube.download],

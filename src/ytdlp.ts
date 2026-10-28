@@ -26,6 +26,7 @@ export type SocialMetadata = { id: string; platform: SocialPlatform; source: str
 export type ThumbnailDiagnostic = { failed: number; total: number; reason: string; node: string };
 export type YoutubeSearchItem = { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; channelVerified: boolean };
 export type YoutubeSearchPage = { query: string; page: number; pageSize: 10; results: YoutubeSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: ThumbnailDiagnostic };
+export type YoutubeSearchSnapshot = Omit<YoutubeSearchPage, 'totalResults' | 'pageCount'> & { totalResults: null; pageCount: null };
 export type DownloadEvent = { jobId: string; state: YtdlpState; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; fileName?: string };
 
 type Spawn = (binary: string, args: string[], options: { shell: false }) => ChildProcess;
@@ -257,6 +258,9 @@ export function literalPathEnv(args: string[]): NodeJS.ProcessEnv | undefined {
 function withoutExtractorPrefix(text: string): string {
   return text.replace(/^(\s*ERROR:\s*)\[[^\]\r\n]*\]\s*[^\s:]*:\s*/gim, '$1');
 }
+function searchExtractionFailure(stderr: string): boolean {
+  return stderr.split(/\r?\n/).some(line => /^\s*ERROR:/i.test(line) && /\b(?:unable to extract|failed to extract|failed to parse|invalid initial data|incomplete data received)\b/i.test(withoutExtractorPrefix(line)));
+}
 function sanitized(value: string): string {
   return value.replace(/https?:\/\/\S+/gi, '[url]').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, '?').trim();
 }
@@ -463,34 +467,50 @@ export class YtdlpWorker {
     const totalResults = results.length;
     return { query, page, pageSize: SEARCH_PAGE_SIZE, results: results.slice(start, start + SEARCH_PAGE_SIZE).map(item => ({ ...item })), hasPrevious: page > 1, hasNext: start + SEARCH_PAGE_SIZE < totalResults, totalResults, pageCount: Math.min(3, Math.max(1, Math.ceil(totalResults / SEARCH_PAGE_SIZE))) };
   }
-  async search(input: unknown, page: unknown): Promise<YoutubeSearchPage> {
+  async search(input: unknown, page: unknown, onFirstPage?: (page: YoutubeSearchSnapshot) => void): Promise<YoutubeSearchPage> {
     const query = validateYoutubeSearch(input);
     if (!query) throw new Error('Enter 2–100 characters to search YouTube.');
     if (typeof page !== 'number' || !Number.isInteger(page) || page < 1 || page > 3) throw new Error('Invalid search request.');
     const key = query.toLocaleLowerCase('en-US');
     const cached = this.searchCache.get(key);
     if (cached) {
-      return this.runJob({jobDir: '', kind: 'search'}, () => this.searchPage(cached.query, page, cached.results));
+      return this.runJob({jobDir: '', kind: 'search', jobId: 'youtube-search'}, () => this.searchPage(cached.query, page, cached.results));
     }
     const jobDir = join(this.sessionDir, `search-${randomUUID()}`);
-    return await this.runJob({jobDir, kind: 'search'}, async context => {
-      const pending = this.begin(['--ignore-config', '--no-warnings', '--no-colors', '--socket-timeout', '15', '--flat-playlist', '--dump-single-json', '--skip-download', '--playlist-end', '30', `ytsearch30:${query}`], { jobDir, kind: 'search' });
-      const result = await pending;
-      context.check();
-      if (result.code !== 0) { this.log(`search failed code=${result.code}`); throw new Error('Could not search YouTube.'); }
-      if (result.stdoutTruncated) { this.log('search results exceeded stdout limit'); throw new Error('Search results were too large.'); }
-      let raw: Record<string, unknown>; try { raw = JSON.parse(result.stdout.trim()) as Record<string, unknown>; } catch { this.log('search returned invalid JSON'); throw new Error('Could not search YouTube.'); }
-      if (!Array.isArray(raw.entries) || raw.entries.length > SEARCH_MAX_RESULTS) throw new Error('Could not search YouTube.');
-      const seen = new Set<string>();
-      const results = raw.entries.flatMap((entry) => { const item = narrowSearchEntry(entry); return item && !seen.has(item.id) ? (seen.add(item.id), [item]) : []; });
-      this.searchCache.set(key, { query, createdAt: this.now(), results });
-      return await this.searchPage(query, page, results);
+    let collected!: YoutubeSearchItem[];
+    const response = await this.runJob({jobDir, kind: 'search', jobId: 'youtube-search'}, async context => {
+      for (const skipWebpage of [true, false]) {
+        const results: YoutubeSearchItem[] = []; const seen = new Set<string>();
+        let entries = 0; let invalid = false;
+        const args = ['--ignore-config', '--no-warnings', '--no-colors', '--socket-timeout', '15', '--flat-playlist', '--lazy-playlist', '--dump-json', '--skip-download', ...(skipWebpage ? ['--extractor-args', 'youtubetab:skip=webpage'] : []), '--playlist-end', '30', `ytsearch30:${query}`];
+        const result = await this.begin(args, {jobDir, kind: 'search'}, line => {
+          if (!line.trim() || context.signal.aborted || invalid) return;
+          if (++entries > SEARCH_MAX_RESULTS) { invalid = true; return; }
+          let raw: unknown; try { raw = JSON.parse(line); } catch { invalid = true; return; }
+          const item = narrowSearchEntry(raw);
+          if (!item || seen.has(item.id)) return;
+          seen.add(item.id); results.push(item);
+          if (page === 1 && results.length === SEARCH_PAGE_SIZE) onFirstPage?.({query, page: 1, pageSize: SEARCH_PAGE_SIZE, results: results.map(entry => ({...entry})), hasPrevious: false, hasNext: false, totalResults: null, pageCount: null});
+        });
+        context.check();
+        if (result.stdoutTruncated) { this.log('search results exceeded stdout limit'); throw new Error('Search results were too large.'); }
+        if (result.code !== 0) {
+          if (skipWebpage && searchExtractionFailure(result.stderr)) continue;
+          this.log(`search failed code=${result.code}`); throw new Error('Could not search YouTube.');
+        }
+        if (invalid) { this.log('search returned invalid JSON'); throw new Error('Could not search YouTube.'); }
+        collected = results;
+        return this.searchPage(query, page, results);
+      }
+      throw new Error('Could not search YouTube.');
     }, 'Could not search YouTube.', error => {
       const message = (error as Error).message;
       if (['Could not search YouTube.', 'Search results were too large.'].includes(message)) return error;
       this.log('search error');
       return new Error('Could not search YouTube.');
     });
+    this.searchCache.set(key, {query, createdAt: this.now(), results: collected});
+    return response;
   }
   async prefetchMetadata(input: unknown): Promise<void> {
     const valid = validateYoutubeUrl(input);

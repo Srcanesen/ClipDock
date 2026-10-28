@@ -10,7 +10,7 @@ function child() { const c = new EventEmitter(); c.stdout = new EventEmitter(); 
 test('YouTube listing resolves without fetching thumbnails', async t => {
   const root = mkdtempSync(join(tmpdir(), 'clipdock-immediate-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   let fetches = 0;
-  const worker = new YtdlpWorker('/fixture/yt-dlp', () => { const c = child(); queueMicrotask(() => { c.stdout.emit('data', JSON.stringify({ entries: [{ id: 'dQw4w9WgXcQ', title: 'Immediate' }] })); c.emit('close', 0); }); return c; }, async () => { fetches++; throw new Error('No thumbnail network allowed'); }, { sessionDir: root, ffmpegPath: null });
+  const worker = new YtdlpWorker('/fixture/yt-dlp', () => { const c = child(); queueMicrotask(() => { c.stdout.emit('data', JSON.stringify({ id: 'dQw4w9WgXcQ', title: 'Immediate' })); c.emit('close', 0); }); return c; }, async () => { fetches++; throw new Error('No thumbnail network allowed'); }, { sessionDir: root, ffmpegPath: null });
   const page = await worker.search('clips', 1);
   assert.equal(fetches, 0);
   assert.equal(page.results[0].thumbnailUrl, 'https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg');

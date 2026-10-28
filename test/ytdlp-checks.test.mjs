@@ -159,7 +159,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   expect('search validator trims Unicode input', validateYoutubeSearch('  café  '), 'café');
   expect('search validator rejects controls and invalid lengths', [validateYoutubeSearch('a'), validateYoutubeSearch('ok\nno'), validateYoutubeSearch('x'.repeat(101))], [null, null, null]);
   const searchEntry = (n, extra = {}) => ({ id: `search${String(n).padStart(5, '0')}`, title: `Search title ${n}`, channel: 'Search channel', duration: n, view_count: 10000 * n, timestamp: 1700000000 + n, channel_is_verified: n % 2 === 0, ...extra });
-  const searchJson = (entries) => JSON.stringify({ entries });
+  const searchJson = (entries) => entries.map(entry => JSON.stringify(entry)).join('\n') + '\n';
   // Search returns provider URLs without performing image I/O.
   {
     const calls = []; let fetches = 0;
@@ -175,7 +175,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     entries.push(searchEntry(1), searchEntry(24, { live_status: 'is_live' }), searchEntry(25, { availability: 'private' }), { id: 'bad', title: 'bad' });
     const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith(searchJson(entries)), closeWith('', 1)], calls), undefined, { sessionDir: path.join(phase3Root, 'search'), now: () => now });
     const first = await worker.search('  café search  ', 1);
-    expect('search exact metadata-only argv', calls[0].args, ['--ignore-config', '--no-warnings', '--no-colors', '--socket-timeout', '15', '--flat-playlist', '--dump-single-json', '--skip-download', '--playlist-end', '30', 'ytsearch30:café search']);
+    expect('search exact metadata-only argv', calls[0].args, ['--ignore-config', '--no-warnings', '--no-colors', '--socket-timeout', '15', '--flat-playlist', '--lazy-playlist', '--dump-json', '--skip-download', '--extractor-args', 'youtubetab:skip=webpage', '--playlist-end', '30', 'ytsearch30:café search']);
     expect('search parses, filters, dedupes and canonicalizes', [first.results.length, first.results[0].url, first.hasPrevious, first.hasNext, first.totalResults, first.pageCount, first.results[0].thumbnailUrl], [10, 'https://www.youtube.com/watch?v=search00001', false, true, 23, 3, 'https://i.ytimg.com/vi/search00001/mqdefault.jpg']);
     expect('search first entry carries narrow numerics and strict verified', [first.results[0].viewCount, first.results[0].publishedAt, first.results[0].channelVerified], [10000, 1700000001, false]);
     const third = await worker.search('CAFÉ SEARCH', 3);
@@ -192,7 +192,8 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
       searchEntry(6, { view_count: 980, timestamp: 1700000000, duration: 61 }),
     ];
     const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith(searchJson(entries))]), undefined, { sessionDir: path.join(phase3Root, 'search-narrow') });
-    const page = await worker.search('narrow', 1);
+    const snapshots = []; const page = await worker.search('narrow', 1, page => snapshots.push(page));
+    expect('fewer than ten accepted results return only the final page', snapshots.length, 0);
     const byId = (id) => page.results.find((r) => r.id === id);
     expect('search rejects non-allowlisted thumbnail URLs', [byId('search00001').thumbnailUrl, byId('search00002').thumbnailUrl], [null, null]);
     expect('search view count bounds are strict (integer 0..1e15)', [byId('search00001').viewCount, byId('search00002').viewCount, byId('search00003').viewCount, byId('search00004').viewCount, byId('search00005').viewCount], [1234567, 1e15, null, null, null]);
@@ -213,6 +214,58 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     const pending = worker.search('safe query', 1);
     worker.dispose(); expect('search dispose TERM leaves no orphan', calls[0].child.kills[0], 'SIGTERM');
     calls[0].child.emit('close', null); await rejected('search dispose is controlled', pending, 'Could not search YouTube.');
+  }
+
+  {
+    const calls = []; const snapshots = [];
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([null], calls), undefined, {sessionDir: path.join(phase3Root, 'search-stream')});
+    let settled = false;
+    const pending = worker.search('stream query', 1, snapshot => snapshots.push(snapshot)).then(value => { settled = true; return value; });
+    const proc = calls[0].child;
+    proc.stdout.emit('data', searchJson([searchEntry(1), searchEntry(1), searchEntry(2, {live_status: 'is_live'}), {id: 'bad'}, ...Array.from({length: 8}, (_, i) => searchEntry(i + 3))]));
+    expect('first page waits for ten accepted unique entries', snapshots.length, 0);
+    proc.stdout.emit('data', searchJson([searchEntry(11)]));
+    expect('first page arrives before close with unknown totals', [snapshots.length, snapshots[0]?.results.map(item => item.id), snapshots[0]?.totalResults, snapshots[0]?.pageCount, snapshots[0]?.hasNext, settled, worker.isActive(), !!worker.searchCache.get('stream query')], [1, ['search00001', 'search00003', 'search00004', 'search00005', 'search00006', 'search00007', 'search00008', 'search00009', 'search00010', 'search00011'], null, null, false, false, true, false]);
+    snapshots[0].results[0].title = 'mutated snapshot';
+    proc.stdout.emit('data', searchJson(Array.from({length: 16}, (_, i) => searchEntry(i + 12))));
+    proc.emit('close', 0);
+    const final = await pending;
+    expect('successful stream finalizes filtered totals without snapshot mutation', [final.totalResults, final.pageCount, final.results[0].title, final.hasNext], [26, 3, 'Search title 1', true]);
+  }
+  {
+    const calls = []; const snapshots = [];
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([null, closeWith(searchJson([searchEntry(1)]))], calls), undefined, {sessionDir: path.join(phase3Root, 'search-cancel')});
+    const pending = worker.search('cancel query', 1, page => snapshots.push(page));
+    calls[0].child.stdout.emit('data', searchJson(Array.from({length: 10}, (_, i) => searchEntry(i + 1))));
+    const cancelled = worker.cancel('youtube-search');
+    calls[0].child.stdout.emit('data', searchJson([searchEntry(11)]));
+    calls[0].child.emit('close', 0);
+    await rejected('cancel after first page rejects owning search', pending, 'Could not search YouTube.');
+    await cancelled;
+    expect('cancel terminates child and never caches partial results', [calls[0].child.kills, snapshots.length, worker.isActive(), !!worker.searchCache.get('cancel query')], [['SIGTERM'], 1, false, false]);
+    expect('cancelled query is fetched afresh', (await worker.search('cancel query', 1)).totalResults, 1);
+  }
+  {
+    const calls = [];
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith('', 1, 'ERROR: [youtube:search] query: Unable to extract initial data\n'), closeWith(searchJson(Array.from({length: 30}, (_, i) => searchEntry(i + 1))))], calls), undefined, {sessionDir: path.join(phase3Root, 'search-fallback')});
+    const first = await worker.search('fallback query', 1);
+    const third = await worker.search('fallback query', 3);
+    expect('extraction failure retries once without skip and caches all thirty', [calls.length, calls.map(call => call.args.includes('youtubetab:skip=webpage')), calls[1].args.includes('--lazy-playlist'), first.totalResults, third.results.length, third.results[0].id, third.hasNext], [2, [true, false], true, 30, 10, 'search00021', false]);
+  }
+  for (const stderr of ['ERROR: HTTP Error 429: Too Many Requests', 'ERROR: [youtube:search] query: Unable to extract initial data']) {
+    const calls = [];
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith('', 1, stderr), closeWith('', 1, stderr)], calls), undefined, {sessionDir: path.join(phase3Root, `search-fallback-limit-${stderr.includes('429')}`)});
+    await rejected('failed search stays an error', worker.search('failed query', 1), 'Could not search YouTube.');
+    expect('only extraction errors retry and retry is bounded', calls.length, stderr.includes('429') ? 1 : 2);
+  }
+  {
+    const calls = []; const snapshots = [];
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([null], calls), undefined, {sessionDir: path.join(phase3Root, 'search-late-error')});
+    const pending = worker.search('late error', 1, page => snapshots.push(page));
+    calls[0].child.stdout.emit('data', searchJson(Array.from({length: 10}, (_, i) => searchEntry(i + 1))));
+    calls[0].child.emit('close', 1);
+    await rejected('error after snapshot rejects owning search', pending, 'Could not search YouTube.');
+    expect('error after snapshot never caches results', [snapshots.length, !!worker.searchCache.get('late error')], [1, false]);
   }
 
   // Metadata is narrow, canonical, and its thumbnail policy is bounded.

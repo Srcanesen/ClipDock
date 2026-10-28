@@ -284,3 +284,45 @@ test('an admitted operation retains its captured root across awaits even when cu
   assert.equal(observed, captured);
   assert.deepEqual(f.published, []);
 });
+
+test('new YouTube search cancels collection and waits for the previous owning job cleanup', async t => {
+  const f = fixture(t); await f.start();
+  const worker = f.workers.get('youtube-search');
+  const work = deferred(), cleanup = deferred(); const queries = [], snapshots = [], cancels = [];
+  let collecting = false;
+  worker.search = (query, page, onFirstPage) => {
+    queries.push(query);
+    if (query === 'second') return Promise.resolve({query, page, totalResults: 30});
+    collecting = true; onFirstPage({query, page, totalResults: null});
+    return work.promise.finally(() => cleanup.promise).finally(() => { collecting = false; });
+  };
+  worker.cancel = id => {
+    cancels.push(id);
+    if (collecting) work.reject(new Error('Could not search YouTube.'));
+    return null;
+  };
+  const first = f.host.provider('youtube').search('first', 1, page => snapshots.push(page));
+  const rejected = assert.rejects(first, {message: 'Could not search YouTube.'});
+  await tick();
+  const second = f.host.provider('youtube').search('second', 1);
+  await tick();
+  assert.deepEqual(queries, ['first'], 'new admission must wait for owning job cleanup');
+  assert.deepEqual(snapshots, [{query: 'first', page: 1, totalResults: null}]);
+  cleanup.resolve(); await rejected;
+  assert.deepEqual(await second, {query: 'second', page: 1, totalResults: 30});
+  assert.deepEqual(queries, ['first', 'second']);
+  assert.deepEqual(cancels, ['youtube-search', 'youtube-search']);
+});
+
+test('YouTube cancellation during engine readiness prevents queued search admission', async t => {
+  const f = fixture(t); const discovery = deferred();
+  const start = f.host.start(discovery.promise);
+  const search = f.host.provider('youtube').search('cancel before ready', 1);
+  const rejected = assert.rejects(search, {message: 'Could not search YouTube.'});
+  const cancelled = f.host.provider('youtube').cancelSearch();
+  discovery.resolve(engines); await start;
+  let searches = 0; f.workers.get('youtube-search').search = () => { searches++; };
+  await rejected;
+  assert.equal(await cancelled, true);
+  assert.equal(searches, 0);
+});

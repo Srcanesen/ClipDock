@@ -7,7 +7,7 @@
 // pattern as the official SamplePlugin). Local module imports stay type-only:
 // they are erased at compile time, so this file has no runtime requires of local files.
 import { contextBridge, ipcRenderer } from 'electron/renderer';
-import type { ClipdockApi, DownloadFolderStatus, HistoryDeleteResult, HistoryRecord, MediaProfile, PexelsAsset, PexelsEvent, PexelsKind, PexelsPage, PinterestEvent, PinterestMetadata, PinterestSearchPage, PreviewBounds, QueueDeleteResult, SelectFileResult, SocialEvent, SocialMetadata, SubtitleCue, TargetBin, TimelinePlacement, YoutubeDownloadOptions, YoutubeEvent, YoutubeMetadata, YoutubePreviewState, YoutubeQuality, YoutubeSearchPage, SubtitleLanguage } from './shared';
+import type { ClipdockApi, DownloadFolderStatus, HistoryDeleteResult, HistoryRecord, MediaProfile, PexelsAsset, PexelsEvent, PexelsKind, PexelsPage, PinterestEvent, PinterestMetadata, PinterestSearchPage, PreviewBounds, QueueDeleteResult, SelectFileResult, SocialEvent, SocialMetadata, SubtitleCue, TargetBin, TimelinePlacement, YoutubeDownloadOptions, YoutubeEvent, YoutubeMetadata, YoutubePreviewState, YoutubeQuality, YoutubeSearchEvent, YoutubeSearchPage, SubtitleLanguage } from './shared';
 import type { TransferResult } from './transfer';
 import type { StatusSnapshot } from './status';
 
@@ -34,7 +34,13 @@ const api: ClipdockApi = {
     ipcRenderer.invoke('clipdock:import-to-media-pool', cardId, targetBin) as Promise<TransferResult>,
   addToTimeline: (cardId: string, targetBin: TargetBin, placement: TimelinePlacement) =>
     ipcRenderer.invoke('clipdock:add-to-timeline', cardId, targetBin, placement) as Promise<TransferResult>,
-  searchYoutube: (query: string, page: number) => ipcRenderer.invoke('clipdock:search-youtube', query, page) as Promise<YoutubeSearchPage>,
+  searchYoutube: (query: string, page: number, generation?: number) => ipcRenderer.invoke('clipdock:search-youtube', query, page, generation) as Promise<YoutubeSearchPage>,
+  onYoutubeSearchPage: (callback: (event: YoutubeSearchEvent) => void) => {
+    const listener = (_event: unknown, ...args: unknown[]) => callback(args[0] as YoutubeSearchEvent);
+    ipcRenderer.on('clipdock:youtube-search-page', listener);
+    return () => ipcRenderer.removeListener('clipdock:youtube-search-page', listener);
+  },
+  cancelYoutubeSearch: () => ipcRenderer.invoke('clipdock:cancel-youtube-search') as Promise<boolean>,
   prefetchYoutube: (url: string) => ipcRenderer.invoke('clipdock:prefetch-youtube', url) as Promise<void>,
   loadYoutube: (url: string) => ipcRenderer.invoke('clipdock:load-youtube', url) as Promise<YoutubeMetadata>,
   downloadYoutube: (url: string, quality: YoutubeQuality, profile: MediaProfile, jobId: string, options: YoutubeDownloadOptions) =>

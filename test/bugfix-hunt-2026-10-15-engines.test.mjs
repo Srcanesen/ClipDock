@@ -64,7 +64,7 @@ test('bug 3: ended livestream VODs appear in search and social metadata while pr
   const {worker} = fixture(t);
   const statuses = ['was_live', 'not_live', null, 'is_live', 'is_upcoming', 'post_live'];
   const entries = statuses.map((live_status, index) => ({id: `video00000${index}`, title: 'Recorded show', live_status}));
-  const page = await worker(`console.log(${JSON.stringify(JSON.stringify({entries}))});`).search('recorded show', 1);
+  const page = await worker(`console.log(${JSON.stringify(entries.map(entry => JSON.stringify(entry)).join('\n'))});`).search('recorded show', 1);
   assert.deepEqual(page.results.map(item => item.id), ['video000000', 'video000001', 'video000002']);
   for (const live_status of statuses) {
     const raw = {id: 'recorded-show', title: 'Recorded show', live_status, formats: [{height: 720, vcodec: 'h264'}]};

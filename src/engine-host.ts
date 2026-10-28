@@ -4,7 +4,7 @@ import path from 'node:path';
 import { ManagedRoot, ManagedRootSelection } from './managed-root';
 import { awaitEngineShutdown } from './provider-platform';
 import { createPinterestMetadataSnapshotStore, createProviderDownloadHandlers, ManagedOperations, type ProviderDownloadDependencies, type ProviderDownloadHandlers, type discoverEnginePaths } from './main-process';
-import type { YtdlpWorker } from './ytdlp';
+import type { YtdlpWorker, YoutubeSearchPage, YoutubeSearchSnapshot } from './ytdlp';
 import { createPinterestSearchSnapshotStore, type PinterestSearchSnapshotStore, type GalleryDlWorker } from './gallerydl';
 import type { StockClient } from './stock';
 import type { createMediaPrep } from './media-prep';
@@ -54,6 +54,8 @@ export function createEngineHost(deps: EngineHostDependencies) {
   let downloads: ProviderDownloadHandlers | undefined;
   let engines: Engines;
   let workers: ReturnType<typeof createWorkers>;
+  let youtubeSearchRequest = 0;
+  let youtubeSearchPending: Promise<YoutubeSearchPage> | undefined;
   // One restore per provider: a slow Keychain read for one never delays the other.
   let credentialRestore: Record<StockProvider, Promise<void>> = {pexels: Promise.resolve(), pixabay: Promise.resolve()};
   let restoringCredential = false;
@@ -205,9 +207,32 @@ export function createEngineHost(deps: EngineHostDependencies) {
     abortRequests: () => run(() => workers[name].abortApiRequests()),
     download: download(name), cancel,
   });
+  function searchYoutube(query: unknown, page: unknown, onFirstPage?: (page: YoutubeSearchSnapshot) => void): Promise<YoutubeSearchPage> {
+    const request = ++youtubeSearchRequest; const previous = youtubeSearchPending;
+    const pending = run(async () => {
+      await workers.youtubeSearch.cancel('youtube-search');
+      await previous?.catch(() => undefined);
+      if (request !== youtubeSearchRequest) throw new Error('Could not search YouTube.');
+      return workers.youtubeSearch.search(query, page, ...(onFirstPage ? [onFirstPage] : []));
+    });
+    youtubeSearchPending = pending;
+    const clear = () => { if (youtubeSearchPending === pending) youtubeSearchPending = undefined; };
+    void pending.then(clear, clear);
+    return pending;
+  }
+  function cancelYoutubeSearch(): Promise<boolean> {
+    youtubeSearchRequest += 1;
+    const pending = youtubeSearchPending;
+    return run(async () => {
+      await workers.youtubeSearch.cancel('youtube-search');
+      await pending?.catch(() => undefined);
+      return !!pending;
+    });
+  }
   const providers = {
     youtube: {
-      search: (query: unknown, page: unknown) => run(() => workers.youtubeSearch.search(query, page)),
+      search: searchYoutube,
+      cancelSearch: cancelYoutubeSearch,
       load: (url: unknown) => run(() => workers.youtubeMetadata.metadata(url)),
       prefetch: (url: unknown) => run(() => workers.youtubeMetadata.prefetchMetadata(url)),
       subtitles: (url: unknown, language: unknown) => run(() => workers.youtubeSubtitles.subtitles(url, language)),

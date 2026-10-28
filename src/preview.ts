@@ -45,6 +45,8 @@ interface PreviewPinterestEvent { jobId: string; state: string; percent: number 
 interface PreviewHistoryRecord { id: string; provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; quality: string | null; mediaMode: string; selection: null; automation: { provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; selection: null; chapters: [] }; createdAt: number; lastUsedAt: number; available: boolean; cardId?: string; }
 
 interface PreviewApi {
+  onYoutubeSearchPage(callback: (event: { generation: number; page: Omit<PreviewYoutubeSearchPage, 'totalResults' | 'pageCount'> & { totalResults: null; pageCount: null } }) => void): () => void;
+  cancelYoutubeSearch(): Promise<boolean>;
   openYoutubeExternal(videoId: string, startSeconds?: number): Promise<boolean>;
   openYoutubePreview(videoId: string, startSeconds: number | undefined, bounds: {x: number; y: number; width: number; height: number}): Promise<boolean>;
   closeYoutubePreview(): Promise<boolean>;
@@ -60,7 +62,7 @@ interface PreviewApi {
   startNativeDrag(cardId: string): void;
   importToMediaPool(cardId: string, targetBin: 'active' | 'clipdock'): Promise<PreviewTransferResult>;
   addToTimeline(cardId: string, targetBin: 'active' | 'clipdock', placement: 'end' | 'playhead'): Promise<PreviewTransferResult>;
-  searchYoutube(query: string, page: number): Promise<PreviewYoutubeSearchPage>;
+  searchYoutube(query: string, page: number, generation?: number): Promise<PreviewYoutubeSearchPage>;
   prefetchYoutube(url: string): Promise<void>;
   loadYoutube(url: string): Promise<PreviewYoutubeMetadata>;
   loadSocialThumbnail(url: string): Promise<string | null>;
@@ -289,6 +291,8 @@ if (previewParam !== null) {
     selectFile: async () => SAMPLE_CARD,
     startNativeDrag: () => undefined,
     prefetchYoutube: async () => undefined,
+    onYoutubeSearchPage: () => () => undefined,
+    cancelYoutubeSearch: async () => true,
     searchYoutube: async (query, page) => {
       if (previewParam === 'slow') await new Promise(resolve => setTimeout(resolve, 2500));
       if (previewParam === 'error') throw new Error('Preview fixture: search unavailable.');

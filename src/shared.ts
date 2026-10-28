@@ -66,6 +66,8 @@ export type HistoryRecord = { id: string; provider: 'youtube' | 'pexels' | 'pixa
 export type YoutubeSearchItem = { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; channelVerified: boolean };
 export type ThumbnailDiagnostic = { failed: number; total: number; reason: string; node: string };
 export type YoutubeSearchPage = { query: string; page: number; pageSize: 10; results: YoutubeSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: ThumbnailDiagnostic };
+export type YoutubeSearchSnapshot = Omit<YoutubeSearchPage, 'totalResults' | 'pageCount'> & { totalResults: null; pageCount: null };
+export type YoutubeSearchEvent = { generation: number; page: YoutubeSearchSnapshot };
 export type YoutubeEvent = { jobId: string; state: 'idle' | 'metadata' | 'downloading' | 'processing' | 'cancelling' | 'completed' | 'cancelled' | 'failed'; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; subtitle?: DownloadArtifact; warning?: string };
 export type SocialEvent = { jobId: string; state: 'idle' | 'metadata' | 'downloading' | 'processing' | 'cancelling' | 'completed' | 'cancelled' | 'failed'; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; warning?: string };
 export type PexelsKind = 'photo' | 'video';
@@ -101,7 +103,9 @@ export interface ClipdockApi {
   importToMediaPool(cardId: string, targetBin: TargetBin): Promise<TransferResult>;
   /** Import the card's file and add it at the selected timeline position in the chosen destination bin. */
   addToTimeline(cardId: string, targetBin: TargetBin, placement: TimelinePlacement): Promise<TransferResult>;
-  searchYoutube(query: string, page: number): Promise<YoutubeSearchPage>;
+  searchYoutube(query: string, page: number, generation?: number): Promise<YoutubeSearchPage>;
+  onYoutubeSearchPage(callback: (event: YoutubeSearchEvent) => void): () => void;
+  cancelYoutubeSearch(): Promise<boolean>;
   prefetchYoutube(url: string): Promise<void>;
   loadYoutube(url: string): Promise<YoutubeMetadata>;
   downloadYoutube(url: string, quality: YoutubeQuality, profile: MediaProfile, jobId: string, options: YoutubeDownloadOptions): Promise<DownloadArtifact & { subtitle?: DownloadArtifact; warning?: string }>;
