@@ -179,6 +179,8 @@ type HistoryProviderFilter = 'all' | Provider;
 type HistoryAvailabilityFilter = 'all' | 'available' | 'missing';
 const HISTORY_BATCH_SIZE = 20;
 let historyRecords: HistoryRecord[] = [];
+const historyThumbnailCache = new Map<string, string>();
+const historyThumbnailRequests = new Map<string, Promise<string | null>>();
 let historyVisibleCount = HISTORY_BATCH_SIZE;
 const historyGuard = createGenerationGuard();
 let historyStatusOverride: string | null = null;
@@ -2321,6 +2323,7 @@ async function historyAction(record: HistoryRecord, action: string): Promise<voi
     else if (action === 'delete') {
       if (!window.confirm(`Remove ${record.fileName} from history? A ClipDock-managed file is deleted only when it is safe and no other record uses it.`)) return;
       const result = await window.clipdockAPI.historyDelete(record.id);
+      if (result.removed) { forgetHistoryThumbnail(record.id); historyRecords = historyRecords.filter(item => item.id !== record.id); }
       invalidateDeletedCards(result.removedCardIds);
       const outcome = result.deleted
         ? result.removed ? 'Removed from history and deleted the managed file.' : 'The managed file was deleted. The history entry was kept.'
@@ -2335,7 +2338,7 @@ async function historyAction(record: HistoryRecord, action: string): Promise<voi
     else if (action === 'reveal-subtitle') await window.clipdockAPI.historyRevealSubtitle(record.id);
     else if (action === 'source') await window.clipdockAPI.historySource(record.id);
     else if (action === 'copy') await window.clipdockAPI.historyCopy(record.id);
-    else if (action === 'relink') await window.clipdockAPI.historyRelink(record.id);
+    else if (action === 'relink') { if (await window.clipdockAPI.historyRelink(record.id)) forgetHistoryThumbnail(record.id); }
   } catch (err) {
     showActionResult((err as Error).message);
   } finally {
@@ -2384,6 +2387,8 @@ async function refreshHistory(): Promise<void> {
   try {
     const records = await window.clipdockAPI.historyList();
     if (historyGuard.isStale(request)) return;
+    const retained = new Set(records.map(record => record.id));
+    for (const id of new Set([...historyThumbnailCache.keys(), ...historyThumbnailRequests.keys()])) if (!retained.has(id)) forgetHistoryThumbnail(id);
     historyRecords = records;
     historyStatusOverride = null;
     document.getElementById('history-list')?.removeAttribute?.('data-loading');
@@ -2402,6 +2407,7 @@ async function clearHistory(): Promise<void> {
   if (!window.confirm('Clear all History entries and thumbnails? Downloaded files will be kept.')) return;
   try {
     const count = await window.clipdockAPI.historyClear();
+    historyThumbnailCache.clear(); historyThumbnailRequests.clear(); historyRecords = [];
     showActionResult(`Cleared ${count} history ${count === 1 ? 'entry' : 'entries'}. Downloaded files were kept.`, true);
   } catch (error) { showActionResult((error as Error).message); }
   await refreshHistory();
@@ -2498,13 +2504,25 @@ function watchHistoryHandoff(control: HTMLButtonElement, label: string, action: 
   };
   historyHostRefreshers.push(refresh); refresh();
 }
+function forgetHistoryThumbnail(id: string): void { historyThumbnailCache.delete(id); historyThumbnailRequests.delete(id); }
+function loadHistoryThumbnail(id: string): Promise<string | null> {
+  const previous = historyThumbnailRequests.get(id);
+  if (previous) return previous;
+  const request: Promise<string | null> = (window.clipdockAPI.historyThumbnail?.(id) ?? Promise.resolve(null)).then(thumbnail => {
+    if (historyThumbnailRequests.get(id) !== request) return null;
+    if (thumbnail) historyThumbnailCache.set(id, thumbnail);
+    return thumbnail;
+  }).catch(() => null).finally(() => { if (historyThumbnailRequests.get(id) === request) historyThumbnailRequests.delete(id); });
+  historyThumbnailRequests.set(id, request);
+  return request;
+}
 // The visible face of a history row: a contact print, the clip line, and the one or two
 // actions that fit the row's state. Everything else stays in the More menu.
 function appendHistoryRowFace(row: HTMLElement, record: HistoryRecord, more: HTMLButtonElement): void {
   const mini = document.createElement('span'); mini.className = 'mini'; mini.setAttribute('aria-hidden', 'true');
-  const poster = document.createElement('img'); poster.alt = ''; const fallback = skylinePoster(record.id); poster.src = fallback; mini.append(poster);
-  poster.addEventListener('error', () => { if (poster.src !== fallback) poster.src = fallback; });
-  void window.clipdockAPI.historyThumbnail?.(record.id).then(thumbnail => { if (thumbnail) poster.src = thumbnail; }).catch(() => undefined);
+  const poster = document.createElement('img'); poster.alt = ''; const fallback = skylinePoster(record.id); const cached = historyThumbnailCache.get(record.id); poster.src = cached ?? fallback; mini.append(poster);
+  poster.addEventListener('error', () => { if (poster.src !== fallback) { forgetHistoryThumbnail(record.id); poster.src = fallback; } });
+  if (!cached) void loadHistoryThumbnail(record.id).then(thumbnail => { if (thumbnail) poster.src = thumbnail; });
   if (!record.available) { const stamp = document.createElement('span'); stamp.className = 'stamp'; stamp.textContent = 'MISSING'; mini.append(stamp); }
   else {
     const drag = document.createElement('span'); drag.className = 'drag'; drag.textContent = 'Drag';

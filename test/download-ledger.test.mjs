@@ -8,6 +8,7 @@ import { DownloadLedger } from '../dist/download-ledger.js';
 import { DownloadHistory } from '../dist/history.js';
 import { createMainTransferHandlers, resolveMainProcessCard } from '../dist/main-process.js';
 import { inspectWorkspace, cleanupWorkspace } from '../dist/workspace.js';
+import { download, mainFixture } from './helpers/files-main.mjs';
 
 const source = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 const input = filePath => ({ provider: 'youtube', source, filePath, assetId: null, title: 'Clip', creator: null, profile: 'original', quality: 'best', mediaMode: 'video', selection: null, automation: { provider: 'youtube', source, selection: null, chapters: [] } });
@@ -20,6 +21,23 @@ function fixture(t) {
   const file = (name, text = 'media') => { const file = path.join(root.providerPath('youtube'), name); fs.writeFileSync(file, text); return file; };
   return { dir, root, history, ledger, file, setReading: value => { reading = value; } };
 }
+
+test('History clear IPC immediately empties ledger bindings and keeps session cards and files', async t => {
+  let ledger;
+  const f = await mainFixture(t, { modules: { './download-ledger': { DownloadLedger: class extends DownloadLedger {
+    constructor(...args) { super(...args); ledger = this; }
+  } } } });
+  const result = await download(f);
+  const passive = (await f.invoke('historyList'))[0].cardId;
+  const media = ledger.resolve(result.cardId).path;
+  assert.equal(ledger.historyCards.size, 1);
+  assert.equal(await f.invoke('historyClear'), 1);
+  assert.equal(ledger.historyCards.size, 0, 'clear must not wait for listHistory to drop bindings');
+  assert.equal(ledger.resolve(passive), null);
+  assert.equal(ledger.resolve(result.cardId).path, media);
+  assert.equal(ledger.resolve(result.cardId).historyId, undefined);
+  assert.equal(fs.readFileSync(media, 'utf8'), 'media');
+});
 
 test('register, resolve, protect and delete use opaque cards and reject outside, malformed and replaced files', t => {
   const { dir, root, history, ledger, file } = fixture(t), media = file('clip.mp4'), outside = path.join(dir, 'outside.mp4'); fs.writeFileSync(outside, 'outside');

@@ -1,7 +1,7 @@
 // Main-only, disposable History artwork. Renderer input is an opaque record id.
 import { spawn as nodeSpawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { spawnBounded, type Spawn } from './provider-platform';
 import { AnchoredDir, captureEntry, captureFile, ensureDirectory, openExclusive, publishNoReplace, removeEntry, removeOwned, verifyFile, type OwnedFile } from './safe-fs';
@@ -19,6 +19,7 @@ const nameFor = (id: string) => `${PREFIX}${createHash('sha256').update(id).dige
 export class HistoryThumbnails {
   private directory: AnchoredDir | null = null;
   private readonly pending = new Map<string, Promise<string | null>>();
+  private readonly failed = new Map<string, string>();
   private tail: Promise<unknown> = Promise.resolve();
   private active: ReturnType<typeof spawnBounded> | null = null;
   private disposed = false;
@@ -32,6 +33,8 @@ export class HistoryThumbnails {
   }
   /** Reconcile only our direct, namespaced files; never descend or follow links. */
   cleanup(ids: string[]): void {
+    const retained = new Set(ids);
+    for (const id of this.failed.keys()) if (!retained.has(id)) this.failed.delete(id);
     const keep = new Set(ids.map(nameFor));
     const directory = this.existingDirectory();
     if (!directory) return;
@@ -42,6 +45,7 @@ export class HistoryThumbnails {
     }
   }
   remove(id: string): void {
+    this.failed.delete(id);
     try { const directory = this.existingDirectory(); if (directory) removeEntry(captureEntry(directory, nameFor(id))); } catch { /* Missing or replaced artwork is harmless. */ }
   }
   private read(name: string): string | null {
@@ -66,10 +70,14 @@ export class HistoryThumbnails {
     if (cached) return Promise.resolve(cached);
     const previous = this.pending.get(id);
     if (previous) return previous;
+    let failureKey: string | null = null;
     const pending = this.tail.then(async () => {
       if (this.disposed || !retained()) return null;
       const input = source();
       if (!input) return null;
+      const stat = statSync(verifyFile(input), { bigint: true });
+      failureKey = `${input.path}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+      if (this.failed.get(id) === failureKey) return null;
       const { ffmpegPath, ffprobePath } = await this.options.tools();
       if (this.disposed || !retained() || !ffmpegPath || !ffprobePath) return null;
       const probe = await this.run(ffprobePath, ['-v', 'error', '-protocol_whitelist', 'file,pipe', '-show_entries', 'format=duration', '-of', 'json', verifyFile(input)], 16 * 1024);
@@ -87,7 +95,10 @@ export class HistoryThumbnails {
         publishNoReplace(opened.file, directory, name);
       } finally { closeSync(opened.fd); removeOwned(opened.file); }
       return this.read(name);
-    }).catch(() => null).finally(() => { this.pending.delete(id); });
+    }).catch(() => {
+      if (failureKey && !this.disposed && retained()) this.failed.set(id, failureKey);
+      return null;
+    }).finally(() => { this.pending.delete(id); });
     this.pending.set(id, pending); this.tail = pending;
     return pending;
   }

@@ -4,6 +4,45 @@ import { runInNewContext } from 'node:vm';
 import { createHarness } from './helpers/renderer-harness.mjs';
 import { transpilePreviewAdapter } from '../scripts/lib/preview-adapter.mjs';
 
+const posterFor = h => h.elements.get('history-list').children[0]?.children.find(child => child.className === 'mini').children[0];
+
+test('a cached History row rebuilds immediately without a second thumbnail IPC', async () => {
+  const h = createHarness(); let calls = 0;
+  const image = 'data:image/jpeg;base64,/9j/cached';
+  h.api.historyList = async () => [{ id: 'first', provider: 'social', title: 'Clip', fileName: 'clip.mp4', available: false, createdAt: 1, bytes: 1 }];
+  h.api.historyThumbnail = async () => { calls++; return image; };
+  await h.fireReady(); h.test.setSurface('library'); await h.flush();
+  assert.equal(posterFor(h).src, image); assert.equal(calls, 1);
+  h.elements.get('history-search-input').value = 'Clip';
+  h.elements.get('history-search-input').listeners.input();
+  assert.equal(calls, 1);
+  assert.equal(posterFor(h).src, image, 'the rebuild must never start on the placeholder');
+});
+
+test('delete and clear forget cached History images and ignore late thumbnail responses', async () => {
+  for (const action of ['delete', 'clear']) for (const late of [false, true]) {
+    const h = createHarness(); let resolve;
+    const image = 'data:image/jpeg;base64,/9j/deleted';
+    const record = { id: 'first', provider: 'social', title: 'Clip', fileName: 'clip.mp4', available: false, createdAt: 1, bytes: 1 };
+    let records = [record];
+    h.api.historyList = async () => records;
+    h.api.historyThumbnail = () => new Promise(done => { resolve = done; });
+    h.api.historyDelete = async () => { records = []; return { deleted: false, removed: true }; };
+    h.api.historyClear = async () => { records = []; return 1; };
+    await h.fireReady(); h.test.setSurface('library'); await h.flush();
+    if (!late) { resolve(image); await h.flush(); assert.equal(posterFor(h).src, image); }
+    if (action === 'clear') h.elements.get('history-clear-btn').click();
+    else h.elements.get('history-list').children[0].children.find(child => child.className === 'acts').children.find(child => child.title === 'Remove from history').click();
+    await h.flush(); assert.equal(h.elements.get('history-list').children.length, 0);
+    if (late) { resolve(image); await h.flush(); }
+    // Even a stale record returned by a later refresh cannot resurrect cached artwork.
+    records = [record]; let requests = 0;
+    h.api.historyThumbnail = async () => { requests++; return null; };
+    h.elements.get('history-refresh-btn').click(); await h.flush();
+    assert.equal(requests, 1); assert.notEqual(posterFor(h).src, image);
+  }
+});
+
 test('History paints artwork by opaque id without replacing a row, falls back on failure, and clears through its button', async () => {
   const h = createHarness(); let resolve;
   const calls = [];

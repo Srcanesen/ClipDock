@@ -111,6 +111,16 @@ export class DownloadLedger {
     const removedCardIds = result.removed ? this.unbind(id) : [];
     return { ...result, removedCardIds };
   }
+  clearHistory(): number {
+    const count = this.history.clear();
+    for (const id of this.historyCards.keys()) this.unbindDrag(id);
+    // Session cards still own their files, but no longer belong to a History record.
+    for (const [id, card] of this.cards) if (card.historyId) {
+      const { historyId, ...unbound } = card;
+      this.cards.set(id, Object.freeze(unbound));
+    }
+    return count;
+  }
   deleteCard(cardId: unknown): { deleted: boolean; message: string } {
     const card = this.resolve(cardId);
     if (typeof cardId !== 'string' || !card) return { deleted: false, message: 'File was not deleted safely because its ClipDock history record is unavailable. It remains in the queue.' };

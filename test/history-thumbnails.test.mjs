@@ -33,6 +33,33 @@ function dimensions(file) {
   return JSON.parse(execFileSync(ffprobePath, ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'json', file], { encoding: 'utf8' })).streams.map(({ width, height }) => [width, height]);
 }
 
+test('failed decoding and oversized frames do not respawn on a second History rebuild, but changed and relinked files retry', async t => {
+  for (const oversized of [false, true]) {
+    let starts = 0;
+    const f = fixture(t, { tools: async () => ({ ffmpegPath: '/fixture/ffmpeg', ffprobePath: '/fixture/ffprobe' }), spawn: (_binary, args) => {
+      starts++;
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+      child.kill = () => { child.emit('close', null); return true; };
+      queueMicrotask(() => {
+        if (args.includes('-show_entries')) { child.stdout.emit('data', '{"format":{"duration":"10"}}'); child.emit('close', 0); }
+        else if (oversized) { child.stdout.emit('data', Buffer.alloc(32 * 1024 + 1)); child.emit('close', 0); }
+        else child.emit('close', 1);
+      });
+      return child;
+    } });
+    const file = path.join(f.root, 'broken.mp4'); fs.writeFileSync(file, 'broken');
+    const record = f.history.add(historyInput(file));
+    assert.equal(await f.history.thumbnail(record.id), null); assert.equal(starts, 2);
+    assert.equal(await f.history.thumbnail(record.id), null); assert.equal(starts, 2, 'second rebuild must not repeat failed work');
+    fs.appendFileSync(file, ' changed');
+    assert.equal(await f.history.thumbnail(record.id), null); assert.equal(starts, 4);
+    // Explicit relink retries even when it selects the same file.
+    f.history.relink(record.id, file);
+    assert.equal(await f.history.thumbnail(record.id), null); assert.equal(starts, 6);
+    assert.equal(await f.history.thumbnail(record.id), null); assert.equal(starts, 6);
+  }
+});
+
 test('video and portrait photo produce Retina-size bounded local thumbnails exactly once, including after restart', realTools, async t => {
   const calls = [];
   const f = fixture(t, { tools, spawn: (...args) => { calls.push(args); return spawn(...args); } });

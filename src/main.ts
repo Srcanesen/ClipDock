@@ -448,7 +448,7 @@ function registerHistoryHandlers(): void {
   }, 'immediate'));
   ipcMain.handle(IPC_CHANNELS.queueDelete, createSensitiveIpcHandler(requireTrustedSender, async (_event, cardId: unknown) => ledger.deleteCard(cardId)));
   ipcMain.handle(IPC_CHANNELS.historyThumbnail, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => history.thumbnail(id), 'immediate'));
-  ipcMain.handle(IPC_CHANNELS.historyClear, createSensitiveIpcHandler(requireTrustedSender, async () => history.clear(), 'immediate'));
+  ipcMain.handle(IPC_CHANNELS.historyClear, createSensitiveIpcHandler(requireTrustedSender, async () => ledger.clearHistory(), 'immediate'));
   ipcMain.handle(IPC_CHANNELS.historyReuse, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => engineHost.operation(async () => { await refreshHistoryProject(); return ledger.reuseHistory(id); })));
   ipcMain.handle(IPC_CHANNELS.historyReveal, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => { const hit = history.resolve(id); if (!hit) return false; sessionTransferCards.noteExposed(hit.path); shell.showItemInFolder(hit.path); return true; }));
   // Subtitle companions resolve only in main; the renderer gets a boolean, never a path.
