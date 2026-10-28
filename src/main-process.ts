@@ -3,6 +3,7 @@
 // validation and dispatch behavior so it can be exercised without Electron or
 // WorkflowIntegration.node.
 
+import { searchOrientation, type ORIENTATION_SUPPORT, type SearchOptions } from './renderer-state/search-session';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import {dirname} from 'node:path';
 import { isSafeMediaFile as pathIsSafeMediaFile } from './path-boundary';
@@ -723,4 +724,9 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
   };
 
   return {youtube, social, pinterest, pexels: stock('pexels', 'Pexels'), pixabay: stock('pixabay', 'Pixabay'), cancel: jobId => jobs.cancel(jobId) !== null, shutdown: () => jobs.dispose()};
+}
+
+/** Renderer options cross a trust boundary here; unsupported/malformed values mean All. */
+export function normalizeSearchOptions(source: keyof typeof ORIENTATION_SUPPORT, options: unknown): SearchOptions {
+  return {orientation: searchOrientation(options, source)};
 }

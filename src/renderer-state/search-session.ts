@@ -32,3 +32,33 @@ export function createGenerationGuard(initial = 0): GenerationGuard {
     },
   };
 }
+
+// Search options are shared by the browser and main-owned provider boundaries.
+export type Orientation = 'all' | 'vertical' | 'horizontal' | 'square';
+export type SearchOptions = { orientation?: Orientation };
+export const ORIENTATION_SUPPORT = {
+  youtube: ['all', 'vertical', 'horizontal'],
+  pinterest: ['all', 'vertical', 'horizontal', 'square'],
+  pexels: ['all', 'vertical', 'horizontal', 'square'],
+  pixabay: ['all', 'vertical', 'horizontal', 'square'],
+} as const satisfies Record<string, readonly Orientation[]>;
+
+/** Untrusted IPC options default to All, including unsupported source options. */
+export function searchOrientation(options: unknown, source: keyof typeof ORIENTATION_SUPPORT): Orientation {
+  const value = options && typeof options === 'object' && !Array.isArray(options)
+    ? (options as SearchOptions).orientation : undefined;
+  return (ORIENTATION_SUPPORT[source] as readonly unknown[]).includes(value) ? value as Orientation : 'all';
+}
+
+export function classifyOrientation(width: unknown, height: unknown): Exclude<Orientation, 'all'> | null {
+  if (typeof width !== 'number' || !Number.isFinite(width) || width <= 0 || typeof height !== 'number' || !Number.isFinite(height) || height <= 0) return null;
+  return height > width ? 'vertical' : width > height ? 'horizontal' : 'square';
+}
+
+export function matchesOrientation(item: {width: unknown; height: unknown}, orientation: Orientation): boolean {
+  return orientation === 'all' || classifyOrientation(item.width, item.height) === orientation;
+}
+
+export function matchesYoutubeOrientation(item: {isShort: boolean | null}, orientation: Orientation): boolean {
+  return orientation === 'all' || orientation === 'square' || (orientation === 'vertical' ? item.isShort === true : item.isShort === false);
+}

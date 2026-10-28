@@ -688,7 +688,7 @@ test('providers wrap roving focus and Pexels searches default to Video', async (
   f.key(social, 'Home'); assert.equal(f.dom.activeElement.id, 'provider-youtube');
   assert.deepEqual(['provider-youtube', 'provider-pinterest', 'provider-pexels', 'provider-social'].map((id) => f.elements.get(id).tabIndex), [0, -1, -1, -1]);
   f.elements.get('provider-pexels').click(); f.elements.get('youtube-search-input').value = 'q'; await f.context.searchPexels(1);
-  assert.deepEqual(f.calls.find((call) => call[0] === 'pexels-search'), ['pexels-search', 'video', 'q', 1]);
+  expect('Pexels defaults to Video and All', f.calls.find((call) => call[0] === 'pexels-search'), ['pexels-search', 'video', 'q', 1, {orientation: 'all'}]);
 });
 
 test('first-use acknowledgement and output preference persist without storing credentials', async (t) => {

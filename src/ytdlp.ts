@@ -1,4 +1,5 @@
 // yt-dlp boundary: Node-only, Electron-free, and intentionally narrow.
+import { searchOrientation, matchesYoutubeOrientation, type SearchOptions } from './renderer-state/search-session';
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, win32 } from 'node:path';
@@ -24,7 +25,7 @@ export type YtdlpState = 'idle' | 'metadata' | 'downloading' | 'processing' | 'c
 export type NarrowMetadata = { id: string; title: string; duration: number | null; channel: string | null; thumbnailUrl: string | null; heights: number[]; formatSummary: string[]; chapters: Chapter[] };
 export type SocialMetadata = { id: string; platform: SocialPlatform; source: string; title: string; duration: number | null; channel: string | null; thumbnailDataUrl: string | null; heights: number[]; formatSummary: string[] };
 export type ThumbnailDiagnostic = { failed: number; total: number; reason: string; node: string };
-export type YoutubeSearchItem = { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; channelVerified: boolean };
+export type YoutubeSearchItem = { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; isShort: boolean | null; channelVerified: boolean };
 export type YoutubeSearchPage = { query: string; page: number; pageSize: 10; results: YoutubeSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: ThumbnailDiagnostic };
 export type YoutubeSearchSnapshot = Omit<YoutubeSearchPage, 'totalResults' | 'pageCount'> & { totalResults: null; pageCount: null };
 export type DownloadEvent = { jobId: string; state: YtdlpState; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; fileName?: string };
@@ -140,13 +141,28 @@ function selector(quality: unknown): string | null {
     : null;
 }
 
+function youtubeIsShort(entry: Record<string, unknown>): boolean | null {
+  if (entry.is_short === true) return true;
+  let watch = false;
+  for (const value of [entry.url, entry.webpage_url, entry.original_url]) {
+    if (typeof value !== 'string') continue;
+    try {
+      const url = new URL(value, 'https://www.youtube.com');
+      if (!['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(url.hostname)) continue;
+      if (/^\/shorts\/[^/]+\/?$/.test(url.pathname)) return true;
+      if (url.pathname === '/watch' && url.searchParams.get('v') === entry.id) watch = true;
+    } catch { /* A missing URL signal remains unknown. */ }
+  }
+  return entry.is_short === false || watch ? false : null;
+}
+
 function safeText(v: unknown, max = 300): string { return typeof v === 'string' ? v.replace(/[\r\n]/g, ' ').slice(0, max) : ''; }
 export function validateYoutubeSearch(input: unknown): string | null {
   if (typeof input !== 'string') return null;
   const query = input.trim();
   return query.length >= 2 && query.length <= 100 && !/[\x00-\x1f\x7f-\x9f]/.test(query) ? query : null;
 }
-function narrowSearchEntry(raw: unknown): YoutubeSearchItem | null {
+export function narrowSearchEntry(raw: unknown): YoutubeSearchItem | null {
   const entry = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
   if (!entry || typeof entry.id !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(entry.id)) return null;
   const title = safeText(entry.title, 200).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim();
@@ -158,7 +174,7 @@ function narrowSearchEntry(raw: unknown): YoutubeSearchItem | null {
   const channelVerified = entry.channel_is_verified === true;
   if (!((entry.live_status ?? null) === null || entry.live_status === 'not_live' || entry.live_status === 'was_live')) return null;
   if (!((entry.availability ?? null) === null || entry.availability === 'public' || entry.availability === 'unlisted')) return null;
-  return { id: entry.id, title, channel, duration, url: `https://www.youtube.com/watch?v=${entry.id}`, thumbnailUrl: youtubeThumbnail(entry, entry.id), viewCount, publishedAt, channelVerified };
+  return { id: entry.id, title, channel, duration, url: `https://www.youtube.com/watch?v=${entry.id}`, thumbnailUrl: youtubeThumbnail(entry, entry.id), viewCount, publishedAt, channelVerified, isShort: youtubeIsShort(entry) };
 }
 export function youtubeThumbnail(raw: Record<string, unknown>, id: string): string | null {
   const safe = (value: unknown): string | null => {
@@ -467,14 +483,16 @@ export class YtdlpWorker {
     const totalResults = results.length;
     return { query, page, pageSize: SEARCH_PAGE_SIZE, results: results.slice(start, start + SEARCH_PAGE_SIZE).map(item => ({ ...item })), hasPrevious: page > 1, hasNext: start + SEARCH_PAGE_SIZE < totalResults, totalResults, pageCount: Math.min(3, Math.max(1, Math.ceil(totalResults / SEARCH_PAGE_SIZE))) };
   }
-  async search(input: unknown, page: unknown, onFirstPage?: (page: YoutubeSearchSnapshot) => void): Promise<YoutubeSearchPage> {
+  async search(input: unknown, page: unknown, onFirstPage?: (page: YoutubeSearchSnapshot) => void, options?: SearchOptions): Promise<YoutubeSearchPage> {
+    const orientation = searchOrientation(options, 'youtube');
+    const filtered = (items: YoutubeSearchItem[]) => items.filter(item => matchesYoutubeOrientation(item, orientation));
     const query = validateYoutubeSearch(input);
     if (!query) throw new Error('Enter 2–100 characters to search YouTube.');
     if (typeof page !== 'number' || !Number.isInteger(page) || page < 1 || page > 3) throw new Error('Invalid search request.');
     const key = query.toLocaleLowerCase('en-US');
     const cached = this.searchCache.get(key);
     if (cached) {
-      return this.runJob({jobDir: '', kind: 'search', jobId: 'youtube-search'}, () => this.searchPage(cached.query, page, cached.results));
+      return this.runJob({jobDir: '', kind: 'search', jobId: 'youtube-search'}, () => this.searchPage(cached.query, page, filtered(cached.results)));
     }
     const jobDir = join(this.sessionDir, `search-${randomUUID()}`);
     let collected!: YoutubeSearchItem[];
@@ -490,9 +508,9 @@ export class YtdlpWorker {
           const item = narrowSearchEntry(raw);
           if (!item || seen.has(item.id)) return;
           seen.add(item.id); results.push(item);
-          if (page === 1 && results.length === SEARCH_PAGE_SIZE && onFirstPage) {
+          if (page === 1 && !firstPagePublished && filtered(results).length === SEARCH_PAGE_SIZE && onFirstPage) {
             firstPagePublished = true;
-            onFirstPage({query, page: 1, pageSize: SEARCH_PAGE_SIZE, results: results.map(entry => ({...entry})), hasPrevious: false, hasNext: false, totalResults: null, pageCount: null});
+            onFirstPage({query, page: 1, pageSize: SEARCH_PAGE_SIZE, results: filtered(results).map(entry => ({...entry})), hasPrevious: false, hasNext: false, totalResults: null, pageCount: null});
           }
         });
         context.check();
@@ -503,7 +521,7 @@ export class YtdlpWorker {
         }
         if (invalid) { this.log('search returned invalid JSON'); throw new Error('Could not search YouTube.'); }
         collected = results;
-        return this.searchPage(query, page, results);
+        return this.searchPage(query, page, filtered(results));
       }
       throw new Error('Could not search YouTube.');
     }, 'Could not search YouTube.', error => {

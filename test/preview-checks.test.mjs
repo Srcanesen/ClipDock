@@ -27,7 +27,7 @@ test('ready preview returns 4K, synthetic thumbnails, totals and requested pin s
   assert.equal(metadata.thumbnailUrl.startsWith('data:image/svg+xml'), true);
   const page = await f.api.searchYoutube('editing workflow', 1);
   assert.deepEqual([page.results.length, page.totalResults, page.pageCount], [10, 23, 3]);
-  assert.deepEqual(Object.keys(page.results[0]).sort(), ['channel', 'channelVerified', 'duration', 'id', 'publishedAt', 'thumbnailUrl', 'title', 'url', 'viewCount']);
+  assert.deepEqual(Object.keys(page.results[0]).sort(), ['channel', 'channelVerified', 'duration', 'id', 'isShort', 'publishedAt', 'thumbnailUrl', 'title', 'url', 'viewCount']);
   assert.deepEqual([await f.api.setAlwaysOnTop(true), await f.api.setAlwaysOnTop(false)], [true, false]);
 });
 

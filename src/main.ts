@@ -23,7 +23,7 @@ import { pathToFileURL } from 'node:url';
 const WorkflowIntegration = require('./WorkflowIntegration.node');
 
 import { IPC_CHANNELS, PLUGIN_ID } from './shared';
-import { isSafeMediaFile as isSafeMediaFileHelper, normalizePreviewBounds, registerMainTransferInvokeHandlers, SessionTransferCards, resolveMainProcessCard, createSensitiveIpcHandler as sensitiveHandler, discoverEnginePaths, runStartupSequence, youtubePreviewUrl, YOUTUBE_PREVIEW_REFERRER, type ArtifactCompletionDependencies, type MainIpcRegistrar, type PreviewBounds } from './main-process';
+import { normalizeSearchOptions, isSafeMediaFile as isSafeMediaFileHelper, normalizePreviewBounds, registerMainTransferInvokeHandlers, SessionTransferCards, resolveMainProcessCard, createSensitiveIpcHandler as sensitiveHandler, discoverEnginePaths, runStartupSequence, youtubePreviewUrl, YOUTUBE_PREVIEW_REFERRER, type ArtifactCompletionDependencies, type MainIpcRegistrar, type PreviewBounds } from './main-process';
 import { createStatusProvider } from './status-provider';
 import { createTransfer, type TimelineAutomation } from './transfer';
 import { createSharedWorkflowIntegration } from './workflow-integration';
@@ -259,12 +259,12 @@ function registerProviderHandlers(): void {
   const pinterest = engineHost.provider('pinterest'), pexels = engineHost.provider('pexels'), pixabay = engineHost.provider('pixabay');
   const providers = [
     {cancel: IPC_CHANNELS.cancelYoutube, host: youtube, routes: [
-      [IPC_CHANNELS.searchYoutube, (event: unknown, query: unknown, page: unknown, generation: unknown) => {
+      [IPC_CHANNELS.searchYoutube, (event: unknown, query: unknown, page: unknown, generation: unknown, options: unknown) => {
         if (generation !== undefined && (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation < 1)) throw new Error('Invalid search request.');
         return youtube.search(query, page, typeof generation === 'number' ? snapshot => {
           const sender = (event as IpcMainInvokeEvent).sender;
           if (!sender.isDestroyed()) sender.send(IPC_CHANNELS.youtubeSearchPage, {generation, page: snapshot});
-        } : undefined);
+        } : undefined, normalizeSearchOptions('youtube', options));
       }],
       [IPC_CHANNELS.cancelYoutubeSearch, () => youtube.cancelSearch()],
       [IPC_CHANNELS.prefetchYoutube, (_event: unknown, url: unknown) => youtube.prefetch(url)],
@@ -278,18 +278,18 @@ function registerProviderHandlers(): void {
       [IPC_CHANNELS.downloadSocial, social.download],
     ]},
     {cancel: IPC_CHANNELS.cancelPinterest, host: pinterest, routes: [
-      [IPC_CHANNELS.searchPinterest, (_event: unknown, query: unknown, page: unknown) => pinterest.search(query, page)],
+      [IPC_CHANNELS.searchPinterest, (_event: unknown, query: unknown, page: unknown, options: unknown) => pinterest.search(query, page, normalizeSearchOptions('pinterest', options))],
       [IPC_CHANNELS.loadPinterest, (_event: unknown, url: unknown) => pinterest.load(url)],
       [IPC_CHANNELS.downloadPinterest, pinterest.download],
     ]},
     {cancel: IPC_CHANNELS.cancelPexels, host: pexels, routes: [
-      [IPC_CHANNELS.searchPexels, (_event: unknown, kind: unknown, query: unknown, page: unknown) => pexels.search(kind, query, page)],
+      [IPC_CHANNELS.searchPexels, (_event: unknown, kind: unknown, query: unknown, page: unknown, options: unknown) => pexels.search(kind, query, page, normalizeSearchOptions('pexels', options))],
       [IPC_CHANNELS.loadPexels, (_event: unknown, kind: unknown, id: unknown) => pexels.load(kind, id)],
       [IPC_CHANNELS.downloadPexels, pexels.download],
       [IPC_CHANNELS.cancelPexelsRequests, () => pexels.abortRequests()],
     ]},
     {cancel: IPC_CHANNELS.cancelPixabay, host: pixabay, routes: [
-      [IPC_CHANNELS.searchPixabay, (_event: unknown, kind: unknown, query: unknown, page: unknown) => pixabay.search(kind, query, page)],
+      [IPC_CHANNELS.searchPixabay, (_event: unknown, kind: unknown, query: unknown, page: unknown, options: unknown) => pixabay.search(kind, query, page, normalizeSearchOptions('pixabay', options))],
       [IPC_CHANNELS.loadPixabay, (_event: unknown, kind: unknown, id: unknown) => pixabay.load(kind, id)],
       [IPC_CHANNELS.downloadPixabay, pixabay.download],
       [IPC_CHANNELS.cancelPixabayRequests, () => pixabay.abortRequests()],

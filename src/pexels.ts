@@ -168,11 +168,12 @@ const PEXELS: StockSource = {
   label: 'Pexels', prefix: 'pexels', mediaHosts: CDN_HOSTS, kinds: ['photo', 'video'], maxPage: MAX_SEARCH_PAGE,
   auth: 'header', cacheTtlMs: 60_000, resetIsRelative: false, rejectedStatuses: [401, 403],
   validateUrl: () => new URL('/v1/curated?per_page=1', `https://${API}`),
-  searchUrl(kind, query, page) {
+  searchUrl(kind, query, page, orientation) {
     const url = new URL(kind === 'photo' ? '/v1/search' : '/videos/search', `https://${API}`);
     url.searchParams.set('query', query);
     url.searchParams.set('page', String(page));
     url.searchParams.set('per_page', '15');
+    if (orientation !== 'all') url.searchParams.set('orientation', {vertical: 'portrait', horizontal: 'landscape', square: 'square'}[orientation]);
     return url;
   },
   loadUrl: (kind, id) => new URL(kind === 'photo' ? `/v1/photos/${id}` : `/videos/videos/${id}`, `https://${API}`),

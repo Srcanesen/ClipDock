@@ -1,5 +1,5 @@
 // ClipDock panel renderer. Plain browser script; all privileged work uses clipdockAPI.
-import { createGenerationGuard } from './renderer-state/search-session';
+import { createGenerationGuard, searchOrientation, type Orientation, type SearchOptions } from './renderer-state/search-session';
 import { PreviewSession } from './renderer-state/preview-session';
 import { MetadataSession, StatusRefreshSession } from './renderer-state/status-session';
 import { ItemOutputSession, transitionSourceSelection, selectSourceSegments, resolveSourceSelection, selectionEnvelope, sourceQualityChoices, type RawItemOutput, type SourceSelection, type OutputDefaults, type StagedSelection, type ResultSelection, cloneOutputDefaults, cloneOutputOverrides, resultOptionsId, cardQualityLabel, cardOutputSummary, profileLabel, intentLabel, isStock, type StockProvider } from './renderer-state/item-output-session';
@@ -7,9 +7,9 @@ import { DownloadQueue, resultKeyFor, type QueueItem as MutableQueueItem, type Q
 type QueueItem = Readonly<MutableQueueItem>;
 type Surface = 'search' | 'queue' | 'library' | 'settings';
 type PinterestSearchKind = PinterestMediaKind | 'carousel';
-interface PinterestSearchItem { id: string; title: string; creator: string | null; kind: PinterestSearchKind; url: string; thumbnailUrl: string | null; }
+interface PinterestSearchItem { id: string; title: string; creator: string | null; kind: PinterestSearchKind; width: number | null; height: number | null; url: string; thumbnailUrl: string | null; }
 interface PinterestSearchPage { query: string; page: number; pageSize: number; results: PinterestSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: { failed: number; total: number; reason: string; node: string }; }
-interface PexelsPage { query: string; page: number; pageSize: number; results: PexelsAsset[]; hasPrevious: boolean; hasNext: boolean; totalResults: number | null; }
+interface PexelsPage { query: string; page: number; pageSize: number; results: PexelsAsset[]; hasPrevious: boolean; hasNext: boolean; totalResults: number | null; matchingResultsOnPage?: number; }
 interface PexelsEvent { jobId: string; state: string; percent: number | null; message: string; cardId?: string; fileName?: string; warning?: string; }
 interface PinterestEvent { jobId: string; state: string; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; warning?: string; }
 interface PexelsConnectionStatus { connected: boolean; persisted: boolean; message: string; }
@@ -22,13 +22,13 @@ interface YoutubePreviewState { state: 'closed' | 'failed'; reason: 'closed' | '
 interface TransferResult { ok: boolean; kind: string; message: string; }
 interface SubtitleCue { start: number; end: number; text: string; }
 interface HistoryRecord { id: string; provider: Provider; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; quality: string | null; mediaMode: string; selection: YoutubeSelection; automation: { provider: Provider; source: string; selection: YoutubeSelection; chapters: YoutubeChapter[] }; createdAt: number; lastUsedAt: number; available: boolean; cardId?: string; subtitle?: { fileName: string; bytes: number; available: boolean }; }
-interface YoutubeSearchItem { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; channelVerified: boolean; }
+interface YoutubeSearchItem { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; isShort: boolean | null; channelVerified: boolean; }
 interface YoutubeSearchPage { query: string; page: number; pageSize: number; results: YoutubeSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number | null; pageCount: number | null; thumbnailDiagnostic?: { failed: number; total: number; reason: string; node: string }; }
 interface YoutubeSearchEvent { generation: number; page: YoutubeSearchPage; }
 interface YoutubeEvent { jobId: string; state: string; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; subtitle?: MediaCard; warning?: string; }
 interface SocialEvent { jobId: string; state: string; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; warning?: string; }
 
-declare global { interface Window { clipdockAPI: { getStatus(): Promise<StatusSnapshot>; downloadFolderStatus(): Promise<DownloadFolderStatus>; chooseDownloadFolder(): Promise<DownloadFolderStatus>; onResolveQuit(callback: () => void): () => void; selectFile(): Promise<{ canceled: boolean; cardId?: string; fileName?: string }>; startNativeDrag(cardIds: string | string[]): void; importToMediaPool(id: string, bin: TargetBin): Promise<TransferResult>; addToTimeline(id: string, bin: TargetBin, placement: TimelinePlacement): Promise<TransferResult>; searchYoutube(query: string, page: number, generation?: number): Promise<YoutubeSearchPage>; onYoutubeSearchPage(callback: (event: YoutubeSearchEvent) => void): () => void; cancelYoutubeSearch(): Promise<boolean>; prefetchYoutube(url: string): Promise<void>; loadYoutube(url: string): Promise<YoutubeMetadata>; downloadYoutube(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string, options: DownloadOptions): Promise<{ cardId: string; fileName: string; subtitle?: MediaCard; warning?: string }>; cancelYoutube(id: string): Promise<boolean>; loadSocial(url: string): Promise<SocialMetadata>; loadSocialThumbnail?(url: string): Promise<string | null>; downloadSocial(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelSocial(id: string): Promise<boolean>; onSocialEvent(callback: (event: SocialEvent) => void): () => void; loadPinterest(url: string): Promise<PinterestMetadata>; searchPinterest(query: string, page: number): Promise<PinterestSearchPage>; downloadPinterest(url: string, itemIndex: number, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPinterest(id: string): Promise<boolean>; onPinterestEvent(callback: (event: PinterestEvent) => void): () => void; queueDelete(cardId: string): Promise<{ deleted: boolean; message: string }>; searchSubtitles(url: string, language: SubtitleLanguage): Promise<SubtitleCue[]>; onYoutubeEvent(callback: (event: YoutubeEvent) => void): () => void; setAlwaysOnTop(pinned: boolean): Promise<boolean>; pexelsKeyStatus(): Promise<PexelsConnectionStatus>; setPexelsKey(key: string): Promise<PexelsConnectionStatus>; clearPexelsKey(): Promise<PexelsConnectionStatus>; searchPexels(kind: PexelsKind, query: string, page: number): Promise<PexelsPage>; loadPexels(kind: PexelsKind, id: number): Promise<PexelsAsset>; downloadPexels(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPexels(id: string): Promise<boolean>; cancelPexelsRequests(): Promise<boolean>; onPexelsEvent(callback: (event: PexelsEvent) => void): () => void; openPexelsExternal(url: string): Promise<boolean>; pixabayKeyStatus(): Promise<PexelsConnectionStatus>; setPixabayKey(key: string): Promise<PexelsConnectionStatus>; clearPixabayKey(): Promise<PexelsConnectionStatus>; searchPixabay(kind: 'video', query: string, page: number): Promise<PexelsPage>; loadPixabay(kind: 'video', id: number): Promise<PexelsAsset>; downloadPixabay(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPixabay(id: string): Promise<boolean>; cancelPixabayRequests(): Promise<boolean>; onPixabayEvent(callback: (event: PexelsEvent) => void): () => void; openPixabayExternal(url: string): Promise<boolean>; openYoutubeExternal(videoId: string, startSeconds?: number): Promise<boolean>; openYoutubePreview(videoId: string, startSeconds: number | undefined, bounds: PreviewBounds): Promise<boolean>; closeYoutubePreview(): Promise<boolean>; setYoutubePreviewBounds(bounds: PreviewBounds): Promise<boolean>; onYoutubePreviewState(callback: (state: YoutubePreviewState) => void): () => void; workspaceStatus(): Promise<WorkspaceSummary>; openWorkspace(): Promise<boolean>; cleanupWorkspace(): Promise<WorkspaceCleanupResult>; historyList(): Promise<HistoryRecord[]>; historyThumbnail?(id: string): Promise<string | null>; historyClear(): Promise<number>; historyReuse(id: string): Promise<MediaCard | null>; historyReveal(id: string): Promise<boolean>; historyRevealSubtitle(id: string): Promise<boolean>; historySource(id: string): Promise<boolean>; historyCopy(id: string): Promise<boolean>; historyRelink(id: string): Promise<HistoryRecord | null>; historyDelete(id: string): Promise<{ deleted: boolean; removed: boolean; warning?: string; removedCardIds?: string[] }>; }; } }
+declare global { interface Window { clipdockAPI: { getStatus(): Promise<StatusSnapshot>; downloadFolderStatus(): Promise<DownloadFolderStatus>; chooseDownloadFolder(): Promise<DownloadFolderStatus>; onResolveQuit(callback: () => void): () => void; selectFile(): Promise<{ canceled: boolean; cardId?: string; fileName?: string }>; startNativeDrag(cardIds: string | string[]): void; importToMediaPool(id: string, bin: TargetBin): Promise<TransferResult>; addToTimeline(id: string, bin: TargetBin, placement: TimelinePlacement): Promise<TransferResult>; searchYoutube(query: string, page: number, generation?: number, options?: SearchOptions): Promise<YoutubeSearchPage>; onYoutubeSearchPage(callback: (event: YoutubeSearchEvent) => void): () => void; cancelYoutubeSearch(): Promise<boolean>; prefetchYoutube(url: string): Promise<void>; loadYoutube(url: string): Promise<YoutubeMetadata>; downloadYoutube(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string, options: DownloadOptions): Promise<{ cardId: string; fileName: string; subtitle?: MediaCard; warning?: string }>; cancelYoutube(id: string): Promise<boolean>; loadSocial(url: string): Promise<SocialMetadata>; loadSocialThumbnail?(url: string): Promise<string | null>; downloadSocial(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelSocial(id: string): Promise<boolean>; onSocialEvent(callback: (event: SocialEvent) => void): () => void; loadPinterest(url: string): Promise<PinterestMetadata>; searchPinterest(query: string, page: number, options?: SearchOptions): Promise<PinterestSearchPage>; downloadPinterest(url: string, itemIndex: number, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPinterest(id: string): Promise<boolean>; onPinterestEvent(callback: (event: PinterestEvent) => void): () => void; queueDelete(cardId: string): Promise<{ deleted: boolean; message: string }>; searchSubtitles(url: string, language: SubtitleLanguage): Promise<SubtitleCue[]>; onYoutubeEvent(callback: (event: YoutubeEvent) => void): () => void; setAlwaysOnTop(pinned: boolean): Promise<boolean>; pexelsKeyStatus(): Promise<PexelsConnectionStatus>; setPexelsKey(key: string): Promise<PexelsConnectionStatus>; clearPexelsKey(): Promise<PexelsConnectionStatus>; searchPexels(kind: PexelsKind, query: string, page: number, options?: SearchOptions): Promise<PexelsPage>; loadPexels(kind: PexelsKind, id: number): Promise<PexelsAsset>; downloadPexels(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPexels(id: string): Promise<boolean>; cancelPexelsRequests(): Promise<boolean>; onPexelsEvent(callback: (event: PexelsEvent) => void): () => void; openPexelsExternal(url: string): Promise<boolean>; pixabayKeyStatus(): Promise<PexelsConnectionStatus>; setPixabayKey(key: string): Promise<PexelsConnectionStatus>; clearPixabayKey(): Promise<PexelsConnectionStatus>; searchPixabay(kind: 'video', query: string, page: number, options?: SearchOptions): Promise<PexelsPage>; loadPixabay(kind: 'video', id: number): Promise<PexelsAsset>; downloadPixabay(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPixabay(id: string): Promise<boolean>; cancelPixabayRequests(): Promise<boolean>; onPixabayEvent(callback: (event: PexelsEvent) => void): () => void; openPixabayExternal(url: string): Promise<boolean>; openYoutubeExternal(videoId: string, startSeconds?: number): Promise<boolean>; openYoutubePreview(videoId: string, startSeconds: number | undefined, bounds: PreviewBounds): Promise<boolean>; closeYoutubePreview(): Promise<boolean>; setYoutubePreviewBounds(bounds: PreviewBounds): Promise<boolean>; onYoutubePreviewState(callback: (state: YoutubePreviewState) => void): () => void; workspaceStatus(): Promise<WorkspaceSummary>; openWorkspace(): Promise<boolean>; cleanupWorkspace(): Promise<WorkspaceCleanupResult>; historyList(): Promise<HistoryRecord[]>; historyThumbnail?(id: string): Promise<string | null>; historyClear(): Promise<number>; historyReuse(id: string): Promise<MediaCard | null>; historyReveal(id: string): Promise<boolean>; historyRevealSubtitle(id: string): Promise<boolean>; historySource(id: string): Promise<boolean>; historyCopy(id: string): Promise<boolean>; historyRelink(id: string): Promise<HistoryRecord | null>; historyDelete(id: string): Promise<{ deleted: boolean; removed: boolean; warning?: string; removedCardIds?: string[] }>; }; } }
 
 const $ = (id: string): HTMLElement => { const el = document.getElementById(id); if (!el) throw new Error(`Missing #${id}`); return el; };
 // Drawn contact print for results without a photo: a seeded skyline in darkroom
@@ -68,12 +68,12 @@ function stockApi(source: StockProvider) {
   const api = window.clipdockAPI;
   return source === 'pixabay' ? {
     status: () => api.pixabayKeyStatus(), set: (key: string) => api.setPixabayKey(key), clear: () => api.clearPixabayKey(),
-    search: (_kind: PexelsKind, query: string, page: number) => api.searchPixabay('video', query, page), load: (_kind: PexelsKind, id: number) => api.loadPixabay('video', id),
+    search: (_kind: PexelsKind, query: string, page: number, options?: SearchOptions) => api.searchPixabay('video', query, page, options), load: (_kind: PexelsKind, id: number) => api.loadPixabay('video', id),
     download: (asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string) => api.downloadPixabay(asset, fileId, profile, id), cancel: (id: string) => api.cancelPixabay(id),
     cancelRequests: () => api.cancelPixabayRequests(), open: (url: string) => api.openPixabayExternal(url), home: 'https://pixabay.com/', keyPage: 'https://pixabay.com/api/docs/',
   } : {
     status: () => api.pexelsKeyStatus(), set: (key: string) => api.setPexelsKey(key), clear: () => api.clearPexelsKey(),
-    search: (kind: PexelsKind, query: string, page: number) => api.searchPexels(kind, query, page), load: (kind: PexelsKind, id: number) => api.loadPexels(kind, id),
+    search: (kind: PexelsKind, query: string, page: number, options?: SearchOptions) => api.searchPexels(kind, query, page, options), load: (kind: PexelsKind, id: number) => api.loadPexels(kind, id),
     download: (asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string) => api.downloadPexels(asset, fileId, profile, id), cancel: (id: string) => api.cancelPexels(id),
     cancelRequests: () => api.cancelPexelsRequests(), open: (url: string) => api.openPexelsExternal(url), home: 'https://www.pexels.com/', keyPage: 'https://www.pexels.com/api/',
   };
@@ -190,7 +190,8 @@ let resultScrollTop = 0;
 let resultScrollLeft = 0;
 let workspaceScrollTop = 0;
 let sheetScrollTop = 0;
-type BrowserState = { query: string; youtubeSearch: YoutubeSearchPage | null; youtube: YoutubeMetadata | null; social: SocialMetadata | null; socialUrl: string; pinterest: PinterestMetadata | null; pinterestUrl: string; pinterestSearch: PinterestSearchPage | null; pexelsSearch: PexelsPage | null; pexels: PexelsAsset | null; };
+let orientation: Orientation = 'all';
+type BrowserState = { orientation: Orientation; query: string; youtubeSearch: YoutubeSearchPage | null; youtube: YoutubeMetadata | null; social: SocialMetadata | null; socialUrl: string; pinterest: PinterestMetadata | null; pinterestUrl: string; pinterestSearch: PinterestSearchPage | null; pexelsSearch: PexelsPage | null; pexels: PexelsAsset | null; };
 let youtubeState: BrowserState | null = null;
 let socialState: BrowserState | null = null;
 let pinterestState: BrowserState | null = null;
@@ -1244,7 +1245,7 @@ function renderPexelsSearchResults(): void {
     decorateResultCard(row, key, frameNumber(index, pexelsSearch), source === 'pixabay' ? 'PB' : 'PX', details, open, item.kind === 'photo');
     searchButtons.push(row); list.append(row);
   }
-  setText('youtube-search-status', pexelsSearch ? (pexelsSearch.results.length ? `${label} ${stockKind()}s · page ${pexelsSearch.page}` : `No ${label} results found.`) : `Connect ${label} and search.`); setSearchBusy(searchBusy); renderSelectionToolbar();
+  setText('youtube-search-status', pexelsSearch ? (pexelsSearch.matchingResultsOnPage !== undefined ? `${pexelsSearch.matchingResultsOnPage} matches on page ${pexelsSearch.page}` : pexelsSearch.results.length ? `${label} ${stockKind()}s · page ${pexelsSearch.page}` : `No ${label} results found.`) : `Connect ${label} and search.`); setSearchBusy(searchBusy); renderSelectionToolbar();
 }
 function renderSearchResults(): void {
   clearMetadataPrefetchTimers();
@@ -1335,7 +1336,7 @@ async function searchPinterest(page: number): Promise<void> {
   // the newest success, error, and busy-reset may touch Pinterest search state.
   beginSearchTransition();
   const request = searchGuard.next(); const query = ($('youtube-search-input') as HTMLInputElement).value; setSearchBusy(true); setText('youtube-search-status', 'Searching Pinterest…');
-  try { const result = await window.clipdockAPI.searchPinterest(query, page); if (searchGuard.isStale(request) || provider !== 'pinterest') return; pinterestSearch = result; clearResultSelection(); }
+  try { const result = await window.clipdockAPI.searchPinterest(query, page, {orientation}); if (searchGuard.isStale(request) || provider !== 'pinterest') return; pinterestSearch = result; clearResultSelection(); }
   catch (err) { if (searchGuard.isStale(request)) return; searchError = (err as Error).message; pinterestSearch = null; renderPinterestSearchResults(); setText('youtube-search-status', (err as Error).message); }
   finally { if (searchGuard.isCurrent(request)) setSearchBusy(false); }
 }
@@ -1349,7 +1350,7 @@ async function searchPexels(page: number): Promise<void> {
     return;
   }
   beginSearchTransition();
-  const request = searchGuard.next(); const query = ($('youtube-search-input') as HTMLInputElement).value; setSearchBusy(true); setText('youtube-search-status', `Searching ${stockLabel(source)}…`); try { const result = await stockApi(source).search(stockKind(), query, page); if (searchGuard.isStale(request) || provider !== source) return; pexelsSearch = result; clearResultSelection(); } catch (err) { if (searchGuard.isStale(request)) return; searchError = (err as Error).message; pexelsSearch = null; renderPexelsSearchResults(); setText('youtube-search-status', (err as Error).message); } finally { if (searchGuard.isCurrent(request)) setSearchBusy(false); } }
+  const request = searchGuard.next(); const query = ($('youtube-search-input') as HTMLInputElement).value; setSearchBusy(true); setText('youtube-search-status', `Searching ${stockLabel(source)}…`); try { const result = await stockApi(source).search(stockKind(), query, page, {orientation}); if (searchGuard.isStale(request) || provider !== source) return; pexelsSearch = result; clearResultSelection(); } catch (err) { if (searchGuard.isStale(request)) return; searchError = (err as Error).message; pexelsSearch = null; renderPexelsSearchResults(); setText('youtube-search-status', (err as Error).message); } finally { if (searchGuard.isCurrent(request)) setSearchBusy(false); } }
 function youtubeUrlFromSearch(input: string): string | null {
   if (input.length < 12 || input.length > 2_048) return null;
   let parsed: URL;
@@ -1398,6 +1399,21 @@ function submitSourceSearch(): void {
   if (directUrl) { clearResultSelection(); ($('youtube-url') as HTMLInputElement).value = directUrl; void loadYoutube(directUrl); return; }
   void searchYoutube(1);
 }
+// Later controls call this setter, or put data-orientation on a toolbar button.
+function setOrientation(value: Orientation): void {
+  if (provider === 'social') return;
+  const next = searchOrientation({orientation: value}, provider);
+  if (next === orientation) return;
+  orientation = next;
+  beginSearchTransition();
+  searchGuard.invalidate();
+  searchBusy = false; searchPage = null; pinterestSearch = null; pexelsSearch = null;
+  searchError = null; youtubeSearchFailure = null;
+  renderSearchResults();
+  const query = ($('youtube-search-input') as HTMLInputElement).value.trim();
+  if (query.length >= 2) submitSourceSearch();
+}
+
 function cancelPendingYoutubeSearch(): void {
   if (youtubeSearchPending === null) return;
   youtubeSearchPending = null; searchGuard.invalidate();
@@ -1415,7 +1431,7 @@ async function searchYoutube(page: number): Promise<void> {
   const request = searchGuard.next(); youtubeSearchPending = request; youtubeSearchFailure = null; searchPage = null;
   const query = ($('youtube-search-input') as HTMLInputElement).value; setSearchBusy(true); setText('youtube-search-status', 'Searching YouTube…');
   try {
-    const result = await window.clipdockAPI.searchYoutube(query, page, request);
+    const result = await window.clipdockAPI.searchYoutube(query, page, request, {orientation});
     if (searchGuard.isStale(request) || provider !== 'youtube') return;
     const current = searchPage as YoutubeSearchPage | null;
     const samePage = current?.totalResults === null && JSON.stringify(current.results) === JSON.stringify(result.results);
@@ -2183,7 +2199,7 @@ function enqueue(intent: DownloadIntent): void {
 function handlePexelsEvent(event: PexelsEvent): void { downloadQueue.event('pexels', event); }
 function handlePixabayEvent(event: PexelsEvent): void { downloadQueue.event('pixabay', event); }
 function captureBrowserState(): BrowserState {
-  return { query: ($('youtube-search-input') as HTMLInputElement).value, youtubeSearch: searchPage, youtube, social, socialUrl: (document.getElementById('social-url') as HTMLInputElement | null)?.value ?? '', pinterest, pinterestUrl: (document.getElementById('pinterest-url') as HTMLInputElement | null)?.value ?? '', pinterestSearch, pexelsSearch: pexelsSearch, pexels };
+  return { orientation, query: ($('youtube-search-input') as HTMLInputElement).value, youtubeSearch: searchPage, youtube, social, socialUrl: (document.getElementById('social-url') as HTMLInputElement | null)?.value ?? '', pinterest, pinterestUrl: (document.getElementById('pinterest-url') as HTMLInputElement | null)?.value ?? '', pinterestSearch, pexelsSearch: pexelsSearch, pexels };
 }
 function saveBrowserState(): void {
   if (provider === 'youtube') youtubeState = captureBrowserState();
@@ -2193,6 +2209,7 @@ function saveBrowserState(): void {
 }
 function restoreBrowserState(): void {
   const saved = provider === 'youtube' ? youtubeState : provider === 'social' ? socialState : provider === 'pinterest' ? pinterestState : pexelsStates.get(`${provider}:${stockKind()}`);
+  orientation = saved?.orientation ?? 'all';
   searchPage = saved?.youtubeSearch ?? null; youtube = saved?.youtube ?? null; social = saved?.social ?? null; pinterest = saved?.pinterest ?? null; pinterestSearch = saved?.pinterestSearch ?? null; socialPlatform = social?.platform ?? detectSocialPlatform(saved?.socialUrl ?? ''); pexelsSearch = saved?.pexelsSearch ?? null; pexels = saved?.pexels ?? null;
   ($('youtube-search-input') as HTMLInputElement).value = saved?.query ?? '';
   const socialInput = document.getElementById('social-url') as HTMLInputElement | null; if (socialInput) socialInput.value = saved?.socialUrl ?? '';
@@ -2623,6 +2640,12 @@ window.addEventListener('DOMContentLoaded', () => {
   ($('youtube-search-input') as HTMLInputElement).addEventListener('input', () => {
     if (provider !== 'youtube' || youtubeSearchPending === null) return;
     cancelPendingYoutubeSearch(); searchPage = null; setSearchBusy(false); renderSearchResults();
+  });
+  document.querySelector('.feed-toolbar')?.addEventListener('click', event => {
+    const target = (event.target as Element | null)?.closest<HTMLElement>('[data-orientation]');
+    if (!target) return;
+    event.preventDefault();
+    setOrientation(target.dataset.orientation as Orientation);
   });
   ($('youtube-search-form') as HTMLFormElement).addEventListener('submit', (event) => { event.preventDefault(); submitSourceSearch(); });
   // Keyboard navigation: ArrowDown from the search box focuses the first result; within

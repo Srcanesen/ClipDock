@@ -1,6 +1,7 @@
 // Stock-media BYOK boundary shared by Pexels and Pixabay. Node-only: main owns
 // this module and never exposes its key or paths. A StockSource adapter supplies
 // the provider's endpoints, authentication placement, parsing and host allowlists.
+import { searchOrientation, type Orientation, type SearchOptions } from './renderer-state/search-session';
 import { createWriteStream, lstatSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ import { AnchoredDir, createDirectory, openExclusive, prepareDirectory, publishN
 export type StockKind = 'photo' | 'video';
 export type StockFile = { id: string; url: string; width: number | null; height: number | null; label: string; mime: 'image/jpeg' | 'image/png' | 'video/mp4'; size: number | null };
 export type StockAsset = { id: number; kind: StockKind; title: string; creator: string | null; creatorUrl: string | null; sourceUrl: string; duration: number | null; width: number | null; height: number | null; thumbnailUrl: string | null; files: StockFile[]; previewUrl: string | null };
-export type StockPage = { query: string; page: number; pageSize: number; results: StockAsset[]; hasPrevious: boolean; hasNext: boolean; totalResults: number | null };
+export type StockPage = { query: string; page: number; pageSize: number; results: StockAsset[]; hasPrevious: boolean; hasNext: boolean; totalResults: number | null; matchingResultsOnPage?: number };
 export type StockEvent = { jobId: string; state: 'downloading' | 'processing' | 'completed' | 'cancelled' | 'failed'; percent: number | null; message: string; cardId?: string; fileName?: string };
 export type StockConnectionStatus = { connected: boolean; persisted: boolean; message: string };
 
@@ -37,9 +38,9 @@ export interface StockSource {
   /** Statuses that mean a rejected key only while validating one (Pixabay answers 400 for a bad key and for bad parameters). */
   validationRejectedStatuses?: readonly number[];
   validateUrl(): URL;
-  searchUrl(kind: StockKind, query: string, page: number): URL;
+  searchUrl(kind: StockKind, query: string, page: number, orientation: Orientation): URL;
   loadUrl(kind: StockKind, id: number): URL;
-  parsePage(raw: unknown, kind: StockKind, query: string, page: number): StockPage;
+  parsePage(raw: unknown, kind: StockKind, query: string, page: number, orientation: Orientation): StockPage;
   parseAsset(raw: Record<string, unknown>, kind: StockKind, id: number): StockAsset | null;
   /** Each search hit as [id, the body loadUrl(kind, id) would return]. */
   loadEntries(raw: Record<string, unknown>, kind: StockKind): Array<[number, Record<string, unknown>]>;
@@ -338,8 +339,9 @@ export class StockClient {
     }
   }
 
-  async search(kind: unknown, query: unknown, page: unknown): Promise<StockPage> {
+  async search(kind: unknown, query: unknown, page: unknown, options?: SearchOptions): Promise<StockPage> {
     const {kinds, maxPage} = this.#source;
+    const orientation = searchOrientation(options, this.#source.prefix as 'pexels' | 'pixabay');
     if (!kinds.includes(kind as StockKind)) throw new Error(`Invalid ${this.#label} media type.`);
     // Both providers count the query in characters (a 60-letter Turkish query, 360 bytes URL-encoded, is accepted by Pixabay).
     if (typeof query !== 'string' || query.trim().length < 2 || query.length > 100) {
@@ -350,9 +352,9 @@ export class StockClient {
       // Search hits already carry the provider's full asset; opening one then costs no request.
       const seed = (raw: Record<string, unknown>): Array<[URL, Record<string, unknown>]> => this.#source.loadEntries(raw, kind as StockKind)
         .flatMap(([id, entry]): Array<[URL, Record<string, unknown>]> => this.#source.parseAsset(entry, kind as StockKind, id) ? [[this.#source.loadUrl(kind as StockKind, id), entry]] : []);
-      const raw = await this.#requestJson(this.#source.searchUrl(kind as StockKind, query.trim(), page as number), signal, this.#key, true, false, seed);
+      const raw = await this.#requestJson(this.#source.searchUrl(kind as StockKind, query.trim(), page as number, orientation), signal, this.#key, true, false, seed);
       metadataReady();
-      return this.#source.parsePage(raw, kind as StockKind, query.trim(), page as number);
+      return this.#source.parsePage(raw, kind as StockKind, query.trim(), page as number, orientation);
     });
   }
 

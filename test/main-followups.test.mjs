@@ -29,7 +29,7 @@ test('provider events preserve payloads and contain destroyed/stale renderer fai
   }
 });
 
-test('Pinterest preload forwards exactly query/page through main and returns search items without path/raw', async t => {
+test('Pinterest preload forwards query/page/options through main and returns search items without path/raw', async t => {
   const f = await mainFixture(t);
   const worker = f.workers.find(worker => worker.initialRoot.endsWith('/pinterest-search'));
   const calls = [], invocations = [];
@@ -49,13 +49,13 @@ test('Pinterest preload forwards exactly query/page through main and returns sea
         ipcRenderer: {invoke(...args) { invocations.push(args); return f.invokeRaw(...args); }}};
     },
   });
-  const result = await api.searchPinterest('cats', 2, 'must not cross IPC');
-  assert.deepEqual(invocations, [['clipdock:search-pinterest', 'cats', 2]]);
-  assert.deepEqual(calls, [['cats', 2]]);
+  const result = await api.searchPinterest('cats', 2, {orientation: 'square'}, 'must not cross IPC');
+  assert.deepEqual(invocations, [['clipdock:search-pinterest', 'cats', 2, {orientation: 'square'}]]);
+  assert.deepEqual(calls, [['cats', 2, {orientation: 'square'}]]);
   assert.deepEqual(result, {query: 'cats', page: 2, pageSize: 10, results: [{
-    id: '123', title: 'Cat', creator: 'Creator', kind: 'image', url: 'https://www.pinterest.com/pin/123/', thumbnailUrl: null,
+    id: '123', title: 'Cat', creator: 'Creator', kind: 'image', width: null, height: null, url: 'https://www.pinterest.com/pin/123/', thumbnailUrl: null,
   }], hasPrevious: true, hasNext: false, totalResults: 11, pageCount: 2});
-  assert.deepEqual(Object.keys(result.results[0]).sort(), ['creator', 'id', 'kind', 'thumbnailUrl', 'title', 'url']);
+  assert.deepEqual(Object.keys(result.results[0]).sort(), ['creator', 'height', 'id', 'kind', 'thumbnailUrl', 'title', 'url', 'width']);
 });
 
 test('the TypeScript consumer contract admits a search item and excludes even optional path/raw keys', () => {
@@ -65,7 +65,7 @@ test('the TypeScript consumer contract admits a search item and excludes even op
   const consumer = `import type {PinterestSearchItem} from '../src/shared';
     type NoPrivateKeys<T extends never> = T;
     type PrivateKeys = NoPrivateKeys<Extract<keyof PinterestSearchItem, 'path' | 'raw'>>;
-    const item: PinterestSearchItem = {id: '123', title: 'Cat', creator: null, kind: 'image', url: 'https://www.pinterest.com/pin/123/', thumbnailUrl: null};
+    const item: PinterestSearchItem = {id: '123', title: 'Cat', creator: null, kind: 'image', width: null, height: null, url: 'https://www.pinterest.com/pin/123/', thumbnailUrl: null};
     export {item};`;
   const config = ts.readConfigFile('tsconfig.json', ts.sys.readFile);
   const {options} = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());

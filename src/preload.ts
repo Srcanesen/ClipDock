@@ -7,7 +7,7 @@
 // pattern as the official SamplePlugin). Local module imports stay type-only:
 // they are erased at compile time, so this file has no runtime requires of local files.
 import { contextBridge, ipcRenderer } from 'electron/renderer';
-import type { ClipdockApi, DownloadFolderStatus, HistoryDeleteResult, HistoryRecord, MediaProfile, PexelsAsset, PexelsEvent, PexelsKind, PexelsPage, PinterestEvent, PinterestMetadata, PinterestSearchPage, PreviewBounds, QueueDeleteResult, SelectFileResult, SocialEvent, SocialMetadata, SubtitleCue, TargetBin, TimelinePlacement, YoutubeDownloadOptions, YoutubeEvent, YoutubeMetadata, YoutubePreviewState, YoutubeQuality, YoutubeSearchEvent, YoutubeSearchPage, SubtitleLanguage } from './shared';
+import type { SearchOptions, ClipdockApi, DownloadFolderStatus, HistoryDeleteResult, HistoryRecord, MediaProfile, PexelsAsset, PexelsEvent, PexelsKind, PexelsPage, PinterestEvent, PinterestMetadata, PinterestSearchPage, PreviewBounds, QueueDeleteResult, SelectFileResult, SocialEvent, SocialMetadata, SubtitleCue, TargetBin, TimelinePlacement, YoutubeDownloadOptions, YoutubeEvent, YoutubeMetadata, YoutubePreviewState, YoutubeQuality, YoutubeSearchEvent, YoutubeSearchPage, SubtitleLanguage } from './shared';
 import type { TransferResult } from './transfer';
 import type { StatusSnapshot } from './status';
 
@@ -34,7 +34,7 @@ const api: ClipdockApi = {
     ipcRenderer.invoke('clipdock:import-to-media-pool', cardId, targetBin) as Promise<TransferResult>,
   addToTimeline: (cardId: string, targetBin: TargetBin, placement: TimelinePlacement) =>
     ipcRenderer.invoke('clipdock:add-to-timeline', cardId, targetBin, placement) as Promise<TransferResult>,
-  searchYoutube: (query: string, page: number, generation?: number) => ipcRenderer.invoke('clipdock:search-youtube', query, page, generation) as Promise<YoutubeSearchPage>,
+  searchYoutube: (query: string, page: number, generation?: number, options?: SearchOptions) => ipcRenderer.invoke('clipdock:search-youtube', query, page, generation, options) as Promise<YoutubeSearchPage>,
   onYoutubeSearchPage: (callback: (event: YoutubeSearchEvent) => void) => {
     const listener = (_event: unknown, ...args: unknown[]) => callback(args[0] as YoutubeSearchEvent);
     ipcRenderer.on('clipdock:youtube-search-page', listener);
@@ -55,7 +55,7 @@ const api: ClipdockApi = {
     ipcRenderer.on('clipdock:social-event', listener);
     return () => ipcRenderer.removeListener('clipdock:social-event', listener);
   },
-  searchPinterest: (query: string, page: number) => ipcRenderer.invoke('clipdock:search-pinterest', query, page) as Promise<PinterestSearchPage>,
+  searchPinterest: (query: string, page: number, options?: SearchOptions) => ipcRenderer.invoke('clipdock:search-pinterest', query, page, options) as Promise<PinterestSearchPage>,
   loadPinterest: (url: string) => ipcRenderer.invoke('clipdock:load-pinterest', url) as Promise<PinterestMetadata>,
   downloadPinterest: (url: string, itemIndex: number, profile: MediaProfile, jobId: string) => ipcRenderer.invoke('clipdock:download-pinterest', url, itemIndex, profile, jobId) as Promise<{ cardId: string; fileName: string; warning?: string }>,
   cancelPinterest: (jobId: string) => ipcRenderer.invoke('clipdock:cancel-pinterest', jobId) as Promise<boolean>,
@@ -75,7 +75,7 @@ const api: ClipdockApi = {
   pexelsKeyStatus: () => ipcRenderer.invoke('clipdock:pexels-key-status') as Promise<{ connected: boolean; persisted: boolean; message: string }>,
   setPexelsKey: (key: string) => ipcRenderer.invoke('clipdock:set-pexels-key', key) as Promise<{ connected: boolean; persisted: boolean; message: string }>,
   clearPexelsKey: () => ipcRenderer.invoke('clipdock:clear-pexels-key') as Promise<{ connected: boolean; persisted: boolean; message: string }>,
-  searchPexels: (kind: PexelsKind, query: string, page: number) => ipcRenderer.invoke('clipdock:search-pexels', kind, query, page) as Promise<PexelsPage>,
+  searchPexels: (kind: PexelsKind, query: string, page: number, options?: SearchOptions) => ipcRenderer.invoke('clipdock:search-pexels', kind, query, page, options) as Promise<PexelsPage>,
   loadPexels: (kind: PexelsKind, id: number) => ipcRenderer.invoke('clipdock:load-pexels', kind, id) as Promise<PexelsAsset>,
   downloadPexels: (asset: PexelsAsset, fileId: string, profile: MediaProfile, jobId: string) => ipcRenderer.invoke('clipdock:download-pexels', asset, fileId, profile, jobId) as Promise<{ cardId: string; fileName: string; warning?: string }>,
   cancelPexels: (jobId: string) => ipcRenderer.invoke('clipdock:cancel-pexels', jobId) as Promise<boolean>,
@@ -85,7 +85,7 @@ const api: ClipdockApi = {
   pixabayKeyStatus: () => ipcRenderer.invoke('clipdock:pixabay-key-status') as Promise<{ connected: boolean; persisted: boolean; message: string }>,
   setPixabayKey: (key: string) => ipcRenderer.invoke('clipdock:set-pixabay-key', key) as Promise<{ connected: boolean; persisted: boolean; message: string }>,
   clearPixabayKey: () => ipcRenderer.invoke('clipdock:clear-pixabay-key') as Promise<{ connected: boolean; persisted: boolean; message: string }>,
-  searchPixabay: (kind: 'video', query: string, page: number) => ipcRenderer.invoke('clipdock:search-pixabay', kind, query, page) as Promise<PexelsPage>,
+  searchPixabay: (kind: 'video', query: string, page: number, options?: SearchOptions) => ipcRenderer.invoke('clipdock:search-pixabay', kind, query, page, options) as Promise<PexelsPage>,
   loadPixabay: (kind: 'video', id: number) => ipcRenderer.invoke('clipdock:load-pixabay', kind, id) as Promise<PexelsAsset>,
   downloadPixabay: (asset: PexelsAsset, fileId: string, profile: MediaProfile, jobId: string) => ipcRenderer.invoke('clipdock:download-pixabay', asset, fileId, profile, jobId) as Promise<{ cardId: string; fileName: string; warning?: string }>,
   cancelPixabay: (jobId: string) => ipcRenderer.invoke('clipdock:cancel-pixabay', jobId) as Promise<boolean>,

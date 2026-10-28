@@ -4,6 +4,7 @@
 // cancellation, and media-signature checks. No media URL or filesystem path
 // other than validated thumbnail URLs is ever sent to the renderer.
 
+import { classifyOrientation, matchesOrientation, searchOrientation, type Orientation, type SearchOptions } from './renderer-state/search-session';
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
@@ -39,6 +40,8 @@ export type PinterestSearchItem = {
   title: string;
   creator: string | null;
   kind: PinterestSearchKind;
+  width: number | null;
+  height: number | null;
   url: string;
   thumbnailUrl: string | null;
 };
@@ -404,6 +407,31 @@ function searchPromo(record: Record<string, unknown>): boolean {
   return record.count === 0 || storyType === 'featured_boards';
 }
 
+/** Keep a complete pair from the displayed media, never a poster or mixed renditions. */
+function searchDimensions(directory: SearchDirectory, kind: PinterestMediaKind): {width: number | null; height: number | null} {
+  const first = directory.urls[0];
+  const slots = objectValue(directory.record.carousel_data)?.carousel_slots;
+  const fallback = Array.isArray(slots) ? objectValue(slots[0]) : directory.urls.length === 1 ? directory.record : null;
+  const pair = (raw: Record<string, unknown> | null) => raw && classifyOrientation(raw.width, raw.height) !== null
+    ? {width: raw.width as number, height: raw.height as number} : null;
+  const direct = pair(first.record);
+  if (direct) return direct;
+  for (const record of [first.record, fallback]) {
+    if (!record) continue;
+    if (kind === 'image') {
+      const original = pair(objectValue(objectValue(record.images)?.orig));
+      if (original) return original;
+    } else {
+      const list = objectValue(objectValue(record.videos)?.video_list);
+      const files = Object.values(list ?? {}).flatMap(value => objectValue(value) ? [objectValue(value)!] : []);
+      const selected = files.find(file => file.url === first.url) ?? (files.length === 1 ? files[0] : null);
+      const original = pair(selected);
+      if (original) return original;
+    }
+  }
+  return {width: null, height: null};
+}
+
 function parsePinterestSearchValues(values: unknown[]): SearchParseResult {
   const directories: SearchDirectory[] = [];
   const firstDirectory = new Map<string, SearchDirectory>();
@@ -468,6 +496,7 @@ function parsePinterestSearchValues(values: unknown[]): SearchParseResult {
       id: directory.id,
       title: searchTitle(records, directory.id),
       creator: searchCreator(records),
+      ...searchDimensions(directory, kinds[0] as PinterestMediaKind),
       kind: carousel ? 'carousel' : kinds[0] as PinterestMediaKind,
       url: `https://www.pinterest.com/pin/${directory.id}/`,
       thumbnailUrl: null,
@@ -693,15 +722,17 @@ export class GalleryDlWorker {
       throw new Error('Pinterest short link could not be resolved.');
     } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   }
-  private async searchPage(query: string, page: number, results: PinterestSearchItem[], thumbnailUrls: Map<string, string>, parentSignal?: AbortSignal): Promise<PinterestSearchPage> {
+  private async searchPage(query: string, page: number, results: PinterestSearchItem[], thumbnailUrls: Map<string, string>, parentSignal?: AbortSignal, orientation: Orientation = 'all'): Promise<PinterestSearchPage> {
     if (parentSignal?.aborted) throw parentSignal.reason;
+    results = results.filter(item => matchesOrientation(item, orientation));
     const start = (page - 1) * SEARCH_PAGE_SIZE;
     const pageResults = results.slice(start, start + SEARCH_PAGE_SIZE).map(item => ({ ...item, thumbnailUrl: safeSearchThumbnailUrl(thumbnailUrls.get(item.id) ?? '')?.href ?? null }));
     const totalResults = results.length;
     return { query, page, pageSize: SEARCH_PAGE_SIZE, results: pageResults, hasPrevious: page > 1, hasNext: start + SEARCH_PAGE_SIZE < totalResults, totalResults, pageCount: Math.min(3, Math.max(1, Math.ceil(totalResults / SEARCH_PAGE_SIZE))) };
   }
 
-  async search(input: unknown, page: unknown): Promise<PinterestSearchPage> {
+  async search(input: unknown, page: unknown, options?: SearchOptions): Promise<PinterestSearchPage> {
+    const orientation = searchOrientation(options, 'pinterest');
     const query = validatePinterestSearchQuery(input);
     if (!query) throw new Error('Enter 2–100 characters to search Pinterest.');
     if (typeof page !== 'number' || !Number.isInteger(page) || page < 1 || page > 3) throw new Error('Invalid search request.');
@@ -710,7 +741,7 @@ export class GalleryDlWorker {
     if (cached) {
       return this.runJob({jobDir: '', kind: 'search'}, context => {
         for (const snapshot of cached.snapshots) this.searchSnapshots.set(snapshot.metadata.pinId, snapshot);
-        return this.searchPage(cached.query, page, cached.results, cached.thumbnailUrls, context.signal);
+        return this.searchPage(cached.query, page, cached.results, cached.thumbnailUrls, context.signal, orientation);
       });
     }
     const jobDir = this.jobDirectory('search');
@@ -732,7 +763,7 @@ export class GalleryDlWorker {
         throw error;
       }
       const entry: SearchCacheEntry = {query, createdAt: this.now(), results: parsed.items, thumbnailUrls: parsed.thumbnailUrls, snapshots: parsed.snapshots};
-      const pageResult = await this.searchPage(query, page, entry.results, entry.thumbnailUrls, context.signal);
+      const pageResult = await this.searchPage(query, page, entry.results, entry.thumbnailUrls, context.signal, orientation);
       context.check();
       for (const snapshot of parsed.snapshots) this.searchSnapshots.set(snapshot.metadata.pinId, snapshot);
       this.searchCache.set(key, entry);

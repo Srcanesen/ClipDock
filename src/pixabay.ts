@@ -1,3 +1,4 @@
+import { classifyOrientation, matchesOrientation, type Orientation } from './renderer-state/search-session';
 // Pixabay adapter for the stock-media client: videos only. Node-only: main owns
 // this module. The key travels in the query string, so URLs built here never carry
 // it; the client adds it at fetch time and never surfaces a request URL or error.
@@ -50,15 +51,15 @@ function normalize(raw: unknown): StockAsset | null {
     creatorUrl: null,
     sourceUrl: safePixabayExternal(source.pageURL) ?? `https://pixabay.com/videos/id-${id}/`,
     duration: finite(source.duration),
-    width: files[0]?.width ?? null,
-    height: files[0]?.height ?? null,
+    width: classifyOrientation(source.width, source.height) !== null ? source.width as number : files[0]?.width ?? null,
+    height: classifyOrientation(source.width, source.height) !== null ? source.height as number : files[0]?.height ?? null,
     thumbnailUrl,
     files,
     previewUrl: files.find(file => (file.height ?? Infinity) <= 540)?.url ?? files.at(-1)?.url ?? null,
   };
 }
 
-export function parsePixabayPage(raw: unknown, query: string, page: number): StockPage {
+export function parsePixabayPage(raw: unknown, query: string, page: number, orientation: Orientation = 'all'): StockPage {
   const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
   const hits = Array.isArray(value.hits) ? value.hits : [];
   const seen = new Set<number>();
@@ -69,11 +70,16 @@ export function parsePixabayPage(raw: unknown, query: string, page: number): Sto
     return [asset];
   });
   const totalResults = finite(value.totalHits);
+  const matching = results.filter(asset => {
+    const pair = classifyOrientation(asset.width, asset.height) !== null ? asset : asset.files.find(file => classifyOrientation(file.width, file.height) !== null);
+    return orientation === 'all' || !!pair && matchesOrientation(pair, orientation);
+  });
   return {
-    query, page, pageSize: PAGE_SIZE, results,
+    query, page, pageSize: PAGE_SIZE, results: matching,
     hasPrevious: page > 1,
     hasNext: page < MAX_SEARCH_PAGE && totalResults !== null && page * PAGE_SIZE < totalResults,
-    totalResults,
+    totalResults: orientation === 'all' ? totalResults : null,
+    ...(orientation === 'all' ? {} : {matchingResultsOnPage: matching.length}),
   };
 }
 
@@ -84,7 +90,7 @@ const PIXABAY: StockSource = {
   validateUrl: () => apiUrl({per_page: '3'}),
   searchUrl: (_kind, query, page) => apiUrl({q: query, page: String(page), per_page: String(PAGE_SIZE)}),
   loadUrl: (_kind, id) => apiUrl({id: String(id)}),
-  parsePage: (raw, _kind, query, page) => parsePixabayPage(raw, query, page),
+  parsePage: (raw, _kind, query, page, orientation) => parsePixabayPage(raw, query, page, orientation),
   parseAsset(raw, _kind, id) {
     const hit = Array.isArray(raw.hits) ? normalize(raw.hits[0]) : null;
     return hit && hit.id === id && hit.files.length ? hit : null;

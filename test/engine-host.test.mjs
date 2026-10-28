@@ -114,7 +114,7 @@ test('readiness waits for discovery while independent operations answer; every r
   assert.equal(settled, false); assert.equal(f.workers.size, 0);
   discovery.resolve(engines); await starting;
   assert.equal(await f.host.ready(), engines);
-  assert.deepEqual(await pending, {role: 'youtube-search', args: ['cats', 2]});
+  assert.deepEqual(await pending, {role: 'youtube-search', args: ['cats', 2, undefined, undefined]});
   assert.deepEqual([...f.workers.keys()], ['youtube', 'social', 'pinterest', 'pinterest-metadata', 'pinterest-search', 'youtube-search', 'youtube-metadata', 'social-metadata', 'youtube-subtitles', 'media-prep', 'pexels', 'pixabay']);
   for (const [role, worker] of f.workers) if (role !== 'pexels' && role !== 'pixabay') assert.equal(worker.discovered, engines);
   await f.start(); assert.equal(f.workers.size, 12);
@@ -202,7 +202,7 @@ for (const provider of ['youtube', 'social', 'pinterest', 'pexels', 'pixabay']) 
 
 test('provider metadata/search roles and Pinterest snapshots stay independent of download work', async t => {
   const f = fixture(t); await f.start();
-  assert.deepEqual(await f.host.provider('pinterest').search('cats', 3), {role: 'pinterest-search', args: ['cats', 3]});
+  assert.deepEqual(await f.host.provider('pinterest').search('cats', 3), {role: 'pinterest-search', args: ['cats', 3, undefined]});
   assert.equal(await f.host.provider('pinterest').load(pin.url), pin);
   f.workers.get('pinterest').metadata = async () => { throw new Error('must use snapshot'); };
   assert.equal((await startDownload(f.host, 'pinterest')).fileName, 'job.jpg');
@@ -210,17 +210,17 @@ test('provider metadata/search roles and Pinterest snapshots stay independent of
   assert.deepEqual(await f.host.provider('youtube').prefetch('url'), {url: 'url'});
   assert.deepEqual(await f.host.provider('youtube').subtitles('url', 'en'), {args: ['url', 'en']});
   assert.deepEqual(await f.host.provider('social').thumbnail('url'), {url: 'url'});
-  assert.deepEqual(await f.host.provider('pexels').search('video', 'cats', 1), {role: 'pexels', args: ['video', 'cats', 1]});
+  assert.deepEqual(await f.host.provider('pexels').search('video', 'cats', 1), {role: 'pexels', args: ['video', 'cats', 1, undefined]});
   assert.equal(await f.host.provider('pexels').load('video', 7), asset);
   assert.equal(await f.host.provider('pexels').abortRequests(), true);
-  assert.deepEqual(await f.host.provider('pixabay').search('video', 'cats', 1), {role: 'pixabay', args: ['video', 'cats', 1]});
+  assert.deepEqual(await f.host.provider('pixabay').search('video', 'cats', 1), {role: 'pixabay', args: ['video', 'cats', 1, undefined]});
 });
 
 test('credential restoration blocks only credential reads and mutations', async t => {
   const restored = deferred(); const f = fixture(t, {restoreCredential: () => restored.promise}); await f.start();
   let read = false;
   const pending = f.host.credential('pixabay', worker => { read = true; return worker.root; });
-  assert.deepEqual(await f.host.provider('youtube').search('cats', 1), {role: 'youtube-search', args: ['cats', 1]});
+  assert.deepEqual(await f.host.provider('youtube').search('cats', 1), {role: 'youtube-search', args: ['cats', 1, undefined, undefined]});
   assert.equal(read, false);
   restored.resolve(); assert.equal(await pending, path.join(f.folder, 'pixabay')); assert.equal(read, true);
 });

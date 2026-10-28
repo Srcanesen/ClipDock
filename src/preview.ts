@@ -10,6 +10,9 @@
 // browser; the shapes are declared locally (same pattern as renderer.ts) so the
 // compiled file is a bare browser script.
 
+type PreviewOrientation = 'all' | 'vertical' | 'horizontal' | 'square';
+type SearchOptions = { orientation?: PreviewOrientation };
+
 interface StatusSnapshot {
   phase: 'bridge-error' | 'no-project' | 'no-timeline' | 'ready';
   bridge: { connected: boolean; moduleVersion: string | null; resolveVersion: string | null; error: string | null };
@@ -32,14 +35,14 @@ interface PreviewSelectResult {
 }
 
 interface PreviewYoutubeMetadata { id: string; title: string; duration: number | null; channel: string | null; thumbnailUrl: string | null; heights: number[]; formatSummary: string[]; }
-interface PreviewYoutubeSearchItem { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; channelVerified: boolean; }
+interface PreviewYoutubeSearchItem { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; isShort: boolean | null; channelVerified: boolean; }
 interface PreviewYoutubeSearchPage { query: string; page: number; pageSize: 10; results: PreviewYoutubeSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; }
 interface PreviewYoutubeEvent { jobId: string; state: string; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; subtitle?: { cardId: string; fileName: string }; warning?: string; }
 interface PreviewSocialMetadata { id: string; platform: 'instagram' | 'twitter' | 'facebook'; source: string; title: string; duration: number | null; channel: string | null; thumbnailDataUrl: string | null; heights: number[]; formatSummary: string[]; }
 interface PreviewSocialEvent { jobId: string; state: string; percent: number | null; message: string; cardId?: string; fileName?: string; warning?: string; }
 interface PreviewPinterestItem { index: number; kind: 'image' | 'video'; title: string; creator: string | null; extension: string; }
 interface PreviewPinterestMetadata { pinId: string; source: string; title: string; creator: string | null; kind: 'image' | 'video' | 'carousel'; items: PreviewPinterestItem[]; thumbnailUrl: string | null; }
-interface PreviewPinterestSearchItem { id: string; title: string; creator: string | null; kind: 'image' | 'video' | 'carousel'; url: string; thumbnailUrl: string | null; }
+interface PreviewPinterestSearchItem { id: string; title: string; creator: string | null; kind: 'image' | 'video' | 'carousel'; width: number | null; height: number | null; url: string; thumbnailUrl: string | null; }
 interface PreviewPinterestSearchPage { query: string; page: number; pageSize: 10; results: PreviewPinterestSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: { failed: number; total: number; reason: string; node: string }; }
 interface PreviewPinterestEvent { jobId: string; state: string; percent: number | null; message: string; cardId?: string; fileName?: string; warning?: string; }
 interface PreviewHistoryRecord { id: string; provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; quality: string | null; mediaMode: string; selection: null; automation: { provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; selection: null; chapters: [] }; createdAt: number; lastUsedAt: number; available: boolean; cardId?: string; }
@@ -62,7 +65,7 @@ interface PreviewApi {
   startNativeDrag(cardId: string): void;
   importToMediaPool(cardId: string, targetBin: 'active' | 'clipdock'): Promise<PreviewTransferResult>;
   addToTimeline(cardId: string, targetBin: 'active' | 'clipdock', placement: 'end' | 'playhead'): Promise<PreviewTransferResult>;
-  searchYoutube(query: string, page: number, generation?: number): Promise<PreviewYoutubeSearchPage>;
+  searchYoutube(query: string, page: number, generation?: number, options?: SearchOptions): Promise<PreviewYoutubeSearchPage>;
   prefetchYoutube(url: string): Promise<void>;
   loadYoutube(url: string): Promise<PreviewYoutubeMetadata>;
   loadSocialThumbnail(url: string): Promise<string | null>;
@@ -71,7 +74,7 @@ interface PreviewApi {
   cancelSocial(jobId: string): Promise<boolean>;
   onSocialEvent(callback: (event: PreviewSocialEvent) => void): () => void;
   loadPinterest(url: string): Promise<PreviewPinterestMetadata>;
-  searchPinterest(query: string, page: number): Promise<PreviewPinterestSearchPage>;
+  searchPinterest(query: string, page: number, options?: SearchOptions): Promise<PreviewPinterestSearchPage>;
   downloadPinterest(url: string, itemIndex: number, profile: 'original' | 'fast' | 'editing', jobId: string): Promise<{ cardId: string; fileName: string; warning?: string }>;
   cancelPinterest(jobId: string): Promise<boolean>;
   onPinterestEvent(callback: (event: PreviewPinterestEvent) => void): () => void;
@@ -82,7 +85,7 @@ interface PreviewApi {
   pexelsKeyStatus(): Promise<{ connected: boolean; persisted: boolean; message: string }>;
   setPexelsKey(key: string): Promise<{ connected: boolean; persisted: boolean; message: string }>;
   clearPexelsKey(): Promise<{ connected: boolean; persisted: boolean; message: string }>;
-  searchPexels(kind: 'photo' | 'video', query: string, page: number): Promise<any>;
+  searchPexels(kind: 'photo' | 'video', query: string, page: number, options?: SearchOptions): Promise<any>;
   loadPexels(kind: 'photo' | 'video', id: number): Promise<any>;
   downloadPexels(asset: any, fileId: string, profile: string, jobId: string): Promise<{ cardId: string; fileName: string }>;
   cancelPexels(jobId: string): Promise<boolean>;
@@ -92,7 +95,7 @@ interface PreviewApi {
   pixabayKeyStatus(): Promise<{ connected: boolean; persisted: boolean; message: string }>;
   setPixabayKey(key: string): Promise<{ connected: boolean; persisted: boolean; message: string }>;
   clearPixabayKey(): Promise<{ connected: boolean; persisted: boolean; message: string }>;
-  searchPixabay(kind: 'video', query: string, page: number): Promise<any>;
+  searchPixabay(kind: 'video', query: string, page: number, options?: SearchOptions): Promise<any>;
   loadPixabay(kind: 'video', id: number): Promise<any>;
   downloadPixabay(asset: any, fileId: string, profile: string, jobId: string): Promise<{ cardId: string; fileName: string }>;
   cancelPixabay(jobId: string): Promise<boolean>;
@@ -215,6 +218,7 @@ const SEARCH_ITEMS: PreviewYoutubeSearchItem[] = Array.from({ length: 23 }, (_, 
     viewCount: index % 4 ? 1_200_000 + index * 1000 : null,
     publishedAt: index % 4 ? Math.floor(Date.now() / 1000) - (index + 1) * 86400 : null,
     channelVerified: index % 3 === 0,
+    isShort: index % 3 === 0 ? true : index % 3 === 1 ? false : null,
   };
 });
 
@@ -227,12 +231,26 @@ const PINTEREST_SEARCH_ITEMS: PreviewPinterestSearchItem[] = Array.from({ length
   return {
     id,
     title: `Preview Pinterest Pin ${index + 1}`,
+    width: [720, 1920, 1080, null][index % 4],
+    height: [1280, 1080, 1080, null][index % 4],
     creator: index % 4 === 0 ? null : 'ClipDock Preview',
     kind,
     url: `https://www.pinterest.com/pin/${id}/`,
     thumbnailUrl: index % 4 === 0 ? null : SYNTHETIC_THUMBNAIL_DATA_URL,
   };
 });
+
+function previewOrientation(options?: SearchOptions, youtube = false): PreviewOrientation {
+  const value = options?.orientation;
+  return value === 'vertical' || value === 'horizontal' || value === 'square' && !youtube ? value : 'all';
+}
+function previewDimensionsMatch(item: {width: number | null; height: number | null}, options?: SearchOptions): boolean {
+  const orientation = previewOrientation(options);
+  if (orientation === 'all') return true;
+  const {width, height} = item;
+  if (width === null || height === null || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
+  return orientation === 'vertical' ? height > width : orientation === 'horizontal' ? width > height : width === height;
+}
 
 // Metadata shape per search kind; carousels queue each item separately.
 function previewPinterestItems(found: PreviewPinterestSearchItem): PreviewPinterestItem[] {
@@ -272,7 +290,15 @@ if (previewParam !== null) {
     files: [...(large ? [{ id: 'large', url: `https://cdn.pixabay.com/video/preview/${id}_large.mp4`, width: 1920, height: 1080, label: 'Large · 1920×1080', mime: 'video/mp4', size: 18_000_000 }] : []),
       { id: 'medium', url: `https://cdn.pixabay.com/video/preview/${id}_medium.mp4`, width: 1280, height: 720, label: 'Medium · 1280×720', mime: 'video/mp4', size: 7_000_000 },
       { id: 'small', url: `https://cdn.pixabay.com/video/preview/${id}_small.mp4`, width: 960, height: 540, label: 'Small · 960×540', mime: 'video/mp4', size: 3_000_000 }] });
-  const PIXABAY_RESULTS = [pixabayAsset(201, 'Ocean, waves, beach', 'Coverr-Free-Footage', true), pixabayAsset(202, 'City, night, traffic', 'Engin_Akyurt', false), pixabayAsset(203, 'Forest, fog, trees', 'Pexels_Preview_User', true)];
+  const PIXABAY_RESULTS = [pixabayAsset(201, 'Ocean, waves, beach', 'Coverr-Free-Footage', true), pixabayAsset(202, 'City, night, traffic', 'Engin_Akyurt', false), pixabayAsset(203, 'Forest, fog, trees', 'Pexels_Preview_User', true)].map((asset, index) => {
+    const [width, height] = [[1920, 1080], [720, 1280], [1080, 1080]][index];
+    return {...asset, width, height, files: asset.files.map(file => ({...file, width, height, label: `${file.id} · ${width}×${height}`}))};
+  });
+  const pexelsAssets = (kind: 'video' | 'photo') => [[1920, 1080], [720, 1280], [1080, 1080]].map(([width, height], index) => ({
+    id: 101 + index, kind, title: `Preview Pexels ${kind} ${index + 1}`, creator: 'ClipDock Preview', creatorUrl: 'https://www.pexels.com/', sourceUrl: 'https://www.pexels.com/', duration: kind === 'video' ? 12 : null,
+    width, height, thumbnailUrl: SYNTHETIC_THUMBNAIL_DATA_URL, previewUrl: null,
+    files: [{id: 'original', url: kind === 'video' ? 'https://videos.pexels.com/preview.mp4' : 'https://images.pexels.com/preview.jpg', width, height, label: `${width}×${height}`, mime: kind === 'video' ? 'video/mp4' : 'image/jpeg', size: null}],
+  }));
   let previewStateListener: ((state: {state: 'closed'; reason: 'closed'}) => void) | null = null;
   let previewOpen = false;
   let previewDownloadJob: string | null = null;
@@ -298,14 +324,16 @@ if (previewParam !== null) {
     prefetchYoutube: async () => undefined,
     onYoutubeSearchPage: () => () => undefined,
     cancelYoutubeSearch: async () => true,
-    searchYoutube: async (query, page) => {
+    searchYoutube: async (query, page, _generation, options) => {
       if (previewParam === 'slow') await new Promise(resolve => setTimeout(resolve, 2500));
       if (previewParam === 'error') throw new Error('Preview fixture: search unavailable.');
       if (query.trim().length < 2 || page < 1 || page > 3) throw new Error('Enter 2–100 characters to search YouTube.');
       if (previewParam === 'loading') await new Promise((resolve) => setTimeout(resolve, 900));
       if (previewParam === 'empty') return { query: query.trim(), page, pageSize: 10, results: [], hasPrevious: false, hasNext: false, totalResults: 0, pageCount: 1 };
+      const orientation = previewOrientation(options, true);
+      const results = SEARCH_ITEMS.filter(item => orientation === 'all' || (orientation === 'vertical' ? item.isShort === true : item.isShort === false));
       const start = (page - 1) * 10;
-      return { query: query.trim(), page, pageSize: 10, results: SEARCH_ITEMS.slice(start, start + 10), hasPrevious: page > 1, hasNext: start + 10 < SEARCH_ITEMS.length, totalResults: SEARCH_ITEMS.length, pageCount: Math.min(3, Math.max(1, Math.ceil(SEARCH_ITEMS.length / 10))) };
+      return { query: query.trim(), page, pageSize: 10, results: results.slice(start, start + 10), hasPrevious: page > 1, hasNext: start + 10 < results.length, totalResults: results.length, pageCount: Math.max(1, Math.ceil(results.length / 10)) };
     },
     loadYoutube: async (url) => {
       if (previewParam === 'slow') await new Promise(resolve => setTimeout(resolve, 2000));
@@ -364,13 +392,14 @@ if (previewParam !== null) {
         ],
       };
     },
-    searchPinterest: async (query, page) => {
+    searchPinterest: async (query, page, options) => {
       if (previewParam === 'slow') await new Promise(resolve => setTimeout(resolve, 2500));
       if (previewParam === 'error') throw new Error('Preview fixture: Pinterest search unavailable.');
       if (query.trim().length < 2 || page < 1 || page > 3) throw new Error('Enter 2–100 characters to search Pinterest.');
       if (previewParam === 'empty') return { query: query.trim(), page, pageSize: 10, results: [], hasPrevious: false, hasNext: false, totalResults: 0, pageCount: 1 };
       const start = (page - 1) * 10;
-      return { query: query.trim(), page, pageSize: 10, results: PINTEREST_SEARCH_ITEMS.slice(start, start + 10), hasPrevious: page > 1, hasNext: start + 10 < PINTEREST_SEARCH_ITEMS.length, totalResults: PINTEREST_SEARCH_ITEMS.length, pageCount: 3 };
+      const results = PINTEREST_SEARCH_ITEMS.filter(item => previewDimensionsMatch(item, options));
+      return { query: query.trim(), page, pageSize: 10, results: results.slice(start, start + 10), hasPrevious: page > 1, hasNext: start + 10 < results.length, totalResults: results.length, pageCount: Math.max(1, Math.ceil(results.length / 10)) };
     },
     downloadPinterest: async (_url, itemIndex, profile, jobId) => {
       if (previewDownloadJob) throw new Error('Preview fixture: only one backend job may be active.');
@@ -392,8 +421,8 @@ if (previewParam !== null) {
     setAlwaysOnTop: async (pinned) => pinned,
     pexelsKeyStatus: async () => ({ connected: previewParam === 'pexels-photo' || previewParam === 'pexels-video', persisted: true, message: 'Connected · saved securely' }),
     setPexelsKey: async () => ({ connected: true, persisted: true, message: 'Connected · saved securely' }), clearPexelsKey: async () => ({ connected: false, persisted: false, message: 'Disconnected.' }),
-    searchPexels: async (kind, query, page) => { if (previewParam === 'slow') await new Promise(resolve => setTimeout(resolve, 2500)); return { query, page, pageSize: 15, hasPrevious: false, hasNext: false, totalResults: 1, results: [{ id: 101, kind, title: `Preview Pexels ${kind}`, creator: 'ClipDock Preview', creatorUrl: 'https://www.pexels.com/', sourceUrl: 'https://www.pexels.com/', duration: kind === 'video' ? 12 : null, width: 1920, height: 1080, thumbnailUrl: SYNTHETIC_THUMBNAIL_DATA_URL, previewUrl: null, files: [{ id: 'original', url: 'https://videos.pexels.com/preview.mp4', width: 1920, height: 1080, label: '1920×1080 · HD', mime: kind === 'video' ? 'video/mp4' : 'image/jpeg', size: null }] }] }; },
-    loadPexels: async (kind) => { if (previewParam === 'slow') await new Promise(resolve => setTimeout(resolve, 2000)); return { id: 101, kind, title: `Preview Pexels ${kind}`, creator: 'ClipDock Preview', creatorUrl: 'https://www.pexels.com/', sourceUrl: 'https://www.pexels.com/', duration: kind === 'video' ? 12 : null, width: 1920, height: 1080, thumbnailUrl: SYNTHETIC_THUMBNAIL_DATA_URL, previewUrl: null, files: [{ id: 'original', url: 'https://videos.pexels.com/preview.mp4', width: 1920, height: 1080, label: '1920×1080 · HD', mime: kind === 'video' ? 'video/mp4' : 'image/jpeg', size: null }] }; },
+    searchPexels: async (kind, query, page, options) => { if (previewParam === 'slow') await new Promise(resolve => setTimeout(resolve, 2500)); const results = pexelsAssets(kind).filter(item => previewDimensionsMatch(item, options)); return {query, page, pageSize: 15, hasPrevious: false, hasNext: false, totalResults: results.length, results}; },
+    loadPexels: async (kind, id) => { if (previewParam === 'slow') await new Promise(resolve => setTimeout(resolve, 2000)); const asset = pexelsAssets(kind).find(item => item.id === id); if (!asset) throw new Error('Pexels returned invalid media metadata.'); return asset; },
     downloadPexels: async (asset, _fileId, profile, jobId) => {
       if (previewDownloadJob) throw new Error('Preview fixture: only one backend job may be active.');
       previewDownloadJob = jobId;
@@ -413,7 +442,7 @@ if (previewParam !== null) {
     openPexelsExternal: async () => true,
     pixabayKeyStatus: async () => ({ connected: previewParam === 'ready' || previewParam === 'pixabay', persisted: true, message: 'Connected · saved securely' }),
     setPixabayKey: async () => ({ connected: true, persisted: true, message: 'Connected · saved securely' }), clearPixabayKey: async () => ({ connected: false, persisted: false, message: 'Disconnected.' }),
-    searchPixabay: async (_kind, query, page) => ({ query, page, pageSize: 15, hasPrevious: false, hasNext: false, totalResults: PIXABAY_RESULTS.length, results: PIXABAY_RESULTS }),
+    searchPixabay: async (_kind, query, page, options) => { const results = PIXABAY_RESULTS.filter(item => previewDimensionsMatch(item, options)); return {query, page, pageSize: 15, hasPrevious: false, hasNext: false, totalResults: previewOrientation(options) === 'all' ? PIXABAY_RESULTS.length : null, ...(previewOrientation(options) === 'all' ? {} : {matchingResultsOnPage: results.length}), results}; },
     loadPixabay: async (_kind, id) => { const asset = PIXABAY_RESULTS.find(item => item.id === id); if (!asset) throw new Error('Pixabay returned invalid media metadata.'); return asset; },
     downloadPixabay: async (_asset, _fileId, profile, jobId) => {
       if (previewDownloadJob) throw new Error('Preview fixture: only one backend job may be active.');

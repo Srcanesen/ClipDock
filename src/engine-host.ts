@@ -1,4 +1,5 @@
 // Electron-free owner of engine readiness, worker roles and managed operation lifetime.
+import type { SearchOptions } from './renderer-state/search-session';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import { ManagedRoot, ManagedRootSelection } from './managed-root';
@@ -202,18 +203,18 @@ export function createEngineHost(deps: EngineHostDependencies) {
     });
   }
   const stockProvider = <N extends StockProvider>(name: N) => ({
-    search: (kind: unknown, query: unknown, page: unknown) => run(() => workers[name].search(kind, query, page)),
+    search: (kind: unknown, query: unknown, page: unknown, options?: SearchOptions) => run(() => workers[name].search(kind, query, page, options)),
     load: (kind: unknown, id: unknown) => run(() => workers[name].load(kind, id)),
     abortRequests: () => run(() => workers[name].abortApiRequests()),
     download: download(name), cancel,
   });
-  function searchYoutube(query: unknown, page: unknown, onFirstPage?: (page: YoutubeSearchSnapshot) => void): Promise<YoutubeSearchPage> {
+  function searchYoutube(query: unknown, page: unknown, onFirstPage?: (page: YoutubeSearchSnapshot) => void, options?: SearchOptions): Promise<YoutubeSearchPage> {
     const request = ++youtubeSearchRequest; const previous = youtubeSearchPending;
     const pending = run(async () => {
       await workers.youtubeSearch.cancel('youtube-search');
       await previous?.catch(() => undefined);
       if (request !== youtubeSearchRequest) throw new Error('Could not search YouTube.');
-      return workers.youtubeSearch.search(query, page, ...(onFirstPage ? [onFirstPage] : []));
+      return workers.youtubeSearch.search(query, page, onFirstPage, options);
     });
     youtubeSearchPending = pending;
     const clear = () => { if (youtubeSearchPending === pending) youtubeSearchPending = undefined; };
@@ -244,7 +245,7 @@ export function createEngineHost(deps: EngineHostDependencies) {
       download: download('social'), cancel,
     },
     pinterest: {
-      search: (query: unknown, page: unknown) => run(() => workers.pinterestSearch.search(query, page)),
+      search: (query: unknown, page: unknown, options?: SearchOptions) => run(() => workers.pinterestSearch.search(query, page, options)),
       load: (url: unknown) => run(async () => { const metadata = await workers.pinterestMetadata.metadata(url); snapshots.remember(metadata); return metadata; }),
       download: download('pinterest'), cancel,
     },

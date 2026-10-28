@@ -2,6 +2,9 @@
 // Preload imports ONLY types from this module (`import type`), which TypeScript
 // erases at compile time. The renderer is a plain browser script with no imports.
 
+import type { Orientation, SearchOptions } from './renderer-state/search-session';
+export { ORIENTATION_SUPPORT } from './renderer-state/search-session';
+export type { Orientation, SearchOptions };
 import type { StatusSnapshot } from './status';
 import type { TargetBin, TimelinePlacement, TransferResult } from './transfer';
 // Re-export so main/preload import the narrow transfer types from the shared IPC contract.
@@ -52,7 +55,7 @@ export type PinterestMediaKind = 'image' | 'video';
 export type PinterestItem = { index: number; kind: PinterestMediaKind; title: string; creator: string | null; extension: string };
 export type PinterestMetadata = { pinId: string; source: string; title: string; creator: string | null; kind: PinterestMediaKind | 'carousel'; items: PinterestItem[]; thumbnailUrl: string | null };
 export type PinterestSearchKind = PinterestMediaKind | 'carousel';
-export type PinterestSearchItem = { id: string; title: string; creator: string | null; kind: PinterestSearchKind; url: string; thumbnailUrl: string | null };
+export type PinterestSearchItem = { id: string; title: string; creator: string | null; kind: PinterestSearchKind; width: number | null; height: number | null; url: string; thumbnailUrl: string | null };
 export type PinterestSearchPage = { query: string; page: number; pageSize: 10; results: PinterestSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: { failed: number; total: number; reason: string; node: string } };
 export type SocialMetadata = { id: string; platform: SocialPlatform; source: string; title: string; duration: number | null; channel: string | null; thumbnailDataUrl: string | null; heights: number[]; formatSummary: string[] };
 export type DownloadArtifact = { cardId: string; fileName: string };
@@ -63,7 +66,7 @@ export type YoutubeMetadata = { id: string; title: string; duration: number | nu
 export type HistorySelection = { start: number; end: number; label: string } | null;
 export type HistoryAutomation = { provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; selection: HistorySelection; chapters: YoutubeChapter[] };
 export type HistoryRecord = { id: string; provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; available: boolean; /** Optional companion subtitle persisted by main; safe metadata only, never a path. */ subtitle?: { fileName: string; bytes: number; available: boolean }; /** Main-enriched opaque cardId bound for native drag. Present only when the record's file resolves and a card is registered; the absolute path never crosses IPC. */ cardId?: string };
-export type YoutubeSearchItem = { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; channelVerified: boolean };
+export type YoutubeSearchItem = { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; isShort: boolean | null; channelVerified: boolean };
 export type ThumbnailDiagnostic = { failed: number; total: number; reason: string; node: string };
 export type YoutubeSearchPage = { query: string; page: number; pageSize: 10; results: YoutubeSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: ThumbnailDiagnostic };
 export type YoutubeSearchSnapshot = Omit<YoutubeSearchPage, 'totalResults' | 'pageCount'> & { totalResults: null; pageCount: null };
@@ -73,7 +76,7 @@ export type SocialEvent = { jobId: string; state: 'idle' | 'metadata' | 'downloa
 export type PexelsKind = 'photo' | 'video';
 export type PexelsFile = { id: string; url: string; width: number | null; height: number | null; label: string; mime: 'image/jpeg' | 'image/png' | 'video/mp4'; size: number | null };
 export type PexelsAsset = { id: number; kind: PexelsKind; title: string; creator: string | null; creatorUrl: string | null; sourceUrl: string; duration: number | null; width: number | null; height: number | null; thumbnailUrl: string | null; files: PexelsFile[]; previewUrl: string | null };
-export type PexelsPage = { query: string; page: number; pageSize: number; results: PexelsAsset[]; hasPrevious: boolean; hasNext: boolean; totalResults: number | null };
+export type PexelsPage = { query: string; page: number; pageSize: number; results: PexelsAsset[]; hasPrevious: boolean; hasNext: boolean; totalResults: number | null; matchingResultsOnPage?: number };
 export type PexelsEvent = { jobId: string; state: 'downloading' | 'processing' | 'completed' | 'cancelled' | 'failed'; percent: number | null; message: string; cardId?: string; fileName?: string; warning?: string };
 export type PinterestEvent = { jobId: string; state: 'downloading' | 'processing' | 'completed' | 'cancelled' | 'failed'; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; warning?: string };
 export type PexelsConnectionStatus = { connected: boolean; persisted: boolean; message: string };
@@ -103,7 +106,7 @@ export interface ClipdockApi {
   importToMediaPool(cardId: string, targetBin: TargetBin): Promise<TransferResult>;
   /** Import the card's file and add it at the selected timeline position in the chosen destination bin. */
   addToTimeline(cardId: string, targetBin: TargetBin, placement: TimelinePlacement): Promise<TransferResult>;
-  searchYoutube(query: string, page: number, generation?: number): Promise<YoutubeSearchPage>;
+  searchYoutube(query: string, page: number, generation?: number, options?: SearchOptions): Promise<YoutubeSearchPage>;
   onYoutubeSearchPage(callback: (event: YoutubeSearchEvent) => void): () => void;
   cancelYoutubeSearch(): Promise<boolean>;
   prefetchYoutube(url: string): Promise<void>;
@@ -115,7 +118,7 @@ export interface ClipdockApi {
   downloadSocial(url: string, quality: YoutubeQuality, profile: MediaProfile, jobId: string): Promise<DownloadArtifact & { warning?: string }>;
   cancelSocial(jobId: string): Promise<boolean>;
   onSocialEvent(callback: (event: SocialEvent) => void): () => void;
-  searchPinterest(query: string, page: number): Promise<PinterestSearchPage>;
+  searchPinterest(query: string, page: number, options?: SearchOptions): Promise<PinterestSearchPage>;
   loadPinterest(url: string): Promise<PinterestMetadata>;
   downloadPinterest(url: string, itemIndex: number, profile: MediaProfile, jobId: string): Promise<DownloadArtifact & { warning?: string }>;
   cancelPinterest(jobId: string): Promise<boolean>;
@@ -128,7 +131,7 @@ export interface ClipdockApi {
   pexelsKeyStatus(): Promise<PexelsConnectionStatus>;
   setPexelsKey(key: string): Promise<PexelsConnectionStatus>;
   clearPexelsKey(): Promise<PexelsConnectionStatus>;
-  searchPexels(kind: PexelsKind, query: string, page: number): Promise<PexelsPage>;
+  searchPexels(kind: PexelsKind, query: string, page: number, options?: SearchOptions): Promise<PexelsPage>;
   loadPexels(kind: PexelsKind, id: number): Promise<PexelsAsset>;
   downloadPexels(asset: PexelsAsset, fileId: string, profile: MediaProfile, jobId: string): Promise<DownloadArtifact & { warning?: string }>;
   cancelPexels(jobId: string): Promise<boolean>;
@@ -139,7 +142,7 @@ export interface ClipdockApi {
   pixabayKeyStatus(): Promise<PexelsConnectionStatus>;
   setPixabayKey(key: string): Promise<PexelsConnectionStatus>;
   clearPixabayKey(): Promise<PexelsConnectionStatus>;
-  searchPixabay(kind: 'video', query: string, page: number): Promise<PexelsPage>;
+  searchPixabay(kind: 'video', query: string, page: number, options?: SearchOptions): Promise<PexelsPage>;
   loadPixabay(kind: 'video', id: number): Promise<PexelsAsset>;
   downloadPixabay(asset: PexelsAsset, fileId: string, profile: MediaProfile, jobId: string): Promise<DownloadArtifact & { warning?: string }>;
   cancelPixabay(jobId: string): Promise<boolean>;
