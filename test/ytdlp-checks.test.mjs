@@ -247,10 +247,17 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   }
   {
     const calls = [];
-    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith('', 1, 'ERROR: [youtube:search] query: Unable to extract initial data\n'), closeWith(searchJson(Array.from({length: 30}, (_, i) => searchEntry(i + 1))))], calls), undefined, {sessionDir: path.join(phase3Root, 'search-fallback')});
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith(searchJson(Array.from({length: 10}, (_, i) => searchEntry(i + 1))), 1, 'ERROR: [youtube:search] query: Unable to extract initial data\n'), closeWith(searchJson(Array.from({length: 30}, (_, i) => searchEntry(i + 1))))], calls), undefined, {sessionDir: path.join(phase3Root, 'search-fallback')});
     const first = await worker.search('fallback query', 1);
     const third = await worker.search('fallback query', 3);
-    expect('extraction failure retries once without skip and caches all thirty', [calls.length, calls.map(call => call.args.includes('youtubetab:skip=webpage')), calls[1].args.includes('--lazy-playlist'), first.totalResults, third.results.length, third.results[0].id, third.hasNext], [2, [true, false], true, 30, 10, 'search00021', false]);
+    expect('unpublished extraction failure retries once without skip and caches all thirty', [calls.length, calls.map(call => call.args.includes('youtubetab:skip=webpage')), calls[1].args.includes('--lazy-playlist'), first.totalResults, third.results.length, third.results[0].id, third.hasNext], [2, [true, false], true, 30, 10, 'search00021', false]);
+  }
+  {
+    const calls = []; const snapshots = [];
+    const entries = Array.from({length: 30}, (_, i) => searchEntry(i + 1));
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith(searchJson(entries.slice(0, 10)), 1, 'ERROR: [youtube:search] query: Unable to extract initial data\n'), closeWith(searchJson(entries))], calls), undefined, {sessionDir: path.join(phase3Root, 'search-published-fallback')});
+    const outcome = await worker.search('published query', 1, page => snapshots.push(page)).then(page => ({totalResults: page.totalResults}), error => ({error: error.message}));
+    expect('extraction failure after publication does not retry or publish a replacement page', [calls.length, snapshots.length, snapshots[0]?.results.length, snapshots[0]?.results[0].id, outcome, !!worker.searchCache.get('published query')], [1, 1, 10, 'search00001', {error: 'Could not search YouTube.'}, false]);
   }
   for (const stderr of ['ERROR: HTTP Error 429: Too Many Requests', 'ERROR: [youtube:search] query: Unable to extract initial data']) {
     const calls = [];

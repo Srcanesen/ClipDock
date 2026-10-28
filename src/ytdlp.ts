@@ -481,7 +481,7 @@ export class YtdlpWorker {
     const response = await this.runJob({jobDir, kind: 'search', jobId: 'youtube-search'}, async context => {
       for (const skipWebpage of [true, false]) {
         const results: YoutubeSearchItem[] = []; const seen = new Set<string>();
-        let entries = 0; let invalid = false;
+        let entries = 0; let invalid = false; let firstPagePublished = false;
         const args = ['--ignore-config', '--no-warnings', '--no-colors', '--socket-timeout', '15', '--flat-playlist', '--lazy-playlist', '--dump-json', '--skip-download', ...(skipWebpage ? ['--extractor-args', 'youtubetab:skip=webpage'] : []), '--playlist-end', '30', `ytsearch30:${query}`];
         const result = await this.begin(args, {jobDir, kind: 'search'}, line => {
           if (!line.trim() || context.signal.aborted || invalid) return;
@@ -490,12 +490,15 @@ export class YtdlpWorker {
           const item = narrowSearchEntry(raw);
           if (!item || seen.has(item.id)) return;
           seen.add(item.id); results.push(item);
-          if (page === 1 && results.length === SEARCH_PAGE_SIZE) onFirstPage?.({query, page: 1, pageSize: SEARCH_PAGE_SIZE, results: results.map(entry => ({...entry})), hasPrevious: false, hasNext: false, totalResults: null, pageCount: null});
+          if (page === 1 && results.length === SEARCH_PAGE_SIZE && onFirstPage) {
+            firstPagePublished = true;
+            onFirstPage({query, page: 1, pageSize: SEARCH_PAGE_SIZE, results: results.map(entry => ({...entry})), hasPrevious: false, hasNext: false, totalResults: null, pageCount: null});
+          }
         });
         context.check();
         if (result.stdoutTruncated) { this.log('search results exceeded stdout limit'); throw new Error('Search results were too large.'); }
         if (result.code !== 0) {
-          if (skipWebpage && searchExtractionFailure(result.stderr)) continue;
+          if (skipWebpage && !firstPagePublished && searchExtractionFailure(result.stderr)) continue;
           this.log(`search failed code=${result.code}`); throw new Error('Could not search YouTube.');
         }
         if (invalid) { this.log('search returned invalid JSON'); throw new Error('Could not search YouTube.'); }
