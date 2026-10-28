@@ -479,7 +479,7 @@ function formatDuration(seconds: number | null): string {
   return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}` : `${minutes}:${String(secs).padStart(2, '0')}`;
 }
 function qualityLabel(height: number): string { return height === 2160 ? '2160p (4K)' : `${height}p`; }
-function socialPlatformLabel(platform: SocialPlatform | null): string { return platform === 'instagram' ? 'Instagram' : platform === 'twitter' ? 'X' : platform === 'facebook' ? 'Facebook' : 'Paste link'; }
+function socialPlatformLabel(platform: SocialPlatform | null): string { return platform === 'instagram' ? 'Instagram' : platform === 'twitter' ? 'X' : platform === 'facebook' ? 'Facebook' : 'Social'; }
 function detectSocialPlatform(input: string): SocialPlatform | null {
   try {
     const source = input.trim(); const authority = source.match(/^https:\/\/([^/?#]*)/i)?.[1] ?? '';
@@ -847,7 +847,7 @@ function formatCount(value: number): string { try { return new Intl.NumberFormat
 function formatAge(timestamp: number): string { const seconds = Math.max(0, Math.floor(Date.now() / 1000) - timestamp); if (seconds < 60) return 'just now'; const minutes = Math.floor(seconds / 60); if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`; const days = Math.floor(hours / 24); if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`; const weeks = Math.floor(days / 7); if (weeks < 5) return `${weeks} week${weeks === 1 ? '' : 's'} ago`; const months = Math.floor(days / 30); if (days < 365) return `${months} month${months === 1 ? '' : 's'} ago`; const years = Math.floor(days / 365); return `${years} year${years === 1 ? '' : 's'} ago`; }
 function formatMeta(item: YoutubeSearchItem): string { const channel = item.channel ? `${item.channel}${item.channelVerified ? ' ✓' : ''}` : null; return [channel, item.viewCount === null ? null : `${formatCount(item.viewCount)} views`, item.publishedAt === null ? null : formatAge(item.publishedAt)].filter(Boolean).join(' · '); }
 function providerLabel(value: Provider, platform: SocialPlatform | null = null): string {
-  return value === 'youtube' ? 'YouTube' : value === 'pexels' ? 'Pexels' : value === 'pixabay' ? 'Pixabay' : value === 'pinterest' ? 'Pinterest' : platform ? socialPlatformLabel(platform) : 'Social media';
+  return value === 'youtube' ? 'YouTube' : value === 'pexels' ? 'Pexels' : value === 'pixabay' ? 'Pixabay' : value === 'pinterest' ? 'Pinterest' : platform ? socialPlatformLabel(platform) : 'Social';
 }
 function sourceRowAriaLabel(source: string, title: string, duration: string, metadata = ''): string {
   return [`Source: ${source}`, `Duration: ${duration}`, `Title: ${title}`, metadata ? `Metadata: ${metadata}` : null].filter(Boolean).join('. ');
@@ -2227,7 +2227,7 @@ function setProvider(next: Provider): void {
   if (isStock(next)) { setOptionalText('stock-credit-lead', next === 'pixabay' ? 'Results from' : 'Media provided by'); setOptionalText('pexels-link', stockLabel(next)); }
   // The feed toolbar's single live status line carries provider context.
   ($('youtube-search-input') as HTMLInputElement).placeholder = isStock(next) ? `Search ${stockLabel(next)}` : next === 'pinterest' ? 'Search Pinterest or paste a Pin URL' : 'Search permitted sources';
-  $('metadata-verified').textContent = isStock(next) ? stockLabel(next) : next === 'social' ? 'Paste link' : next === 'pinterest' ? 'Pinterest' : 'Verified metadata';
+  $('metadata-verified').textContent = isStock(next) ? stockLabel(next) : next === 'social' ? 'Social' : next === 'pinterest' ? 'Pinterest' : 'Verified metadata';
   outputSession.select({ provider: next, kind: stockKind() });
   restoreBrowserState();
   renderSelectionToolbar();
