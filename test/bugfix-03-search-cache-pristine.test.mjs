@@ -43,7 +43,7 @@ test('ytdlp search cache stores pristine results; page1→page2→page1 returns 
       channelVerified: false,
     }));
     const key = 'test query';
-    const cacheKey = key.toLocaleLowerCase('en-US');
+    const cacheKey = '["test query","videos"]';
     worker.searchCache.set(cacheKey, { query: key, createdAt: Date.now(), results: pristine });
     assert.equal(worker.searchCache.get(cacheKey).results[0].thumbnailUrl, 'https://i.ytimg.com/vi/abc00000000/mqdefault.jpg');
     const page1 = await worker.search(key, 1);
@@ -107,7 +107,7 @@ test('streamed first page is a copy and successful thirty-result cache serves al
     emit(entries.slice(0, 10));
     assert.equal(snapshots.length, 1);
     assert.equal(snapshots[0].results[0].thumbnailUrl, 'https://i.ytimg.com/vi/abc00000000/mqdefault.jpg');
-    assert.equal(worker.searchCache.get('test query'), null);
+    assert.equal(worker.searchCache.get('["test query","videos"]'), null);
     snapshots[0].results[0].thumbnailUrl = null;
     emit(entries.slice(10)); proc.emit('close', 0);
     const first = await pending;

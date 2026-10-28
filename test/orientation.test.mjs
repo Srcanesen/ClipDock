@@ -99,7 +99,7 @@ test('YouTube preserves Shorts/watch/unknown and explicit yt-dlp signals before 
   assert.deepEqual(entries.map(item => item.url), [0,1,2,3,4].map(index => `https://www.youtube.com/watch?v=test${String(index).padStart(7,'0')}`));
 });
 
-test('YouTube early and final pages filter the same corpus while the cache retains all entries', async t => {
+test('YouTube early and final pages filter the same corpus while mode caches retain unfiltered entries', async t => {
   const entries = Array.from({length:30}, (_,index) => rawYoutube(index,index%2===0 ? 'short' : index%3===0 ? undefined : 'watch'));
   const expectedVertical = ['test0000000','test0000002','test0000004','test0000006','test0000008','test0000010','test0000012','test0000014','test0000016','test0000018'];
   let calls = 0; const early = [];
@@ -115,7 +115,7 @@ test('YouTube early and final pages filter the same corpus while the cache retai
   assert.deepEqual(second.results.map(item => item.id), ['test0000020','test0000022','test0000024','test0000026','test0000028']);
   const horizontal = await worker.search('ocean',1,undefined,{orientation:'horizontal'});
   assert.deepEqual(horizontal.results.map(item => item.id), ['test0000001','test0000005','test0000007','test0000011','test0000013','test0000017','test0000019','test0000023','test0000025','test0000029']);
-  assert.deepEqual([horizontal.totalResults,(await worker.search('ocean',1)).totalResults,(await worker.search('ocean',1,undefined,{orientation:'square'})).totalResults,calls], [10,30,30,1]);
+  assert.deepEqual([horizontal.totalResults,(await worker.search('ocean',1)).totalResults,(await worker.search('ocean',1,undefined,{orientation:'square'})).totalResults,calls], [10,30,30,2]);
   first.results[0].isShort = false;
   assert.equal((await worker.search('ocean',1,undefined,{orientation:'vertical'})).results[0].isShort,true);
 });
@@ -213,4 +213,116 @@ test('preview search mocks honor YouTube/Pinterest/stock orientation and expose 
   assert.deepEqual([square.totalResults,square.pageCount], [6,1]);
   assert.deepEqual(plain((await api.searchPexels('photo','ocean',1,{orientation:'vertical'})).results.map(item => item.id)),[102]);
   assert.deepEqual(plain((await api.searchPixabay('video','ocean',1,{orientation:'square'})).results.map(item => item.id)),[203]);
+});
+
+// Shape captured from yt-dlp 2026.08.19's one live cooking search, sanitized.
+// The Shorts counterpart uses the /shorts/ URL emitted by its tab extractor.
+test('YouTube Vertical uses the live Shorts type filter', async t => {
+  const watch = JSON.parse(readFileSync(new URL('./fixtures/youtube-flat-search-real.json', import.meta.url), 'utf8'));
+  const short = {...watch, id:'short000001', title:'Sanitized Short', duration:null};
+  for (const key of ['url','webpage_url','original_url']) short[key]='https://www.youtube.com/shorts/short000001';
+  assert.equal(narrowSearchEntry(watch).isShort,false);
+  assert.equal(narrowSearchEntry({...watch,ie_key:'YoutubeTab'}),null);
+  assert.equal(narrowSearchEntry(short).isShort,true);
+  let args;
+  const worker = new YtdlpWorker('/fixture/yt-dlp', (_binary, command) => {
+    args = command;
+    const child = new Child();
+    queueMicrotask(() => {
+      const entries = command.at(-1).startsWith('ytsearch') ? [watch] : [watch,short,{...watch,ie_key:'YoutubeTab'}];
+      child.stdout.emit('data',entries.map(JSON.stringify).join('\n')+'\n');child.emit('close',0);
+    });
+    return child;
+  }, undefined, {sessionDir:temp(t)});
+  t.after(() => worker.dispose());
+  const vertical=await worker.search('cooking',1,undefined,{orientation:'vertical'});
+  assert.deepEqual(vertical.results.map(item => [item.id,item.isShort]),[['short000001',true]]);
+  assert.equal(args.at(-1),'https://www.youtube.com/results?search_query=cooking&sp=EgIQCQ%3D%3D');
+  assert.deepEqual([args[args.indexOf('--playlist-end')+1],vertical.totalResults],['30',1]);
+});
+
+test('orientation icon control delegates clicks, shows source capabilities, and restores active source/kind state', async () => {
+  const f=createHarness(); const calls=[];
+  f.api.searchYoutube=async (query,page,generation,options)=>{calls.push([query,page,options.orientation]);return {query,page,pageSize:10,results:[],hasPrevious:false,hasNext:false,totalResults:0,pageCount:1};};
+  await f.fireReady();
+  const button=value=>f.elements.get(`orientation-${value}`);
+  const pressed=()=>['all','vertical','horizontal','square'].map(value=>button(value).getAttribute('aria-pressed'));
+  const click=value=>f.elements.get('orientation-filter').listeners.click({target:{closest:()=>button(value)}});
+  assert.deepEqual(pressed(),['true','false','false','false']);
+  assert.equal(button('square').hidden,true);
+  f.elements.get('youtube-search-input').value='cooking';click('vertical');await f.flush();
+  assert.deepEqual(calls,[['cooking',1,'vertical']]);
+  assert.deepEqual(pressed(),['false','true','false','false']);
+  f.test.setProvider('pinterest');assert.equal(button('square').hidden,false);click('square');
+  assert.deepEqual(pressed(),['false','false','false','true']);
+  f.test.setProvider('social');assert.equal(f.elements.get('orientation-filter').hidden,true);
+  f.test.setProvider('youtube');assert.equal(f.elements.get('orientation-filter').hidden,false);
+  assert.equal(button('square').hidden,true);assert.deepEqual(pressed(),['false','true','false','false']);
+  f.test.setProvider('pinterest');assert.deepEqual(pressed(),['false','false','false','true']);
+  f.test.setProvider('pexels');click('horizontal');assert.deepEqual(pressed(),['false','false','true','false']);
+  f.test.setPexelsKind('photo');assert.deepEqual(pressed(),['true','false','false','false']);click('square');
+  f.test.setPexelsKind('video');assert.deepEqual(pressed(),['false','false','true','false']);
+  f.test.setProvider('pixabay');assert.deepEqual(pressed(),['true','false','false','false']);click('vertical');
+  f.test.setProvider('pexels');assert.deepEqual(pressed(),['false','false','true','false']);
+  f.test.setProvider('pixabay');assert.deepEqual(pressed(),['false','true','false','false']);
+});
+
+test('orientation buttons follow provider collection busy state and YouTube stays interruptible', async () => {
+  const f=createHarness();await f.fireReady();
+  const buttons=()=>['all','vertical','horizontal','square'].map(value=>f.elements.get(`orientation-${value}`).disabled);
+  let finish;
+  const pending=(query,page)=>new Promise(resolve=>{finish=()=>resolve({query,page,pageSize:10,results:[],hasPrevious:false,hasNext:false,totalResults:0,pageCount:1});});
+  f.api.searchPinterest=pending;f.test.setProvider('pinterest');f.elements.get('youtube-search-input').value='interior design';
+  f.test.setOrientation('square');assert.deepEqual(buttons(),[true,true,true,true]);
+  finish();await f.flush();assert.deepEqual(buttons(),[false,false,false,false]);
+  f.api.searchYoutube=pending;f.test.setProvider('youtube');f.elements.get('youtube-search-input').value='cooking';
+  f.test.setOrientation('vertical');assert.deepEqual(buttons(),[false,false,false,false]);finish();await f.flush();
+});
+
+// Captured from YouTube's live Search filter menu on 2026-10-28; tracking removed.
+test('YouTube maps modes to the original videos search or verified Shorts filter, separating caches', async t => {
+  const filter=JSON.parse(readFileSync(new URL('./fixtures/youtube-shorts-filter.json',import.meta.url),'utf8'));
+  assert.equal(filter.label.simpleText,'Shorts');
+  assert.equal(decodeURIComponent(filter.navigationEndpoint.searchEndpoint.params),'EgIQCQ==');
+  const videos=Array.from({length:30},(_,index)=>rawYoutube(index,index===27?'short':index>=28?undefined:'watch'));
+  const shorts=Array.from({length:30},(_,index)=>rawYoutube(index+100,index<24?'short':index<28?'watch':undefined));
+  const calls=[];const early=[];
+  const worker=new YtdlpWorker('/fixture/yt-dlp',(_binary,args)=>{
+    calls.push(args);const child=new Child();
+    queueMicrotask(()=>{const rows=args.at(-1).startsWith('ytsearch')?videos:shorts;child.stdout.emit('data',rows.map(JSON.stringify).join('\n')+'\n');child.emit('close',0);});
+    return child;
+  },undefined,{sessionDir:temp(t)});
+  t.after(()=>worker.dispose());
+  const all=await worker.search('cooking & tips',1,page=>early.push(page));
+  assert.deepEqual([all.totalResults,all.pageCount,all.results[0].id],[30,3,'test0000000']);
+  assert.equal(calls[0].at(-1),'ytsearch30:cooking & tips');
+  assert.deepEqual([early.length,early[0].results.length,early[0].totalResults],[1,10,null]);
+  const horizontal=await worker.search('COOKING & TIPS',3,undefined,{orientation:'horizontal'});
+  assert.deepEqual(horizontal.results.map(item=>item.id),['test0000020','test0000021','test0000022','test0000023','test0000024','test0000025','test0000026']);
+  assert.deepEqual([horizontal.totalResults,horizontal.pageCount,calls.length],[27,3,1]);
+  const vertical=await worker.search('cooking & tips',1,page=>early.push(page),{orientation:'vertical'});
+  assert.deepEqual([vertical.totalResults,vertical.pageCount,vertical.results[0].id],[24,3,'test0000100']);
+  assert.deepEqual(vertical.results.map(item=>item.isShort),Array(10).fill(true));
+  assert.equal(calls[1].at(-1),'https://www.youtube.com/results?search_query=cooking%20%26%20tips&sp=EgIQCQ%3D%3D');
+  assert.deepEqual(calls.map(args=>args[args.indexOf('--playlist-end')+1]),['30','30']);
+  assert.deepEqual([early.length,early[1].results.length,early[1].totalResults],[2,10,null]);
+  assert.equal(worker.searchCache.get('["cooking & tips","videos"]').results.length,30);
+  assert.equal(worker.searchCache.get('["cooking & tips","shorts"]').results.length,30);
+  assert.equal((await worker.search('cooking & tips',3,undefined,{orientation:'vertical'})).results[0].id,'test0000120');
+  assert.equal((await worker.search('cooking & tips',1,undefined,{orientation:'square'})).totalResults,30);
+  assert.equal((await worker.search('cooking & tips',1,undefined,{orientation:'bad'})).results[0].id,'test0000000');
+  assert.equal(calls.length,2);
+});
+
+test('YouTube Horizontal on a cold videos corpus filters hints before its early page and excludes unknowns', async t => {
+  const rows=Array.from({length:30},(_,index)=>rawYoutube(index,index<5?'short':index<8?undefined:'watch'));
+  let command;const early=[];
+  const worker=new YtdlpWorker('/fixture/yt-dlp',(_binary,args)=>{command=args;const child=new Child();queueMicrotask(()=>{child.stdout.emit('data',rows.map(JSON.stringify).join('\n')+'\n');child.emit('close',0);});return child;},undefined,{sessionDir:temp(t)});
+  t.after(()=>worker.dispose());
+  const result=await worker.search('cooking',1,page=>early.push(page),{orientation:'horizontal'});
+  assert.equal(command.at(-1),'ytsearch30:cooking');
+  assert.deepEqual([result.totalResults,result.results[0].id,early.length,early[0].results.length],[22,'test0000008',1,10]);
+  assert.deepEqual(early[0].results.map(item=>item.isShort),Array(10).fill(false));
+  assert.deepEqual(result.results.map(item=>item.id),early[0].results.map(item=>item.id));
+  assert.equal((await worker.search('cooking',1)).totalResults,30);
 });

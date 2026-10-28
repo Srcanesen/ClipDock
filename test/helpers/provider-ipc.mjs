@@ -32,7 +32,7 @@ export async function providerIpcFixture(t, provider = 'youtube', options = {}) 
         if (options.holdMetadata) await releaseMetadata.promise;
         if (closed || child.signals.length) return;
         if (options.metadataFailure) {child.stderr.emit('data', 'metadata fixture failure'); child.emit('close', 1); return;}
-        child.stdout.emit('data', args.includes('--dump-json') ? args.some(arg => arg.startsWith('ytsearch')) ? options.youtubeJsonl ?? pin : options.pinterestJsonl ?? pin : JSON.stringify(metadata));
+        child.stdout.emit('data', args.includes('--dump-json') ? args.some(arg => arg.startsWith('ytsearch') || arg.startsWith('https://www.youtube.com/results?search_query=')) ? options.youtubeJsonl ?? pin : options.pinterestJsonl ?? pin : JSON.stringify(metadata));
       } else if (args.includes('-show_streams')) {
         child.stdout.emit('data', JSON.stringify({streams: [{codec_type: 'video', width: 160, height: 96}], format: {duration: '10', format_name: 'mov,mp4'}}));
       } else {

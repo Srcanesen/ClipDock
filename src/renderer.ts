@@ -1,5 +1,5 @@
 // ClipDock panel renderer. Plain browser script; all privileged work uses clipdockAPI.
-import { createGenerationGuard, searchOrientation, type Orientation, type SearchOptions } from './renderer-state/search-session';
+import { createGenerationGuard, searchOrientation, ORIENTATION_SUPPORT, type Orientation, type SearchOptions } from './renderer-state/search-session';
 import { PreviewSession } from './renderer-state/preview-session';
 import { MetadataSession, StatusRefreshSession } from './renderer-state/status-session';
 import { ItemOutputSession, transitionSourceSelection, selectSourceSegments, resolveSourceSelection, selectionEnvelope, sourceQualityChoices, type RawItemOutput, type SourceSelection, type OutputDefaults, type StagedSelection, type ResultSelection, cloneOutputDefaults, cloneOutputOverrides, resultOptionsId, cardQualityLabel, cardOutputSummary, profileLabel, intentLabel, isStock, type StockProvider } from './renderer-state/item-output-session';
@@ -786,6 +786,7 @@ function renderSearchState(): void {
 }
 function setSearchBusy(busy: boolean): void {
   if (busy) stopPreview(); searchBusy = busy;
+  renderOrientation();
   const blocked = busy || metadataSession.busy;
   const page = provider === 'pinterest' ? pinterestSearch : isStock(provider) ? pexelsSearch : searchPage;
   const queryBlocked = metadataSession.busy || (busy && provider !== 'youtube');
@@ -1399,12 +1400,26 @@ function submitSourceSearch(): void {
   if (directUrl) { clearResultSelection(); ($('youtube-url') as HTMLInputElement).value = directUrl; void loadYoutube(directUrl); return; }
   void searchYoutube(1);
 }
-// Later controls call this setter, or put data-orientation on a toolbar button.
+function renderOrientation(): void {
+  const control = document.getElementById('orientation-filter');
+  if (!control) return;
+  control.hidden = provider === 'social';
+  const supported: readonly Orientation[] = provider === 'social' ? [] : ORIENTATION_SUPPORT[provider];
+  for (const value of ORIENTATION_SUPPORT.pinterest) {
+    const button = document.getElementById(`orientation-${value}`) as HTMLButtonElement | null;
+    if (!button) continue;
+    button.hidden = !supported.includes(value);
+    button.disabled = searchBusy && provider !== 'youtube';
+    button.setAttribute('aria-pressed', String(value === orientation));
+  }
+}
+
 function setOrientation(value: Orientation): void {
   if (provider === 'social') return;
   const next = searchOrientation({orientation: value}, provider);
   if (next === orientation) return;
   orientation = next;
+  renderOrientation();
   beginSearchTransition();
   searchGuard.invalidate();
   searchBusy = false; searchPage = null; pinterestSearch = null; pexelsSearch = null;
@@ -2210,6 +2225,7 @@ function saveBrowserState(): void {
 function restoreBrowserState(): void {
   const saved = provider === 'youtube' ? youtubeState : provider === 'social' ? socialState : provider === 'pinterest' ? pinterestState : pexelsStates.get(`${provider}:${stockKind()}`);
   orientation = saved?.orientation ?? 'all';
+  renderOrientation();
   searchPage = saved?.youtubeSearch ?? null; youtube = saved?.youtube ?? null; social = saved?.social ?? null; pinterest = saved?.pinterest ?? null; pinterestSearch = saved?.pinterestSearch ?? null; socialPlatform = social?.platform ?? detectSocialPlatform(saved?.socialUrl ?? ''); pexelsSearch = saved?.pexelsSearch ?? null; pexels = saved?.pexels ?? null;
   ($('youtube-search-input') as HTMLInputElement).value = saved?.query ?? '';
   const socialInput = document.getElementById('social-url') as HTMLInputElement | null; if (socialInput) socialInput.value = saved?.socialUrl ?? '';
@@ -2641,7 +2657,8 @@ window.addEventListener('DOMContentLoaded', () => {
     if (provider !== 'youtube' || youtubeSearchPending === null) return;
     cancelPendingYoutubeSearch(); searchPage = null; setSearchBusy(false); renderSearchResults();
   });
-  document.querySelector('.feed-toolbar')?.addEventListener('click', event => {
+  renderOrientation();
+  document.getElementById('orientation-filter')?.addEventListener('click', event => {
     const target = (event.target as Element | null)?.closest<HTMLElement>('[data-orientation]');
     if (!target) return;
     event.preventDefault();

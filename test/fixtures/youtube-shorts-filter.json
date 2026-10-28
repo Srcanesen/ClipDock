@@ -1,0 +1,18 @@
+{
+  "label": {
+    "simpleText": "Shorts"
+  },
+  "navigationEndpoint": {
+    "commandMetadata": {
+      "webCommandMetadata": {
+        "url": "/results?search_query=cooking&sp=EgIQCQ%253D%253D",
+        "webPageType": "WEB_PAGE_TYPE_SEARCH",
+        "rootVe": 4724
+      }
+    },
+    "searchEndpoint": {
+      "query": "cooking",
+      "params": "EgIQCQ%3D%3D"
+    }
+  }
+}

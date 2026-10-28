@@ -223,6 +223,24 @@ body.resizing { cursor: col-resize; user-select: none; }
 .provider-switch button[aria-pressed="true"] { background: var(--paper); color: var(--ink); }
 .search-bar { flex: 1 1 100%; display: flex; gap: 8px; min-width: 0; margin: 0; }
 .search-bar .btn { height: 36px; }
+.orientation-filter { flex: none; display: flex; align-items: center; gap: 3px; }
+.orientation-filter button { display: grid; place-items: center; width: 32px; height: 36px; padding: 0; border: 1px solid transparent; border-radius: var(--r-m); background: transparent; color: var(--dim); }
+.orientation-filter button:hover { background: var(--carrier); color: var(--paper); }
+.orientation-filter button[aria-pressed="true"] { color: var(--amber); background: var(--carrier-2); border-color: var(--amber); }
+.orientation-filter button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.orientation-filter svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.4; }
+.orientation-glyph { display: block; border: 1.5px solid currentColor; border-radius: 2px; }
+.orientation-glyph-vertical { width: 10px; height: 17px; }
+.orientation-glyph-horizontal { width: 18px; height: 11px; }
+.orientation-glyph-square { width: 14px; height: 14px; }
+@media (max-width: 480px) {
+  #youtube-search-form { gap: 5px; }
+  #youtube-search-form .field { padding: 0 8px; }
+  #youtube-search-form kbd { display: none; }
+  .orientation-filter { gap: 1px; }
+  .orientation-filter button { width: 28px; }
+}
+
 .feed-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px; min-height: 44px; border-bottom: 1px solid var(--rebate); position: relative; z-index: 8; }
 /* The status absorbs free space and never forces a wrap; controls wrap only when they alone overflow. */
 .feed-toolbar .edgecode { flex: 1 1 0; }

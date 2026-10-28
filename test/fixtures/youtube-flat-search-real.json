@@ -1,0 +1,32 @@
+{
+  "_type": "url",
+  "ie_key": "Youtube",
+  "id": "watch000001",
+  "url": "https://www.youtube.com/watch?v=watch000001",
+  "title": "Sanitized cooking video",
+  "description": "Sanitized search excerpt",
+  "duration": 1921,
+  "channel_id": "UCaaaaaaaaaaaaaaaaaaaaaa",
+  "channel": "Sanitized channel",
+  "channel_url": "https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa",
+  "uploader": "Sanitized channel",
+  "uploader_id": "@sanitized",
+  "uploader_url": "https://www.youtube.com/@sanitized",
+  "thumbnails": [
+    {
+      "url": "https://i.ytimg.com/vi/watch000001/hq720.jpg",
+      "height": 202,
+      "width": 360
+    }
+  ],
+  "timestamp": null,
+  "release_timestamp": null,
+  "availability": null,
+  "view_count": 5912869,
+  "live_status": null,
+  "channel_is_verified": true,
+  "webpage_url": "https://www.youtube.com/watch?v=watch000001",
+  "original_url": "https://www.youtube.com/watch?v=watch000001",
+  "extractor": "youtube",
+  "extractor_key": "Youtube"
+}

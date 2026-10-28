@@ -165,6 +165,7 @@ export function validateYoutubeSearch(input: unknown): string | null {
 export function narrowSearchEntry(raw: unknown): YoutubeSearchItem | null {
   const entry = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
   if (!entry || typeof entry.id !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(entry.id)) return null;
+  if (entry.ie_key !== undefined && entry.ie_key !== 'Youtube') return null;
   const title = safeText(entry.title, 200).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim();
   if (!title) return null;
   const channel = safeText(entry.channel ?? entry.uploader, 100).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim() || null;
@@ -485,11 +486,16 @@ export class YtdlpWorker {
   }
   async search(input: unknown, page: unknown, onFirstPage?: (page: YoutubeSearchSnapshot) => void, options?: SearchOptions): Promise<YoutubeSearchPage> {
     const orientation = searchOrientation(options, 'youtube');
+    // Normal ytsearch entries carry watch URLs and therefore isShort=false.
+    // Horizontal keeps those known non-Shorts; unknown hints stay excluded.
     const filtered = (items: YoutubeSearchItem[]) => items.filter(item => matchesYoutubeOrientation(item, orientation));
     const query = validateYoutubeSearch(input);
     if (!query) throw new Error('Enter 2–100 characters to search YouTube.');
     if (typeof page !== 'number' || !Number.isInteger(page) || page < 1 || page > 3) throw new Error('Invalid search request.');
-    const key = query.toLocaleLowerCase('en-US');
+    const mode = orientation === 'vertical' ? 'shorts' : 'videos';
+    // All and Horizontal share the original, unfiltered videos corpus. Shorts
+    // has a different provider request and must never reuse that corpus.
+    const key = JSON.stringify([query.toLocaleLowerCase('en-US'), mode]);
     const cached = this.searchCache.get(key);
     if (cached) {
       return this.runJob({jobDir: '', kind: 'search', jobId: 'youtube-search'}, () => this.searchPage(cached.query, page, filtered(cached.results)));
@@ -500,7 +506,13 @@ export class YtdlpWorker {
       for (const skipWebpage of [true, false]) {
         const results: YoutubeSearchItem[] = []; const seen = new Set<string>();
         let entries = 0; let invalid = false; let firstPagePublished = false;
-        const args = ['--ignore-config', '--no-warnings', '--no-colors', '--socket-timeout', '15', '--flat-playlist', '--lazy-playlist', '--dump-json', '--skip-download', ...(skipWebpage ? ['--extractor-args', 'youtubetab:skip=webpage'] : []), '--playlist-end', '30', `ytsearch30:${query}`];
+        // EgIQCQ== is the Shorts type filter read from YouTube's live filter
+        // menu (sanitized fixture: youtube-shorts-filter.json). All/Horizontal
+        // retain the original ytsearch invocation and its extraction fallback.
+        const target = mode === 'shorts'
+          ? `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQCQ%3D%3D`
+          : `ytsearch30:${query}`;
+        const args = ['--ignore-config', '--no-warnings', '--no-colors', '--socket-timeout', '15', '--flat-playlist', '--lazy-playlist', '--dump-json', '--skip-download', ...(skipWebpage ? ['--extractor-args', 'youtubetab:skip=webpage'] : []), '--playlist-end', '30', target];
         const result = await this.begin(args, {jobDir, kind: 'search'}, line => {
           if (!line.trim() || context.signal.aborted || invalid) return;
           if (++entries > SEARCH_MAX_RESULTS) { invalid = true; return; }

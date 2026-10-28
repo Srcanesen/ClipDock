@@ -225,7 +225,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     proc.stdout.emit('data', searchJson([searchEntry(1), searchEntry(1), searchEntry(2, {live_status: 'is_live'}), {id: 'bad'}, ...Array.from({length: 8}, (_, i) => searchEntry(i + 3))]));
     expect('first page waits for ten accepted unique entries', snapshots.length, 0);
     proc.stdout.emit('data', searchJson([searchEntry(11)]));
-    expect('first page arrives before close with unknown totals', [snapshots.length, snapshots[0]?.results.map(item => item.id), snapshots[0]?.totalResults, snapshots[0]?.pageCount, snapshots[0]?.hasNext, settled, worker.isActive(), !!worker.searchCache.get('stream query')], [1, ['search00001', 'search00003', 'search00004', 'search00005', 'search00006', 'search00007', 'search00008', 'search00009', 'search00010', 'search00011'], null, null, false, false, true, false]);
+    expect('first page arrives before close with unknown totals', [snapshots.length, snapshots[0]?.results.map(item => item.id), snapshots[0]?.totalResults, snapshots[0]?.pageCount, snapshots[0]?.hasNext, settled, worker.isActive(), !!worker.searchCache.get('["stream query","videos"]')], [1, ['search00001', 'search00003', 'search00004', 'search00005', 'search00006', 'search00007', 'search00008', 'search00009', 'search00010', 'search00011'], null, null, false, false, true, false]);
     snapshots[0].results[0].title = 'mutated snapshot';
     proc.stdout.emit('data', searchJson(Array.from({length: 16}, (_, i) => searchEntry(i + 12))));
     proc.emit('close', 0);
@@ -242,7 +242,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     calls[0].child.emit('close', 0);
     await rejected('cancel after first page rejects owning search', pending, 'Could not search YouTube.');
     await cancelled;
-    expect('cancel terminates child and never caches partial results', [calls[0].child.kills, snapshots.length, worker.isActive(), !!worker.searchCache.get('cancel query')], [['SIGTERM'], 1, false, false]);
+    expect('cancel terminates child and never caches partial results', [calls[0].child.kills, snapshots.length, worker.isActive(), !!worker.searchCache.get('["cancel query","videos"]')], [['SIGTERM'], 1, false, false]);
     expect('cancelled query is fetched afresh', (await worker.search('cancel query', 1)).totalResults, 1);
   }
   {
@@ -257,7 +257,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     const entries = Array.from({length: 30}, (_, i) => searchEntry(i + 1));
     const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith(searchJson(entries.slice(0, 10)), 1, 'ERROR: [youtube:search] query: Unable to extract initial data\n'), closeWith(searchJson(entries))], calls), undefined, {sessionDir: path.join(phase3Root, 'search-published-fallback')});
     const outcome = await worker.search('published query', 1, page => snapshots.push(page)).then(page => ({totalResults: page.totalResults}), error => ({error: error.message}));
-    expect('extraction failure after publication does not retry or publish a replacement page', [calls.length, snapshots.length, snapshots[0]?.results.length, snapshots[0]?.results[0].id, outcome, !!worker.searchCache.get('published query')], [1, 1, 10, 'search00001', {error: 'Could not search YouTube.'}, false]);
+    expect('extraction failure after publication does not retry or publish a replacement page', [calls.length, snapshots.length, snapshots[0]?.results.length, snapshots[0]?.results[0].id, outcome, !!worker.searchCache.get('["published query","videos"]')], [1, 1, 10, 'search00001', {error: 'Could not search YouTube.'}, false]);
   }
   for (const stderr of ['ERROR: HTTP Error 429: Too Many Requests', 'ERROR: [youtube:search] query: Unable to extract initial data']) {
     const calls = [];
@@ -272,7 +272,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     calls[0].child.stdout.emit('data', searchJson(Array.from({length: 10}, (_, i) => searchEntry(i + 1))));
     calls[0].child.emit('close', 1);
     await rejected('error after snapshot rejects owning search', pending, 'Could not search YouTube.');
-    expect('error after snapshot never caches results', [snapshots.length, !!worker.searchCache.get('late error')], [1, false]);
+    expect('error after snapshot never caches results', [snapshots.length, !!worker.searchCache.get('["late error","videos"]')], [1, false]);
   }
 
   // Metadata is narrow, canonical, and its thumbnail policy is bounded.
