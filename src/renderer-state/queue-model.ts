@@ -121,10 +121,12 @@ function placementForIntent(intent: DownloadIntent): TimelinePlacement { return 
  */
 export class DownloadQueue {
   private queue: QueueItem[] = [];
+  private sessionItems: QueueItem[] = [];
   private active: string | null = null;
   private listeners = new Set<(change: QueueChange) => void>();
   constructor(private adapter: QueueAdapter) {}
   get items(): readonly Readonly<QueueItem>[] { return this.queue; }
+  get completedItems(): readonly Readonly<QueueItem>[] { return this.sessionItems.filter(item => item.status === 'completed' && !item.fileDeleted); }
   get activeId(): string | null { return this.active; }
   subscribe(listener: (change: QueueChange) => void): () => void {
     this.listeners.add(listener);
@@ -141,7 +143,7 @@ export class DownloadQueue {
     for (const item of candidates) {
       const existing = this.duplicate(item);
       if (existing) { duplicate = existing.queueId; continue; }
-      this.queue.splice(index++, 0, item); added++;
+      this.queue.splice(index++, 0, item); this.sessionItems.push(item); added++;
     }
     if (added) { this.changed(); this.pump(); }
     return { added, duplicate };
@@ -189,14 +191,20 @@ export class DownloadQueue {
   remove(id: string): void {
     if (id === this.active) return;
     const index = this.queue.findIndex((item) => item.queueId === id);
-    if (index >= 0) { this.queue.splice(index, 1); this.changed(); }
+    if (index >= 0) {
+      const [item] = this.queue.splice(index, 1);
+      // Removing a row keeps its completed download in This session; deleting its file does not.
+      if (item.status !== 'completed' || item.fileDeleted || item.deleting) this.sessionItems = this.sessionItems.filter(entry => entry !== item);
+      this.changed();
+    }
   }
   repeat(id: string, again = false): { added: number; duplicate?: string } {
     const item = this.queue.find((item) => item.queueId === id);
     if (!item || (again ? item.status !== 'completed' : !['failed', 'cancelled'].includes(item.status))) return { added: 0 };
     const duplicate = this.duplicate(item, !again);
     if (duplicate) return { added: 0, duplicate: duplicate.queueId };
-    this.queue.push({ ...item, queueId: this.adapter.newId(), jobId: this.adapter.newId(), status: 'queued', percent: null, speedBytesPerSecond: null, etaSeconds: null, message: 'Queued.', cardId: undefined, fileName: undefined, fileDeleted: undefined, subtitle: undefined, warning: undefined, transferError: undefined, actionError: undefined, stopping: false, deleting: false, handingOff: false });
+    const repeated: QueueItem = { ...item, queueId: this.adapter.newId(), jobId: this.adapter.newId(), status: 'queued', percent: null, speedBytesPerSecond: null, etaSeconds: null, message: 'Queued.', cardId: undefined, fileName: undefined, fileDeleted: undefined, subtitle: undefined, warning: undefined, transferError: undefined, actionError: undefined, stopping: false, deleting: false, handingOff: false };
+    this.queue.push(repeated); this.sessionItems.push(repeated);
     this.changed(); this.pump();
     return { added: 1 };
   }
@@ -244,7 +252,7 @@ export class DownloadQueue {
   invalidateCards(cardIds: readonly string[] = []): void {
     if (!cardIds.length) return;
     const removed = new Set(cardIds);
-    for (const item of this.queue) if (item.cardId && removed.has(item.cardId)) item.fileDeleted = true;
+    for (const item of [...this.queue, ...this.sessionItems]) if (item.cardId && removed.has(item.cardId)) item.fileDeleted = true;
     this.changed();
   }
   event(provider: Provider, event: QueueEvent): void {

@@ -303,6 +303,8 @@ if (previewParam !== null) {
   let previewOpen = false;
   let previewDownloadJob: string | null = null;
   let previewDownloadSequence = 0;
+  let readyDownloadAttempt = 0;
+  let readyDownloadReject: ((error: Error) => void) | null = null;
   let historyRecords = [...PREVIEW_HISTORY];
   const metadata: PreviewYoutubeMetadata = { id: 'dQw4w9WgXcQ', title: 'Preview video', duration: 213, channel: 'ClipDock Preview', thumbnailUrl: SYNTHETIC_THUMBNAIL_DATA_URL, heights: [360, 720, 1080, 1440, 2160], formatSummary: ['360p', '720p', '1080p', '1440p', '2160p'] };
   const api: PreviewApi = {
@@ -339,15 +341,27 @@ if (previewParam !== null) {
       if (previewParam === 'slow') await new Promise(resolve => setTimeout(resolve, 2000));
       if (previewParam === 'empty' || previewParam === 'error') throw new Error('Preview fixture: no video metadata.');
       if (previewParam === 'loading') await new Promise((resolve) => setTimeout(resolve, 900));
+      if (previewParam === 'ready') {
+        const item = SEARCH_ITEMS.find(item => item.url === url);
+        if (item) return { ...metadata, id: item.id, title: item.title };
+      }
       const second = url.includes('preview0002');
       return second ? { ...metadata, id: '9bZkp7q19f0', title: 'Preview second video' } : metadata;
     },
     downloadYoutube: async (_url, _quality, profile, jobId, options) => {
+      const readyAttempt = previewParam === 'ready' ? ++readyDownloadAttempt : 0;
       if (previewParam === 'empty' || previewParam === 'error' || previewParam === 'download-failed') throw new Error('Preview fixture: download failed.');
       if (previewDownloadJob) throw new Error('Preview fixture: only one backend job may be active.');
       previewDownloadJob = jobId;
       try {
         youtubeListener?.({ jobId, state: 'downloading', percent: 42, message: 'Downloading…', speedBytesPerSecond: 2_500_000, etaSeconds: 4 });
+        if (readyAttempt === 2) throw new Error('Preview fixture: network unavailable.');
+        if (readyAttempt === 3) {
+          youtubeListener?.({ jobId, state: 'cancelled', percent: null, message: 'Download cancelled.' });
+          throw new Error('Download cancelled.');
+        }
+        // A pending mock job keeps the ready fixture deterministic for queue checks.
+        if (readyAttempt === 4) return await new Promise<never>((_resolve, reject) => { readyDownloadReject = reject; });
         await new Promise((resolve) => setTimeout(resolve, previewParam === 'queue' ? 1500 : 60));
         if (previewDownloadJob !== jobId) throw new Error('Download cancelled.');
         if (profile !== 'original') youtubeListener?.({ jobId, state: 'processing', percent: 68, message: 'Preparing for Resolve…' });
@@ -359,7 +373,7 @@ if (previewParam !== null) {
         return result;
       } finally { if (previewDownloadJob === jobId) previewDownloadJob = null; }
     },
-    cancelYoutube: async (jobId) => { if (previewDownloadJob !== jobId) return false; previewDownloadJob = null; youtubeListener?.({ jobId, state: 'cancelled', percent: null, message: 'Download cancelled.' }); return true; },
+    cancelYoutube: async (jobId) => { if (previewDownloadJob !== jobId) return false; readyDownloadReject?.(new Error('Download cancelled.')); readyDownloadReject = null; previewDownloadJob = null; youtubeListener?.({ jobId, state: 'cancelled', percent: null, message: 'Download cancelled.' }); return true; },
     onYoutubeEvent: (callback) => { youtubeListener = callback; return () => { youtubeListener = null; }; },
     loadSocialThumbnail: async () => null,
     loadSocial: async (url) => {
@@ -461,7 +475,12 @@ if (previewParam !== null) {
     cancelPixabayRequests: async () => true,
     onPixabayEvent: (callback) => { pixabayListener = callback; return () => { if (pixabayListener === callback) pixabayListener = null; }; },
     openPixabayExternal: async () => true,
-    workspaceStatus: async () => ({ fileCount: 3, totalBytes: 48_000_000, cleanupFileCount: 2, cleanupBytes: 32_000_000 }), openWorkspace: async () => true, cleanupWorkspace: async () => ({ deletedFileCount: 2, deletedBytes: 32_000_000, fileCount: 1, totalBytes: 16_000_000 }), queueDelete: async () => previewParam === 'missing-file' ? { deleted: false, message: 'The file is no longer available. It remains in the queue.' } : { deleted: true, message: 'File deleted.' }, historyList: async () => historyRecords, historyThumbnail: async id => historyRecords.some(record => record.id === id) ? id === 'preview-history-2' ? PREVIEW_HISTORY_PHOTO : SYNTHETIC_THUMBNAIL_DATA_URL : null, historyClear: async () => { const count = historyRecords.length; historyRecords = []; return count; }, historyReuse: async () => null, historyReveal: async () => false, historySource: async () => false, historyCopy: async () => false, historyRelink: async () => null, historyDelete: async id => { const count = historyRecords.length; historyRecords = historyRecords.filter(record => record.id !== id); return { deleted: false, removed: historyRecords.length < count, removedCardIds: [] }; },
+    workspaceStatus: async () => ({ fileCount: 3, totalBytes: 48_000_000, cleanupFileCount: 2, cleanupBytes: 32_000_000 }), openWorkspace: async () => true, cleanupWorkspace: async () => ({ deletedFileCount: 2, deletedBytes: 32_000_000, fileCount: 1, totalBytes: 16_000_000 }), queueDelete: async () => previewParam === 'missing-file' ? { deleted: false, message: 'The file is no longer available. It remains in the queue.' } : { deleted: true, message: 'File deleted.' }, historyList: async () => historyRecords, historyThumbnail: async id => historyRecords.some(record => record.id === id) ? id === 'preview-history-2' ? PREVIEW_HISTORY_PHOTO : SYNTHETIC_THUMBNAIL_DATA_URL : null, historyClear: async () => { const count = historyRecords.length; historyRecords = []; return count; }, historyReuse: async () => null, historyReveal: async () => false, historySource: async () => false, historyCopy: async () => false, historyRelink: async () => null, historyDelete: async id => {
+      if (id === 'preview-history-3') throw new Error('Preview fixture: file is busy.');
+      const record = historyRecords.find(record => record.id === id);
+      historyRecords = historyRecords.filter(record => record.id !== id);
+      return { deleted: record?.available === true, removed: !!record, removedCardIds: record?.cardId ? [record.cardId] : [] };
+    },
     // Import only needs MediaStorage (no project/timeline); timeline append is stricter.
     importToMediaPool: async (cardId, targetBin) => {
       if (previewParam === 'error') return { ok: false, kind: 'transfer-failed', message: 'Preview fixture: transfer failed.' };
@@ -552,6 +571,13 @@ if (previewParam !== null) {
     if (search) search.value = 'editing workflow';
     (document.getElementById('youtube-search-form') as HTMLFormElement | null)?.requestSubmit();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    if (previewParam === 'ready') {
+      for (let index = 0; index < 4; index += 1) {
+        (document.querySelectorAll<HTMLButtonElement>('#youtube-search-results [data-card-action="enqueue"]')[index])?.click();
+        await new Promise(resolve => setTimeout(resolve, index === 0 ? 200 : 0));
+      }
+      return;
+    }
     (document.getElementById('youtube-search-results')?.children[0] as HTMLButtonElement | undefined)?.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     const quality = document.getElementById('youtube-quality') as HTMLSelectElement | null;

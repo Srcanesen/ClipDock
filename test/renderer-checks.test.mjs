@@ -37,8 +37,9 @@ test('compact metadata formatting and subtitle/chapter selections', async (t) =>
 test('history action menu keyboard and direct handoff', async (t) => {
   const renderer = readFileSync(path.join(dist, 'renderer.js'), 'utf8');
   {
-    const list = { children: [], attributes: {}, setAttribute(name, value) { this.attributes[name] = String(value); }, replaceChildren(...children) { this.children = children; }, append(...children) { this.children.push(...children); } }; let focused = null;
+    let focused = null;
     const { makeElement } = createFakeDom({ onFocus: (node) => { focused = node; }, bounds: { right: 500, top: 400 } });
+    const list = makeElement('div', 'history-list');
     const record = { id: 'h1', provider: 'youtube', source: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', project: 'P', fileName: 'clip.mp4', bytes: 5, assetId: 'dQw4w9WgXcQ', title: 'Clip', creator: 'Channel', profile: 'original', quality: '1080p', mediaMode: 'video', selection: null, automation: { provider: 'youtube', source: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', selection: null, chapters: [] }, createdAt: 1, lastUsedAt: 1, available: true };
     const elements = new Map([['history-list', list], ['youtube-target-bin', makeElement('select')], ['message', makeElement('p')]]); elements.get('youtube-target-bin').value = 'clipdock'; let timelineCall = null;
     const document = { get activeElement() { return focused; }, getElementById: (id) => elements.get(id) ?? null, createElement: makeElement };

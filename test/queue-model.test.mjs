@@ -321,3 +321,23 @@ test('a Stop failure never outlives the download it tried to stop', async () => 
   cancel.resolve(false); await stopping;
   assert.deepEqual([late.status, late.actionError, late.message], ['completed', undefined, 'Download complete.']);
 });
+
+
+test('removing completed queue items retains the session download until its card is invalidated', async () => {
+  const f = fixture(); f.queue.add(input()); await complete(f);
+  f.queue.remove(f.queue.items[0].queueId);
+  assert.equal(f.queue.items.length, 0);
+  assert.deepEqual(f.queue.completedItems?.map(item => [item.cardId, item.fileName]), [['card-0', '0.mp4']]);
+  assert.deepEqual(f.deletes, []);
+  f.queue.invalidateCards(['card-0']);
+  assert.deepEqual(f.queue.completedItems, []);
+});
+
+test('Delete file removes the completed session item as well as its queue entry', async () => {
+  const f = fixture(); f.queue.add(input()); await complete(f);
+  assert.deepEqual(f.queue.completedItems?.map(item => item.fileName), ['0.mp4']);
+  await f.queue.deleteFile(f.queue.items[0].queueId);
+  assert.equal(f.queue.items.length, 0);
+  assert.deepEqual(f.queue.completedItems, []);
+  assert.deepEqual(f.deletes, ['card-0']);
+});

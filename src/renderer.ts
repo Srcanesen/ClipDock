@@ -179,11 +179,17 @@ type HistoryProviderFilter = 'all' | Provider;
 type HistoryAvailabilityFilter = 'all' | 'available' | 'missing';
 const HISTORY_BATCH_SIZE = 20;
 let historyRecords: HistoryRecord[] = [];
+const selectedHistoryIds = new Set<string>();
+const historySelectionViews = new Map<string, { row: HTMLElement; checkbox: HTMLInputElement }>();
+let historySelectionAnchor: string | null = null;
+let historyDeleteIds: string[] = [];
+let historyDeleteBusy = false;
 const historyThumbnailCache = new Map<string, string>();
 const historyThumbnailRequests = new Map<string, Promise<string | null>>();
 let historyVisibleCount = HISTORY_BATCH_SIZE;
 const historyGuard = createGenerationGuard();
 let historyStatusOverride: string | null = null;
+let historyDeleteResult: { message: string; ok: boolean } | null = null;
 let inspectorOpen = false;
 let returnFocusToResult = false;
 let resultScrollTop = 0;
@@ -1006,12 +1012,17 @@ function wirePreviewControls(): void {
   document.getElementById('back-to-results')?.addEventListener('click', () => setInspectorOpen(false, true));
   // The stock <video> sits inside the monitor and scrolls with it; only the native YouTube view needs new bounds.
   window.addEventListener('scroll', scheduleYoutubePreviewBounds, true); window.addEventListener('resize', scheduleYoutubePreviewBounds); window.addEventListener('beforeunload', () => stopPreview()); window.addEventListener('keydown', (event) => {
+    const historyDialog = document.getElementById('history-delete-dialog') as HTMLDialogElement | null;
+    if (historyDialog?.open) {
+      if (event.key === 'Escape') { event.preventDefault(); if (!historyDeleteBusy) { closeHistoryDeleteDialog(); clearHistorySelection(); } }
+      return;
+    }
     const command = event.ctrlKey || event.metaKey;
     if (command && event.key.toLowerCase() === 'k') { event.preventDefault(); if (settingsOpen) closeSettings(false); if (currentSurface !== 'search') setSurface('search', false); ($('youtube-search-input') as HTMLInputElement).focus(); return; }
     if (command && event.key === ',') { event.preventDefault(); openSettings(); return; }
     // The download control lives in the clip detail; act only while it is on screen.
     if (command && event.key === 'Enter') { if (currentSurface === 'search' && inspectorOpen) { event.preventDefault(); ($('download-youtube-btn') as HTMLButtonElement).click(); } return; }
-    if (event.key === ' ' && !event.ctrlKey && !event.metaKey) {
+    if (currentSurface === 'search' && event.key === ' ' && !event.ctrlKey && !event.metaKey) {
       const active = document.activeElement as HTMLElement | null; const tag = active?.tagName ?? '';
       if (!['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tag) && active?.getAttribute?.('contenteditable') !== 'true') {
         // A focused result card previews itself; otherwise Space drives the open Inspector's monitor only.
@@ -1021,6 +1032,7 @@ function wirePreviewControls(): void {
       }
     }
     if (event.key !== 'Escape') return;
+    if (currentSurface === 'library' && selectedHistoryIds.size) { event.preventDefault(); closeHistoryActions(); clearHistorySelection(); return; }
     if (openHistoryMenu) { closeHistoryActions(true); return; }
     if (document.getElementById('intent-menu') && !document.getElementById('intent-menu')?.classList.contains('hidden')) { setIntentMenuOpen(false); (document.getElementById('intent-menu-btn') as HTMLElement | null)?.focus?.(); return; }
     if (previewSession.source !== null) { stopPreview(true); return; }
@@ -1946,6 +1958,8 @@ function queueStateChip(item: QueueItem): HTMLElement | null {
 }
 // Tab count and page subline: live work only (downloading, preparing, handing off, queued).
 function renderQueueCounts(): void {
+  const clear = document.getElementById('clear-finished-btn') as HTMLButtonElement | null;
+  if (clear) clear.disabled = !queue.some(isFinishedQueueItem);
   const working = queue.filter((item) => item.status === 'downloading' || item.status === 'preparing' || item.status === 'transferring').length;
   const waiting = queue.filter((item) => item.status === 'queued').length;
   setOptionalText('queue-counts', `${working} working · ${waiting} queued`);
@@ -2028,6 +2042,12 @@ async function fallbackTransfer(item: QueueItem, action: 'import' | TimelinePlac
   await downloadQueue.transfer(item.queueId, action, hostActionReason(action === 'import' ? 'import' : 'timeline'));
 }
 function removeFromQueue(queueId: string): void { downloadQueue.remove(queueId); }
+function isFinishedQueueItem(item: QueueItem): boolean {
+  return ['completed', 'failed', 'cancelled'].includes(item.status) && !item.handingOff && !item.deleting && item.queueId !== downloadQueue.activeId;
+}
+function clearFinishedDownloads(): void {
+  for (const item of queue.filter(isFinishedQueueItem)) removeFromQueue(item.queueId);
+}
 function stopQueueItem(item: QueueItem): void { void downloadQueue.stop(item.queueId); }
 function deleteQueueFile(item: QueueItem): void {
   if (item.fileDeleted || item.status !== 'completed' || !item.cardId || item.queueId === downloadQueue.activeId || item.deleting || item.handingOff) return;
@@ -2048,7 +2068,7 @@ function renderCompletedDownloads(): void {
   const container = document.getElementById('completed-downloads');
   if (!container) return;
   container.replaceChildren();
-  const completed = queue.filter((item) => item.status === 'completed' && !item.fileDeleted);
+  const completed = downloadQueue.completedItems;
   setOptionalText('completed-download-count', `${completed.length} completed`);
   setOptionalText('completed-downloads-status', completed.length ? 'Session downloads stay available here until ClipDock closes.' : 'Completed downloads from this session will appear here.');
   for (const item of [...completed].reverse()) {
@@ -2059,7 +2079,7 @@ function renderCompletedDownloads(): void {
     const meta = document.createElement('span'); meta.textContent = `${providerLabel(item.provider, item.platform ?? null)} · ${item.fileName ?? 'File ready'} · Completed`;
     details.append(title, meta);
     const view = button('View in Queue', () => { setSurface('queue'); queueMicrotask(() => focusQueueItem(item.queueId)); }); view.className = 'library-download-action';
-    row.append(img, details, view); container.append(row);
+    row.append(img, details); if (queue.some(entry => entry.queueId === item.queueId)) row.append(view); container.append(row);
   }
 }
 function renderQueue(): void {
@@ -2351,15 +2371,24 @@ async function useHistoryRecord(record: HistoryRecord, placement?: TimelinePlace
   showActionResult(result.message, result.ok);
 }
 function invalidateDeletedCards(cardIds: string[] = []): void { downloadQueue.invalidateCards(cardIds); }
+async function deleteHistoryRecord(id: string): ReturnType<Window['clipdockAPI']['historyDelete']> {
+  const result = await window.clipdockAPI.historyDelete(id);
+  if (result.removed) {
+    forgetHistoryThumbnail(id);
+    historyRecords = historyRecords.filter(item => item.id !== id);
+    selectedHistoryIds.delete(id);
+  }
+  invalidateDeletedCards(result.removedCardIds);
+  return result;
+}
 async function historyAction(record: HistoryRecord, action: string): Promise<void> {
   try {
     if (action === 'reuse') await useHistoryRecord(record);
     else if (action === 'playhead' || action === 'end') await useHistoryRecord(record, action);
     else if (action === 'delete') {
+      clearHistoryDeleteResult();
       if (!window.confirm(`Remove ${record.fileName} from history? A ClipDock-managed file is deleted only when it is safe and no other record uses it.`)) return;
-      const result = await window.clipdockAPI.historyDelete(record.id);
-      if (result.removed) { forgetHistoryThumbnail(record.id); historyRecords = historyRecords.filter(item => item.id !== record.id); }
-      invalidateDeletedCards(result.removedCardIds);
+      const result = await deleteHistoryRecord(record.id);
       const outcome = result.deleted
         ? result.removed ? 'Removed from history and deleted the managed file.' : 'The managed file was deleted. The history entry was kept.'
         : result.removed ? 'Removed from history. The file was kept.' : 'Nothing was removed. The file was kept.';
@@ -2416,9 +2445,11 @@ function historyStatusCopy(total: number, matches: number, visible: number): str
 async function refreshHistory(): Promise<void> {
   const request = historyGuard.next();
   historyStatusOverride = 'Loading history…';
+  historyDeleteResult = null;
   document.getElementById('history-list')?.setAttribute?.('data-loading', 'true');
-  document.getElementById('history-empty-state')?.setAttribute?.('data-loading', 'true');
-  renderHistory();
+  const empty = document.getElementById('history-empty-state');
+  if (empty) { empty.setAttribute('data-loading', 'true'); empty.hidden = true; empty.classList.add('hidden'); empty.setAttribute('aria-hidden', 'true'); }
+  renderHistoryStatus();
   try {
     const records = await window.clipdockAPI.historyList();
     if (historyGuard.isStale(request)) return;
@@ -2431,14 +2462,15 @@ async function refreshHistory(): Promise<void> {
     renderHistory();
   } catch (err) {
     if (historyGuard.isStale(request)) return;
-    historyRecords = [];
     historyStatusOverride = (err as Error).message;
+    historyDeleteResult = null;
     document.getElementById('history-list')?.removeAttribute?.('data-loading');
     document.getElementById('history-empty-state')?.removeAttribute?.('data-loading');
     renderHistory();
   }
 }
 async function clearHistory(): Promise<void> {
+  clearHistoryDeleteResult();
   if (!window.confirm('Clear all History entries and thumbnails? Downloaded files will be kept.')) return;
   try {
     const count = await window.clipdockAPI.historyClear();
@@ -2447,11 +2479,134 @@ async function clearHistory(): Promise<void> {
   } catch (error) { showActionResult((error as Error).message); }
   await refreshHistory();
 }
+function updateHistorySelection(): void {
+  const previousCount = selectedHistoryIds.size;
+  const retained = new Set(historyRecords.map(record => record.id));
+  for (const id of selectedHistoryIds) if (!retained.has(id)) selectedHistoryIds.delete(id);
+  if (historySelectionAnchor && !retained.has(historySelectionAnchor)) historySelectionAnchor = null;
+  if (selectedHistoryIds.size !== previousCount) clearHistoryDeleteResult();
+  const count = selectedHistoryIds.size;
+  document.getElementById('history-list')?.classList.toggle('selecting', count > 0);
+  setOptionalText('history-selection-count', `${count} selected`);
+  for (const [id, view] of historySelectionViews) {
+    view.checkbox.checked = selectedHistoryIds.has(id);
+    view.checkbox.disabled = historyDeleteBusy;
+    view.row.classList.toggle('selected', view.checkbox.checked);
+  }
+  const all = document.getElementById('history-select-all') as HTMLInputElement | null;
+  const visibleIds = [...historySelectionViews.keys()];
+  const selectedVisible = visibleIds.filter(id => selectedHistoryIds.has(id)).length;
+  if (all) {
+    all.checked = visibleIds.length > 0 && selectedVisible === visibleIds.length;
+    all.indeterminate = selectedVisible > 0 && selectedVisible < visibleIds.length;
+    all.disabled = historyDeleteBusy || visibleIds.length === 0;
+  }
+  const bar = document.getElementById('history-selection-bar');
+  if (bar) { bar.hidden = count === 0; bar.classList.toggle('hidden', count === 0); }
+  const actions = document.getElementById('history-header-actions');
+  if (actions) { actions.hidden = count > 0; actions.classList.toggle('hidden', count > 0); }
+  for (const id of ['history-delete-selected-btn', 'history-clear-selection-btn']) {
+    const control = document.getElementById(id) as HTMLButtonElement | null;
+    if (control) control.disabled = historyDeleteBusy || count === 0;
+  }
+}
+function clearHistorySelection(): void {
+  const bar = document.getElementById('history-selection-bar');
+  const restoreFocus = bar && isWithin(document.activeElement, bar);
+  selectedHistoryIds.clear(); historySelectionAnchor = null; clearHistoryDeleteResult(); updateHistorySelection();
+  if (restoreFocus) focusHistorySelectionControl();
+}
+function toggleHistorySelection(id: string, selected: boolean, range: boolean): void {
+  const ids = [...historySelectionViews.keys()];
+  const anchor = historySelectionAnchor ? ids.indexOf(historySelectionAnchor) : -1;
+  const target = ids.indexOf(id);
+  if (target < 0 || historyDeleteBusy) return;
+  const affected = range && anchor >= 0 ? ids.slice(Math.min(anchor, target), Math.max(anchor, target) + 1) : [id];
+  for (const recordId of affected) { if (selected) selectedHistoryIds.add(recordId); else selectedHistoryIds.delete(recordId); }
+  historySelectionAnchor = id; clearHistoryDeleteResult(); updateHistorySelection();
+}
+function openHistoryDeleteDialog(): void {
+  if (currentSurface !== 'library' || historyDeleteBusy) return;
+  const records = historyRecords.filter(record => selectedHistoryIds.has(record.id));
+  if (!records.length) return;
+  clearHistoryDeleteResult();
+  historyDeleteIds = records.map(record => record.id);
+  const known = records.filter(record => record.bytes > 0);
+  const bytes = known.reduce((total, record) => total + record.bytes + (record.subtitle?.bytes ?? 0), 0);
+  const size = known.length ? ` (${formatBytes(bytes)}${known.length < records.length ? ' known size' : ''})` : '';
+  setOptionalText('history-delete-summary', `Delete ${records.length} file${records.length === 1 ? '' : 's'}${size}?`);
+  (document.getElementById('history-delete-dialog') as HTMLDialogElement).showModal();
+  document.getElementById('history-delete-cancel')?.focus();
+}
+function focusHistorySelectionControl(): void {
+  const control = document.getElementById(selectedHistoryIds.size ? 'history-delete-selected-btn' : 'history-select-all') as HTMLButtonElement | HTMLInputElement | null;
+  (control?.disabled ? document.getElementById('history-search-input') : control)?.focus();
+}
+function closeHistoryDeleteDialog(): void {
+  (document.getElementById('history-delete-dialog') as HTMLDialogElement | null)?.close();
+  historyDeleteIds = [];
+  focusHistorySelectionControl();
+}
+async function deleteSelectedHistory(): Promise<void> {
+  const dialog = document.getElementById('history-delete-dialog') as HTMLDialogElement | null;
+  if (!dialog?.open || historyDeleteBusy || currentSurface !== 'library') return;
+  const ids = historyDeleteIds.filter(id => historyRecords.some(record => record.id === id));
+  historyDeleteBusy = true; updateHistorySelection();
+  const confirm = document.getElementById('history-delete-confirm') as HTMLButtonElement;
+  const cancel = document.getElementById('history-delete-cancel') as HTMLButtonElement;
+  confirm.disabled = true; cancel.disabled = true; confirm.textContent = 'Deleting…';
+  let deleted = 0, failed = 0, firstReason = '';
+  for (const id of ids) {
+    try {
+      const result = await deleteHistoryRecord(id);
+      if (result.deleted) deleted += 1;
+      if (!result.deleted || !result.removed || result.warning) {
+        failed += 1;
+        firstReason ||= result.warning || (result.deleted ? 'The file was deleted, but its history entry was kept.' : result.removed ? 'The file was kept; its history entry was removed.' : 'The file could not be deleted safely.');
+      }
+    } catch (error) { failed += 1; firstReason ||= (error as Error).message; }
+  }
+  const message = failed ? `${deleted} deleted, ${failed} failed: ${firstReason}` : `${deleted} deleted.`;
+  showActionResult(message, failed === 0);
+  await refreshHistory();
+  historyDeleteBusy = false; confirm.disabled = false; cancel.disabled = false; confirm.textContent = 'Delete files';
+  if (historyStatusOverride === null) historyDeleteResult = { message, ok: failed === 0 };
+  renderHistoryStatus(); updateHistorySelection(); closeHistoryDeleteDialog();
+}
+function clearHistoryDeleteResult(): void { historyDeleteResult = null; renderHistoryStatus(); }
+function renderHistoryStatus(): void {
+  const status = document.getElementById('history-status'); if (!status) return;
+  const filters = historyFilters();
+  const matches = filterHistoryRecords(historyRecords, filters.query, filters.provider, filters.availability);
+  status.textContent = historyDeleteResult?.message ?? historyStatusOverride ?? historyStatusCopy(historyRecords.length, matches.length, Math.min(matches.length, historyVisibleCount));
+  status.classList.toggle('err', historyDeleteResult ? !historyDeleteResult.ok : historyStatusOverride !== null && historyStatusOverride !== 'Loading history…');
+}
+function changeHistoryFilters(): void {
+  historyVisibleCount = HISTORY_BATCH_SIZE;
+  const filters = historyFilters();
+  const visible = new Set(filterHistoryRecords(historyRecords, filters.query, filters.provider, filters.availability).slice(0, historyVisibleCount).map(record => record.id));
+  for (const id of selectedHistoryIds) if (!visible.has(id)) selectedHistoryIds.delete(id);
+  if (historySelectionAnchor && !visible.has(historySelectionAnchor)) historySelectionAnchor = null;
+  clearHistoryDeleteResult(); renderHistory();
+}
 function wireHistoryControls(): void {
+  document.getElementById('history-select-all')?.addEventListener('change', (event) => {
+    const checked = (event.target as HTMLInputElement).checked;
+    for (const id of historySelectionViews.keys()) { if (checked) selectedHistoryIds.add(id); else selectedHistoryIds.delete(id); }
+    historySelectionAnchor = null; clearHistoryDeleteResult(); updateHistorySelection();
+  });
+  document.getElementById('history-clear-selection-btn')?.addEventListener('click', clearHistorySelection);
+  document.getElementById('history-delete-selected-btn')?.addEventListener('click', openHistoryDeleteDialog);
+  document.getElementById('history-delete-cancel')?.addEventListener('click', closeHistoryDeleteDialog);
+  document.getElementById('history-delete-confirm')?.addEventListener('click', () => { void deleteSelectedHistory(); });
+  document.getElementById('history-delete-dialog')?.addEventListener('cancel', event => {
+    event.preventDefault();
+    if (!historyDeleteBusy) { closeHistoryDeleteDialog(); clearHistorySelection(); }
+  });
   document.getElementById('history-clear-btn')?.addEventListener('click', () => { void clearHistory(); });
-  document.getElementById('history-search-input')?.addEventListener('input', () => { historyVisibleCount = HISTORY_BATCH_SIZE; renderHistory(); });
-  document.getElementById('history-provider-filter')?.addEventListener('change', () => { historyVisibleCount = HISTORY_BATCH_SIZE; renderHistory(); });
-  document.getElementById('history-availability-filter')?.addEventListener('change', () => { historyVisibleCount = HISTORY_BATCH_SIZE; renderHistory(); });
+  document.getElementById('history-search-input')?.addEventListener('input', changeHistoryFilters);
+  document.getElementById('history-provider-filter')?.addEventListener('change', changeHistoryFilters);
+  document.getElementById('history-availability-filter')?.addEventListener('change', changeHistoryFilters);
   document.getElementById('history-show-more')?.addEventListener('click', () => { historyVisibleCount += HISTORY_BATCH_SIZE; renderHistory(); });
   document.getElementById('history-refresh-btn')?.addEventListener('click', () => { void refreshHistory(); });
   // Filter chips are the visible face of the two native filter selects.
@@ -2459,7 +2614,7 @@ function wireHistoryControls(): void {
     for (const chip of Array.from(document.getElementById(groupId)?.children ?? []) as HTMLButtonElement[]) {
       chip.addEventListener('click', () => {
         const select = document.getElementById(selectId) as HTMLSelectElement | null; if (!select) return;
-        select.value = chip.dataset.value ?? 'all'; historyVisibleCount = HISTORY_BATCH_SIZE; renderHistory();
+        select.value = chip.dataset.value ?? 'all'; changeHistoryFilters();
       });
     }
   }
@@ -2472,7 +2627,6 @@ function renderHistoryChips(): void {
 }
 async function renderHistory(): Promise<void> {
   const list = $('history-list');
-  const status = document.getElementById('history-status');
   const showMore = document.getElementById('history-show-more') as HTMLButtonElement | null;
   const historyEmpty = document.getElementById('history-empty-state');
   const filters = historyFilters();
@@ -2480,11 +2634,8 @@ async function renderHistory(): Promise<void> {
   const visible = matches.slice(0, historyVisibleCount);
   closeHistoryActions(); // its menu is replaced below
   const restoreFocus = captureListFocus(list, 'recordId');
-  list.replaceChildren(); historyHostRefreshers = []; renderHistoryChips();
-  if (status) {
-    status.textContent = historyStatusOverride !== null ? historyStatusOverride : historyStatusCopy(historyRecords.length, matches.length, visible.length);
-    status.classList.toggle('err', historyStatusOverride !== null && historyStatusOverride !== 'Loading history…');
-  }
+  list.replaceChildren(); historyHostRefreshers = []; historySelectionViews.clear(); renderHistoryChips();
+  renderHistoryStatus();
   if (showMore) showMore.classList.toggle('hidden', visible.length >= matches.length);
   if (historyEmpty) {
     const shouldShow = historyStatusOverride === null && matches.length === 0;
@@ -2516,7 +2667,7 @@ async function renderHistory(): Promise<void> {
     summary.append(dragHint); historyHostRefreshers.push(refreshDrag); refreshDrag();
     const more = button('More', () => openHistoryActions(menu, more)); more.className = 'history-actions'; more.setAttribute('aria-label', `Actions for ${record.fileName}`); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
     const menu = document.createElement('div'); menu.className = 'history-menu hidden operation-actions'; menu.setAttribute('role', 'menu'); menu.title = ''; // An empty title stops the row's drag-reason tooltip from covering the menu.
-    menu.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeHistoryActions(true); return; } if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return; const items = (Array.from(menu.children) as HTMLButtonElement[]).filter((item) => !item.disabled); if (!items.length) return; const current = items.indexOf(document.activeElement as HTMLButtonElement); const target = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : event.key === 'ArrowDown' ? (current + 1) % items.length : (current - 1 + items.length) % items.length; event.preventDefault(); items[target].focus(); });
+    menu.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeHistoryActions(true); if (currentSurface === 'library' && selectedHistoryIds.size) clearHistorySelection(); return; } if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return; const items = (Array.from(menu.children) as HTMLButtonElement[]).filter((item) => !item.disabled); if (!items.length) return; const current = items.indexOf(document.activeElement as HTMLButtonElement); const target = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : event.key === 'ArrowDown' ? (current + 1) % items.length : (current - 1 + items.length) % items.length; event.preventDefault(); items[target].focus(); });
     const historyActions = [['reuse', 'Add to Media Pool'], ['playhead', 'Add at playhead'], ['end', 'Add to timeline end'], ['reveal', 'Reveal in Finder'], ['reveal-subtitle', 'Reveal subtitle'], ['source', 'Open source'], ['copy', 'Copy path'], ['relink', 'Relink…'], ['delete', 'Delete']] as const;
     for (const [action, label] of historyActions) {
       // The subtitle companion action exists only while the companion is
@@ -2527,9 +2678,14 @@ async function renderHistory(): Promise<void> {
       const item = button(label, () => { void historyAction(record, action); }); item.setAttribute('role', 'menuitem'); if (action === 'reuse' || action === 'playhead' || action === 'end') watchHistoryHandoff(item, label, action === 'reuse' ? 'import' : 'timeline'); menu.append(item); }
     const open = (event: Event) => { event.preventDefault(); openHistoryActions(menu, more); }; row.addEventListener('contextmenu', open); row.addEventListener('keydown', (event) => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) open(event); }); row.append(summary, more, menu);
     appendHistoryRowFace(row, record, more);
+    const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'history-selection';
+    checkbox.setAttribute('aria-label', `Select ${record.fileName}`);
+    checkbox.addEventListener('click', event => { event.stopPropagation(); toggleHistorySelection(record.id, checkbox.checked, event.shiftKey); });
+    checkbox.addEventListener('dragstart', event => { event.preventDefault(); event.stopPropagation(); });
+    historySelectionViews.set(record.id, { row, checkbox }); row.append(checkbox);
     list.append(row);
   }
-  restoreFocus();
+  updateHistorySelection(); restoreFocus();
 }
 function watchHistoryHandoff(control: HTMLButtonElement, label: string, action: 'import' | 'timeline'): void {
   const refresh = (): void => {
@@ -2604,6 +2760,7 @@ function clickButtonOnPlainEnter(inputId: string, buttonId: string): void {
 }
 window.addEventListener('DOMContentLoaded', () => {
   $('refresh-btn').addEventListener('click', () => refresh());
+  document.getElementById('clear-finished-btn')?.addEventListener('click', clearFinishedDownloads);
   const unsubscribeYoutubeSearch = window.clipdockAPI.onYoutubeSearchPage?.(handleYoutubeSearchPage) ?? (() => undefined);
   const unsubscribeYoutubePreview = window.clipdockAPI.onYoutubePreviewState?.(handleYoutubePreviewState) ?? (() => undefined);
   const unsubscribeResolveQuit = window.clipdockAPI.onResolveQuit(() => {
