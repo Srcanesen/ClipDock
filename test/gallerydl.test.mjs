@@ -42,6 +42,56 @@ const opaqueId = 'e1_AfqPShwWJ_9nNp98oMy8EENZLzrcH3zYISwyG7ODp0u4p3s_onow';
 const opaqueSource = `https://www.pinterest.com/pin/${opaqueId}/`;
 const opaqueMedia = 'https://i.pinimg.com/originals/2b/02/4d/2b024d05a26db6772778b5a9e68f2198.jpg';
 
+test('numeric Pinterest search preserves missing and mismatched counts within the item limit', async t => {
+  const root = tempRoot('clipdock-pinterest-numeric-count-');
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  const values = [
+    [2, {id: '123', title: 'Without count'}],
+    [3, 'https://i.pinimg.com/123.jpg', {id: '123', extension: 'jpg'}],
+    [2, {id: '124', title: 'Mismatched count', count: 2}],
+    [3, 'https://i.pinimg.com/124.jpg', {id: '124', extension: 'jpg'}],
+    [2, {id: '125', title: 'Above limit', count: 51}],
+    [3, 'https://i.pinimg.com/125.jpg', {id: '125', extension: 'jpg'}],
+  ];
+  let calls = 0;
+  const worker = new GalleryDlWorker('/fixture/gallery-dl', () => {
+    calls++;
+    const child = new FakeChild();
+    queueMicrotask(() => {child.stdout.emit('data', values.map(JSON.stringify).join('\n')); child.emit('close', 0);});
+    return child;
+  }, {sessionDir: root});
+  t.after(() => worker.dispose());
+  const page = await worker.search('numeric count', 1);
+  assert.deepEqual(page.results.map(({id, title, kind}) => ({id, title, kind})), [
+    {id: '123', title: 'Without count', kind: 'image'},
+    {id: '124', title: 'Mismatched count', kind: 'carousel'},
+  ]);
+  assert.equal(calls, 1);
+});
+
+test('numeric Pinterest metadata accepts idea discriminators in directory and media records', async t => {
+  const root = tempRoot('clipdock-pinterest-numeric-idea-');
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  const values = [
+    [2, {id: '123', title: 'Numeric idea metadata', count: 1, type: 'idea', subcategory: 'idea', kind: 'idea'}],
+    [3, 'https://i.pinimg.com/123.jpg', {id: '123', extension: 'jpg', title: 'Image item', type: 'idea', subcategory: 'idea', kind: 'idea'}],
+  ];
+  let calls = 0;
+  const worker = new GalleryDlWorker('/fixture/gallery-dl', () => {
+    calls++;
+    const child = new FakeChild();
+    queueMicrotask(() => {child.stdout.emit('data', values.map(JSON.stringify).join('\n')); child.emit('close', 0);});
+    return child;
+  }, {sessionDir: root});
+  t.after(() => worker.dispose());
+  const metadata = await worker.metadata('https://www.pinterest.com/pin/123/');
+  assert.equal(metadata.pinId, '123');
+  assert.equal(metadata.title, 'Numeric idea metadata');
+  assert.deepEqual(metadata.items, [{index: 1, kind: 'image', title: 'Image item', creator: null, extension: 'jpg'}]);
+  assert.deepEqual(parsePinterestSearchJsonl(values.map(JSON.stringify).join('\n')).map(item => item.id), ['123']);
+  assert.equal(calls, 1);
+});
+
 test('opaque Pinterest search selection loads snapshot metadata and downloads the exact cached image', async t => {
   const root = tempRoot('clipdock-pinterest-opaque-');
   t.after(() => rmSync(root, {recursive: true, force: true}));
@@ -156,6 +206,7 @@ test('unusable media returns an uncached compatibility error; Story, promo and g
   const scenarios = [
     ['unknown identity', values => {values[0][1].id = values[1][2].id = 'future_opaque';}],
     ['incomplete', values => {values[0][1].count = 2;}],
+    ['missing count', values => {delete values[0][1].count;}],
     ['unsafe URL', values => {values[1][1] = 'https://evil.test/arbitrary.jpg';}],
     ['unsupported', values => {values[1][2].extension = 'gif';}],
   ];

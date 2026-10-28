@@ -286,7 +286,8 @@ function pinId(record: Record<string, unknown>): string | null {
   return typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : typeof value === 'string' && PIN_ID.test(value) ? value : null;
 }
 function storyRecord(record: Record<string, unknown>): boolean {
-  return ['subcategory', 'type', 'kind'].some((key) => /story|idea/i.test(safeText(record[key], 80) ?? '')) || record.story_pin_data != null;
+  const typePattern = pinId(record)?.startsWith('e1_') ? /story|idea/i : /story/i;
+  return ['subcategory', 'type', 'kind'].some((key) => typePattern.test(safeText(record[key], 80) ?? '')) || record.story_pin_data != null;
 }
 function normalizeArtifact(raw: Record<string, unknown>, parent: Record<string, unknown>, outputIndex: number): InternalArtifact | null {
   const extension = extensionFrom(raw.extension ?? raw.ext) || pathExtension(raw.filename);
@@ -457,7 +458,7 @@ function parsePinterestSearchValues(values: unknown[]): SearchParseResult {
     const kinds = directory.urls.map(({url, record}) => searchMediaKind(url, record));
     if (kinds.some((kind) => kind === null)) continue;
     const count = typeof directory.record.count === 'number' && Number.isInteger(directory.record.count) ? directory.record.count : 0;
-    if (directory.urls.length > MAX_ARTIFACTS || count !== directory.urls.length) continue;
+    if (directory.urls.length > MAX_ARTIFACTS || count > MAX_ARTIFACTS || (directory.id.startsWith('e1_') && count !== directory.urls.length)) continue;
     // Opaque image targets must be exact provider-supplied HTTPS Pinterest CDN URLs.
     if (directory.id.startsWith('e1_') && directory.urls.some(({url}, index) => kinds[index] === 'image' && (!safeSearchThumbnailUrl(url) || !IMAGE_EXTENSIONS.has(pathExtension(new URL(url).pathname))))) continue;
     seen.add(directory.id);
