@@ -157,6 +157,8 @@ export interface ClipdockApi {
   openWorkspace(): Promise<boolean>;
   cleanupWorkspace(): Promise<WorkspaceCleanupResult>;
   historyList(): Promise<HistoryRecord[]>;
+  historyThumbnail(id: string): Promise<string | null>;
+  historyClear(): Promise<number>;
   historyReuse(id: string): Promise<DownloadArtifact | null>;
   historyReveal(id: string): Promise<boolean>;
   /** Reveal the record's subtitle companion in the OS file manager; resolves the path only in main and never returns it. */

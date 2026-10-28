@@ -104,6 +104,8 @@ interface PreviewApi {
   cleanupWorkspace(): Promise<{ deletedFileCount: number; deletedBytes: number; fileCount: number; totalBytes: number }>;
   queueDelete(cardId: string): Promise<{ deleted: boolean; message: string }>;
   historyList(): Promise<PreviewHistoryRecord[]>;
+  historyThumbnail(id: string): Promise<string | null>;
+  historyClear(): Promise<number>;
   historyReuse(id: string): Promise<null>;
   historyReveal(id: string): Promise<boolean>;
   historySource(id: string): Promise<boolean>;
@@ -111,6 +113,8 @@ interface PreviewApi {
   historyRelink(id: string): Promise<null>;
   historyDelete(id: string): Promise<{ deleted: boolean; removed: boolean; warning?: string; removedCardIds?: string[] }>;
 }
+
+const PREVIEW_HISTORY_PHOTO = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="224" height="126" viewBox="0 0 224 126"><rect width="224" height="126" fill="#b4cfd5"/><path d="M0 94L54 20l40 42 34-49 96 81" fill="#55726c"/><path d="M34 48l20-28 23 24-20-6-9 13m63-15 17-23 27 23-23-8-8 12" fill="#eff0df"/><path d="M0 94h224v32H0z" fill="#43858a"/><path d="M0 110l54 16 40-15 34 14 96-15" fill="#6a9fa1"/></svg>')}`;
 
 const MODULE_VERSION = '2.0.0-preview';
 const RESOLVE_VERSION = '21.0.3.7';
@@ -165,7 +169,7 @@ const FIXTURES: Record<string, StatusSnapshot> = {
 
 const PREVIEW_HISTORY: PreviewHistoryRecord[] = [
   { id: 'preview-history-1', provider: 'youtube', source: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', project: PROJECT_NAME, fileName: 'Preview video [dQw4w9WgXcQ].mp4', bytes: 48_000_000, assetId: 'dQw4w9WgXcQ', title: 'Preview video', creator: 'ClipDock Preview', profile: 'original', quality: '2160p', mediaMode: 'video', selection: null, automation: { provider: 'youtube', source: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', selection: null, chapters: [] }, createdAt: Date.now() - 86_400_000, lastUsedAt: Date.now() - 86_400_000, available: true, cardId: 'preview-history-card-1' },
-  { id: 'preview-history-2', provider: 'pexels', source: 'https://www.pexels.com/video/101/', project: PROJECT_NAME, fileName: 'preview-pexels.mp4', bytes: 12_000_000, assetId: 'video:101', title: 'Preview Pexels video', creator: 'ClipDock Preview', profile: 'fast', quality: '1920×1080 · HD', mediaMode: 'video', selection: null, automation: { provider: 'pexels', source: 'https://www.pexels.com/video/101/', selection: null, chapters: [] }, createdAt: Date.now() - 172_800_000, lastUsedAt: Date.now() - 172_800_000, available: true, cardId: 'preview-history-card-2' },
+  { id: 'preview-history-2', provider: 'pexels', source: 'https://www.pexels.com/photo/101/', project: PROJECT_NAME, fileName: 'preview-pexels.jpg', bytes: 1_200_000, assetId: 'photo:101', title: 'Preview Pexels photo', creator: 'ClipDock Preview', profile: 'original', quality: 'Original', mediaMode: 'photo', selection: null, automation: { provider: 'pexels', source: 'https://www.pexels.com/photo/101/', selection: null, chapters: [] }, createdAt: Date.now() - 172_800_000, lastUsedAt: Date.now() - 172_800_000, available: true, cardId: 'preview-history-card-2' },
   { id: 'preview-history-3', provider: 'social', source: 'https://www.instagram.com/reel/ABC_def-123', project: PROJECT_NAME, fileName: 'preview-social.mp4', bytes: 3_500_000, assetId: 'instagram:preview-social-1', title: 'Preview public video link', creator: 'ClipDock Preview', profile: 'original', quality: '1080p', mediaMode: 'video', selection: null, automation: { provider: 'social', source: 'https://www.instagram.com/reel/ABC_def-123', selection: null, chapters: [] }, createdAt: Date.now() - 259_200_000, lastUsedAt: Date.now() - 259_200_000, available: true },
   { id: 'preview-history-4', provider: 'youtube', source: 'https://www.youtube.com/watch?v=9bZkp7q19f0', project: null, fileName: 'Preview second video [9bZkp7q19f0].mp4', bytes: 5_000_000, assetId: '9bZkp7q19f0', title: 'Preview second video', creator: null, profile: 'original', quality: '1080p', mediaMode: 'video', selection: null, automation: { provider: 'youtube', source: 'https://www.youtube.com/watch?v=9bZkp7q19f0', selection: null, chapters: [] }, createdAt: Date.now() - 345_600_000, lastUsedAt: Date.now() - 345_600_000, available: false },
 ];
@@ -273,6 +277,7 @@ if (previewParam !== null) {
   let previewOpen = false;
   let previewDownloadJob: string | null = null;
   let previewDownloadSequence = 0;
+  let historyRecords = [...PREVIEW_HISTORY];
   const metadata: PreviewYoutubeMetadata = { id: 'dQw4w9WgXcQ', title: 'Preview video', duration: 213, channel: 'ClipDock Preview', thumbnailUrl: SYNTHETIC_THUMBNAIL_DATA_URL, heights: [360, 720, 1080, 1440, 2160], formatSummary: ['360p', '720p', '1080p', '1440p', '2160p'] };
   const api: PreviewApi = {
     openYoutubeExternal: async () => true,
@@ -427,7 +432,7 @@ if (previewParam !== null) {
     cancelPixabayRequests: async () => true,
     onPixabayEvent: (callback) => { pixabayListener = callback; return () => { if (pixabayListener === callback) pixabayListener = null; }; },
     openPixabayExternal: async () => true,
-    workspaceStatus: async () => ({ fileCount: 3, totalBytes: 48_000_000, cleanupFileCount: 2, cleanupBytes: 32_000_000 }), openWorkspace: async () => true, cleanupWorkspace: async () => ({ deletedFileCount: 2, deletedBytes: 32_000_000, fileCount: 1, totalBytes: 16_000_000 }), queueDelete: async () => previewParam === 'missing-file' ? { deleted: false, message: 'The file is no longer available. It remains in the queue.' } : { deleted: true, message: 'File deleted.' }, historyList: async () => PREVIEW_HISTORY, historyReuse: async () => null, historyReveal: async () => false, historySource: async () => false, historyCopy: async () => false, historyRelink: async () => null, historyDelete: async () => ({ deleted: false, removed: false, removedCardIds: [] }),
+    workspaceStatus: async () => ({ fileCount: 3, totalBytes: 48_000_000, cleanupFileCount: 2, cleanupBytes: 32_000_000 }), openWorkspace: async () => true, cleanupWorkspace: async () => ({ deletedFileCount: 2, deletedBytes: 32_000_000, fileCount: 1, totalBytes: 16_000_000 }), queueDelete: async () => previewParam === 'missing-file' ? { deleted: false, message: 'The file is no longer available. It remains in the queue.' } : { deleted: true, message: 'File deleted.' }, historyList: async () => historyRecords, historyThumbnail: async id => historyRecords.some(record => record.id === id) ? id === 'preview-history-2' ? PREVIEW_HISTORY_PHOTO : SYNTHETIC_THUMBNAIL_DATA_URL : null, historyClear: async () => { const count = historyRecords.length; historyRecords = []; return count; }, historyReuse: async () => null, historyReveal: async () => false, historySource: async () => false, historyCopy: async () => false, historyRelink: async () => null, historyDelete: async id => { const count = historyRecords.length; historyRecords = historyRecords.filter(record => record.id !== id); return { deleted: false, removed: historyRecords.length < count, removedCardIds: [] }; },
     // Import only needs MediaStorage (no project/timeline); timeline append is stricter.
     importToMediaPool: async (cardId, targetBin) => {
       if (previewParam === 'error') return { ok: false, kind: 'transfer-failed', message: 'Preview fixture: transfer failed.' };

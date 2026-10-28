@@ -8,6 +8,7 @@ import { AnchoredDir, captureEntry, captureFile, prepareDirectory, removeEntry, 
 import { randomUUID } from 'node:crypto';
 import { tryAcquireFileLock } from './file-lock';
 import { validatePinterestUrl, validateSocialUrl } from './ytdlp-url';
+import { HistoryThumbnails, type HistoryThumbnailOptions } from './history-thumbnails';
 
 export type HistoryProvider = 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest';
 export type HistorySelection = { start: number; end: number; label: string } | null;
@@ -62,6 +63,7 @@ export class DownloadHistory {
   private records: StoredRecord[] = [];
   private saveBlocked = false;
   private readonly storeDirectory: AnchoredDir;
+  private readonly thumbnails: HistoryThumbnails;
   private readonly identities = new Map<string, {media: OwnedFile | null; subtitle: OwnedFile | null}>();
   private captureRecord(r: StoredRecord, refreshMedia = false): void {
     const previous = this.identities.get(r.id);
@@ -76,12 +78,32 @@ export class DownloadHistory {
   private readonly sessionRoots = new Map<string, ManagedRoot | null>();
   /** Legacy records lacking trustedRoot are bound once, to the root active at startup; undefined when it was unavailable. */
   private readonly legacyRoots = new Map<string, string | undefined>();
-  constructor(private readonly file: string, managedRoot: ManagedRoot | string | (() => ManagedRoot | null), private readonly projectName: () => string | null = () => null) {
+  constructor(private readonly file: string, managedRoot: ManagedRoot | string | (() => ManagedRoot | null), private readonly projectName: () => string | null = () => null, thumbnailOptions: HistoryThumbnailOptions = { tools: async () => ({ ffmpegPath: null, ffprobePath: null }) }) {
     this.storeDirectory = prepareDirectory(dirname(file));
     if (typeof managedRoot === 'function') this.managedRoot = managedRoot;
     else { const captured = this.captureRoot(managedRoot); this.managedRoot = () => captured; }
     this.load(true);
+    this.thumbnails = new HistoryThumbnails(this.storeDirectory, thumbnailOptions);
+    this.cleanupThumbnails();
   }
+  private cleanupThumbnails(): void { try { this.thumbnails.cleanup(this.records.map(record => record.id)); } catch { /* Retry at the next reconciliation. */ } }
+  thumbnail(id: unknown): Promise<string | null> {
+    const record = typeof id === 'string' ? this.records.find(record => record.id === id) : null;
+    if (!record || record.mediaMode === 'audio') return Promise.resolve(null);
+    return this.thumbnails.load(record.id, () => {
+      const hit = this.resolve(id);
+      if (!hit) return null;
+      try { const root = hit.trustedRoot ?? ManagedRoot.capture(dirname(hit.path)); return captureFile(AnchoredDir.capture(root.verify(), root), hit.path); } catch { return null; }
+    }, () => this.records.some(record => record.id === id));
+  }
+  clear(): number {
+    return this.transaction(() => {
+      const count = this.records.length;
+      this.records = []; this.save(); this.cleanupThumbnails();
+      return count;
+    });
+  }
+  dispose(): Promise<void> { return this.thumbnails.dispose(); }
   /** Point the managed-root boundary at a new download folder; old records keep their absolute paths. */
   setManagedRoot(root: ManagedRoot | string): void {
     const captured = this.captureRoot(root);
@@ -203,7 +225,7 @@ export class DownloadHistory {
     if (trustedRoot) this.recordRoot({trustedRoot: trustedRoot.verify()} as StoredRecord);
     const record: StoredRecord = { id: randomUUID(), provider: input.provider, source, project: this.projectName(), filePath, managed: !!trustedRoot, trustedRoot: trustedRoot?.verify(), fileName: basename(filePath), bytes: statSync(filePath).size, assetId: input.assetId?.slice(0, 100) ?? null, title: input.title.slice(0, 300), creator: input.creator?.slice(0, 200) ?? null, profile: input.profile.slice(0, 40), quality: input.quality?.slice(0, 80) ?? null, mediaMode: input.mediaMode.slice(0, 20), selection, automation: { provider: input.provider, source, selection, chapters }, createdAt: now, lastUsedAt: now, subtitlePath: regularSubtitle(input.subtitle?.filePath) };
     this.captureRecord(record);
-    this.records = [record, ...this.records].slice(0, MAX_RECORDS); this.save(); return this.public(record);
+    this.records = [record, ...this.records].slice(0, MAX_RECORDS); this.save(); this.cleanupThumbnails(); return this.public(record);
   }
   resolve(id: unknown): { path: string; trustedRoot?: ManagedRoot; record: HistoryRecord } | null {
     const r = typeof id === 'string' ? this.records.find((record) => record.id === id) : null;
@@ -229,6 +251,7 @@ export class DownloadHistory {
     // Explicit relink admits this selected media inode after persistence succeeds.
     // Preserve companion authority; transaction reloads still never re-admit files.
     this.captureRecord(r, true);
+    this.thumbnails.remove(r.id);
     return this.public(r);
   }
 
@@ -276,6 +299,7 @@ export class DownloadHistory {
     if (r.managed && !safe && this.identities.get(r.id)?.media) warning = 'Media changed or was replaced; preserved.';
     if (preserveOnFailure && !deleted) return warning ? { deleted: false, removed: false, warning } : { deleted: false, removed: false };
     this.records.splice(index, 1);
+    this.thumbnails.remove(r.id);
     try { this.save(); } catch (error) { if (deleted) return { deleted: true, removed: true, warning: [warning, 'Download history could not be updated.'].filter(Boolean).join(' ') }; throw error; }
     return warning ? { deleted, removed: true, warning } : { deleted, removed: true };
   }

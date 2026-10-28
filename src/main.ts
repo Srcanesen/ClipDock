@@ -188,7 +188,7 @@ const engineHost = createEngineHost({
 });
 
 // History can consult the root while loading legacy records; capture it first.
-const history = new DownloadHistory(path.join(app.getPath('userData'), 'download-history.json'), activeRoot, () => currentProjectName);
+const history = new DownloadHistory(path.join(app.getPath('userData'), 'download-history.json'), activeRoot, () => currentProjectName, { tools: () => engineHost.ready() });
 const ledger = new DownloadLedger(history, mediaInUse);
 
 // OS drag icon. macOS startDrag REQUIRES a non-empty icon; a 32x32 PNG data URL
@@ -447,6 +447,8 @@ function registerHistoryHandlers(): void {
     return ledger.listHistory();
   }, 'immediate'));
   ipcMain.handle(IPC_CHANNELS.queueDelete, createSensitiveIpcHandler(requireTrustedSender, async (_event, cardId: unknown) => ledger.deleteCard(cardId)));
+  ipcMain.handle(IPC_CHANNELS.historyThumbnail, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => history.thumbnail(id), 'immediate'));
+  ipcMain.handle(IPC_CHANNELS.historyClear, createSensitiveIpcHandler(requireTrustedSender, async () => history.clear(), 'immediate'));
   ipcMain.handle(IPC_CHANNELS.historyReuse, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => engineHost.operation(async () => { await refreshHistoryProject(); return ledger.reuseHistory(id); })));
   ipcMain.handle(IPC_CHANNELS.historyReveal, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => { const hit = history.resolve(id); if (!hit) return false; sessionTransferCards.noteExposed(hit.path); shell.showItemInFolder(hit.path); return true; }));
   // Subtitle companions resolve only in main; the renderer gets a boolean, never a path.
@@ -602,7 +604,7 @@ app.on('before-quit', (event) => {
   quitPending = true;
   shutdown.beginShutdown('window-quit');
   closeYoutubePreview('closed', false);
-  void engineHost.dispose().finally(() => {
+  void Promise.allSettled([engineHost.dispose(), history.dispose()]).finally(() => {
     try { WorkflowIntegration.CleanUp(); } catch { /* best-effort cleanup */ }
     quitReady = true;
     app.quit();
