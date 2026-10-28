@@ -3,7 +3,6 @@
 // erases at compile time. The renderer is a plain browser script with no imports.
 
 import type { Orientation, SearchOptions } from './renderer-state/search-session';
-export { ORIENTATION_SUPPORT } from './renderer-state/search-session';
 export type { Orientation, SearchOptions };
 import type { StatusSnapshot } from './status';
 import type { TargetBin, TimelinePlacement, TransferResult } from './transfer';

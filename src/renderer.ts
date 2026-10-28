@@ -2531,10 +2531,18 @@ function openHistoryDeleteDialog(): void {
   if (!records.length) return;
   clearHistoryDeleteResult();
   historyDeleteIds = records.map(record => record.id);
-  const known = records.filter(record => record.bytes > 0);
+  const available = records.filter(record => record.available);
+  const missing = records.length - available.length;
+  const known = available.filter(record => record.bytes > 0);
   const bytes = known.reduce((total, record) => total + record.bytes + (record.subtitle?.bytes ?? 0), 0);
-  const size = known.length ? ` (${formatBytes(bytes)}${known.length < records.length ? ' known size' : ''})` : '';
-  setOptionalText('history-delete-summary', `Delete ${records.length} file${records.length === 1 ? '' : 's'}${size}?`);
+  const size = known.length ? ` (${formatBytes(bytes)}${known.length < available.length ? ' known size' : ''})` : '';
+  const filesCopy = available.length ? ` Up to ${available.length} available file${available.length === 1 ? '' : 's'}${size} may be deleted from disk.` : '';
+  const missingCopy = missing ? ` ${missing} missing entr${missing === 1 ? 'y will' : 'ies will'} only be removed from History.` : '';
+  setOptionalText('history-delete-summary', `Remove ${records.length} History entr${records.length === 1 ? 'y' : 'ies'}?${filesCopy}${missingCopy}`);
+  const titles = $('history-delete-titles'); titles.replaceChildren();
+  for (const record of records.slice(0, 5)) { const item = document.createElement('li'); item.textContent = record.title; titles.append(item); }
+  if (records.length > 5) { const more = document.createElement('li'); more.textContent = `and ${records.length - 5} more`; titles.append(more); }
+  setOptionalText('history-delete-confirm', available.length ? 'Delete files' : 'Remove entries');
   (document.getElementById('history-delete-dialog') as HTMLDialogElement).showModal();
   document.getElementById('history-delete-cancel')?.focus();
 }
@@ -2555,22 +2563,25 @@ async function deleteSelectedHistory(): Promise<void> {
   const confirm = document.getElementById('history-delete-confirm') as HTMLButtonElement;
   const cancel = document.getElementById('history-delete-cancel') as HTMLButtonElement;
   confirm.disabled = true; cancel.disabled = true; confirm.textContent = 'Deleting…';
-  let deleted = 0, failed = 0, firstReason = '';
+  let deleted = 0, removed = 0, failed = 0, warnings = 0, firstReason = '', firstWarning = '';
   for (const id of ids) {
     try {
       const result = await deleteHistoryRecord(id);
       if (result.deleted) deleted += 1;
-      if (!result.deleted || !result.removed || result.warning) {
-        failed += 1;
-        firstReason ||= result.warning || (result.deleted ? 'The file was deleted, but its history entry was kept.' : result.removed ? 'The file was kept; its history entry was removed.' : 'The file could not be deleted safely.');
-      }
+      else if (result.removed) removed += 1;
+      else { failed += 1; firstReason ||= result.warning || 'The file could not be deleted safely.'; }
+      const warning = result.warning || (result.deleted && !result.removed ? 'The file was deleted, but its history entry was kept.' : '');
+      if ((result.deleted || result.removed) && warning) { warnings += 1; firstWarning ||= warning; }
     } catch (error) { failed += 1; firstReason ||= (error as Error).message; }
   }
-  const message = failed ? `${deleted} deleted, ${failed} failed: ${firstReason}` : `${deleted} deleted.`;
-  showActionResult(message, failed === 0);
+  let message = [deleted || !removed ? `${deleted} deleted` : '', removed ? `${removed} removed from History` : '', failed ? `${failed} failed: ${firstReason}` : ''].filter(Boolean).join(', ');
+  if (warnings) message += ` (${warnings} with a warning: ${firstWarning.replace(/\.$/, '')})`;
+  if (!/[.!?]$/.test(message)) message += '.';
+  const ok = failed === 0 && warnings === 0;
+  showActionResult(message, ok);
   await refreshHistory();
   historyDeleteBusy = false; confirm.disabled = false; cancel.disabled = false; confirm.textContent = 'Delete files';
-  if (historyStatusOverride === null) historyDeleteResult = { message, ok: failed === 0 };
+  if (historyStatusOverride === null) historyDeleteResult = { message, ok };
   renderHistoryStatus(); updateHistorySelection(); closeHistoryDeleteDialog();
 }
 function clearHistoryDeleteResult(): void { historyDeleteResult = null; renderHistoryStatus(); }

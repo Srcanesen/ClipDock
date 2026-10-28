@@ -131,7 +131,7 @@ test('bulk deletion confirms known size in-panel, calls the existing delete API 
   };
   selectAll(h); openDelete(h);
   assert.equal(h.elements.get('history-delete-dialog').open, true);
-  assert.equal(h.elements.get('history-delete-summary').textContent, 'Delete 3 files (3 KB known size)?');
+  assert.equal(h.elements.get('history-delete-summary').textContent, 'Remove 3 History entries? Up to 3 available files (3 KB known size) may be deleted from disk.');
   assert.equal(h.activeElement, h.elements.get('history-delete-cancel'));
   assert.deepEqual(calls, [], 'opening the dialog cannot delete anything');
   confirmDelete(h); await h.flush();
@@ -151,12 +151,12 @@ test('bulk deletion confirms known size in-panel, calls the existing delete API 
   assert.equal(h.elements.get('message').textContent, '1 deleted, 2 failed: File is busy.');
 });
 
-test('bulk delete reports kept files truthfully, prunes removed entries, and shows full success when appropriate', async () => {
+test('bulk delete counts kept-file History removals separately from failures, so every selected entry is counted once', async () => {
   let records = [record('kept'), record('deleted')];
   const h = await history(records); h.api.historyList = async () => records;
   h.api.historyDelete = async id => { records = records.filter(record => record.id !== id); return { deleted: id === 'deleted', removed: true }; };
   selectAll(h); openDelete(h); confirmDelete(h); await h.flush();
-  assert.equal(h.elements.get('message').textContent, '1 deleted, 1 failed: The file was kept; its history entry was removed.');
+  assert.equal(h.elements.get('message').textContent, '1 deleted, 1 removed from History.');
   assert.equal(h.elements.get('history-selection-count').textContent, '0 selected');
   assert.equal(rows(h).length, 0);
   assert.equal(h.elements.get('history-select-all').disabled, true);
@@ -274,7 +274,7 @@ test('History filter chips prune hidden selections so Delete files counts only v
   assert.deepEqual(selected(h), ['youtube']);
   const calls = []; h.api.historyDelete = async id => { calls.push(id); return { deleted: false, removed: false }; };
   openDelete(h);
-  assert.equal(h.elements.get('history-delete-summary').textContent, 'Delete 1 file (1 KB)?');
+  assert.equal(h.elements.get('history-delete-summary').textContent, 'Remove 1 History entry? Up to 1 available file (1 KB) may be deleted from disk.');
   confirmDelete(h); await h.flush();
   assert.deepEqual(calls, ['youtube']);
   assert.equal(h.elements.get('history-status').textContent, '0 deleted, 1 failed: The file could not be deleted safely.');
@@ -311,4 +311,54 @@ test('a post-delete History load error takes precedence over the completed bulk 
   assert.equal(h.elements.get('message').textContent, '0 deleted, 1 failed: File is busy.');
   assert.equal(h.elements.get('history-status').textContent, 'History load failed after deletion.');
   assert.equal(h.elements.get('history-status').classList.contains('err'), true);
+});
+
+
+test('bulk delete counts a deleted file with a warning only once and preserves the warning text', async () => {
+  let records = [record('clean'), record('warning')];
+  const h = await history(records); h.api.historyList = async () => records;
+  h.api.historyDelete = async id => {
+    records = records.filter(record => record.id !== id);
+    return { deleted: true, removed: true, ...(id === 'warning' ? { warning: 'Subtitle could not be deleted.' } : {}) };
+  };
+  selectAll(h); openDelete(h); confirmDelete(h); await h.flush();
+  assert.equal(h.elements.get('history-status').textContent, '2 deleted (1 with a warning: Subtitle could not be deleted).');
+  assert.equal(h.elements.get('message').textContent, '2 deleted (1 with a warning: Subtitle could not be deleted).');
+  assert.equal(h.elements.get('history-status').classList.contains('err'), true);
+  assert.equal(h.elements.get('history-selection-count').textContent, '0 selected');
+});
+
+test('bulk confirmation separates available files from Missing entry-only removals and lists all three selected titles', async () => {
+  const h = await history([record('a', { title: 'First available' }), record('missing', { title: 'Missing title', available: false, bytes: 10_000 }), record('b', { title: '<b>Second available</b>' })]);
+  selectAll(h); openDelete(h);
+  assert.equal(h.elements.get('history-delete-summary').textContent, 'Remove 3 History entries? Up to 2 available files (2 KB) may be deleted from disk. 1 missing entry will only be removed from History.');
+  assert.deepEqual(h.elements.get('history-delete-titles')?.children.map(item => item.textContent), ['First available', 'Missing title', '<b>Second available</b>']);
+  assert.equal(h.elements.get('history-delete-titles').children[2].children.length, 0, 'titles are literal text, never markup');
+});
+
+test('bulk confirmation names the first five selected titles and the remaining count even across scrolled rows', async () => {
+  const h = await history(Array.from({ length: 7 }, (_, i) => record(`r${i}`, { title: `Selected title ${i + 1}` })));
+  selectAll(h); openDelete(h);
+  assert.deepEqual(h.elements.get('history-delete-titles')?.children.map(item => item.textContent), ['Selected title 1', 'Selected title 2', 'Selected title 3', 'Selected title 4', 'Selected title 5', 'and 2 more']);
+});
+
+test('Missing-only selection confirms History removal and reports removed entries without failed file deletions', async () => {
+  let records = [record('missing', { available: false })];
+  const h = await history(records); h.api.historyList = async () => records;
+  h.api.historyDelete = async () => { records = []; return { deleted: false, removed: true }; };
+  selectAll(h); openDelete(h);
+  assert.equal(h.elements.get('history-delete-summary').textContent, 'Remove 1 History entry? 1 missing entry will only be removed from History.');
+  assert.equal(h.elements.get('history-delete-confirm').textContent, 'Remove entries');
+  confirmDelete(h); await h.flush();
+  assert.equal(h.elements.get('history-status').textContent, '1 removed from History.');
+  assert.equal(h.elements.get('history-status').classList.contains('err'), false);
+});
+
+test('an available unmanaged file kept by main is reported as a History removal, with any warning retained', async () => {
+  let records = [record('external')];
+  const h = await history(records); h.api.historyList = async () => records;
+  h.api.historyDelete = async () => { records = []; return { deleted: false, removed: true, warning: 'External file kept.' }; };
+  selectAll(h); openDelete(h); confirmDelete(h); await h.flush();
+  assert.equal(h.elements.get('history-status').textContent, '1 removed from History (1 with a warning: External file kept).');
+  assert.equal(h.elements.get('history-selection-count').textContent, '0 selected');
 });
