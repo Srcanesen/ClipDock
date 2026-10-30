@@ -4,8 +4,6 @@ import { createGenerationGuard } from './search-session';
 
 export interface StatusFlight { readonly generation: number; readonly epoch: number }
 
-// Single-flight host status refresh. ResolveQuit bumps the generation and the
-// bounded timeout bumps the epoch; neither lets an older response through.
 export class StatusRefreshSession {
   #inFlight = false;
   #trailing = false;
@@ -21,14 +19,11 @@ export class StatusRefreshSession {
     return { generation: this.#generation, epoch: ++this.#epoch };
   }
 
-  // The response may update visible state.
   accepts(flight: StatusFlight): boolean { return flight.epoch === this.#epoch && flight.generation === this.#generation; }
-  // The flight still holds the single-flight slot (the timeout has not released it).
   holds(flight: StatusFlight): boolean { return flight.epoch === this.#epoch; }
   expire(): void { this.#epoch += 1; }
   invalidate(): void { this.#generation += 1; }
 
-  // Frees the slot; true when a trailing refresh must run now.
   release(): boolean {
     this.#inFlight = false;
     if (!this.#trailing) return false;
@@ -37,8 +32,6 @@ export class StatusRefreshSession {
   }
 }
 
-// Source metadata loading. Busy belongs to the newest request only, so an older
-// request that settles late cannot clear it under a newer one.
 export class MetadataSession {
   #guard = createGenerationGuard();
   #busy = false;
@@ -54,7 +47,6 @@ export class MetadataSession {
   isCurrent(request: number): boolean { return this.#guard.isCurrent(request); }
   isStale(request: number): boolean { return this.#guard.isStale(request); }
 
-  // True when this request still owned busy and released it.
   finish(request: number): boolean {
     if (!this.#guard.isCurrent(request)) return false;
     this.#busy = false;

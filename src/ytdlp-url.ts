@@ -1,5 +1,3 @@
-// HTTPS URL validation for provider entry points. This module deliberately has no
-// Electron or process APIs; main owns the authoritative validation call.
 
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'youtube-nocookie.com', 'www.youtube-nocookie.com']);

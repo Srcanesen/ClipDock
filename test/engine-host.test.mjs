@@ -66,6 +66,14 @@ function fixture(t, {invalidFolder = false, failRole, restoreCredential = async 
 }
 const event = {sender: {}};
 
+test('native handoff ownership is registered before entering the native callback', async t => {
+  const f = fixture(t); await f.start();
+  t.after(() => f.host.dispose());
+  assert.equal(f.host.mediaInUse(), false);
+  assert.equal(await f.host.handoff(() => f.host.mediaInUse()), true);
+  assert.equal(f.host.mediaInUse(), false);
+});
+
 test('Pinterest engine host shares search snapshots through selection, download and artifact completion', async t => {
   const output = fs.readFileSync(new URL('./fixtures/pinterest-opaque-search.jsonl', import.meta.url), 'utf8');
   const calls = [];

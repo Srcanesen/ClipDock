@@ -288,12 +288,6 @@ export function registerMainTransferInvokeHandlers(
   return handlers;
 }
 
-// ---- Non-blocking startup ordering seam ----
-// The Electron main module supplies the concrete registration/window/background
-// callbacks; this module owns the ORDER so it can be exercised without
-// Electron: every IPC handler is registered synchronously, the panel is created
-// before any network-backed background initialization is awaited, and
-// background failures stay inside the caller's controlled async task.
 
 export interface StartupSequence {
   registerHandlers(): void;
@@ -417,8 +411,6 @@ export function createArtifactCompletionService(deps: ArtifactCompletionDependen
     const commit = () => {
       if (!request.job) bindSubtitle();
       const historyResult = deps.recordHistory({...history, filePath: final.filePath, profile: final.profile});
-      // Persisted history cannot be rolled back here. Its media and companion
-      // must survive even if the managed boundary changes before card binding.
       if (historyResult.record) retainReferences();
       let warning = final.warning;
       if (historyResult.warning) warning = warningWith(warning, historyResult.warning);
@@ -432,8 +424,6 @@ export function createArtifactCompletionService(deps: ArtifactCompletionDependen
       });
     };
     if (request.job) {
-      // Bind the companion as its own publication: a later media-card failure
-      // cannot revoke a successfully registered subtitle card.
       if (subtitlePath && request.bindSubtitle) request.job.publish(subtitlePath, bindSubtitle);
       request.job.publish(final.filePath, commit);
     } else commit();
@@ -689,7 +679,6 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
     }, true, false, {invalidMessage: 'Invalid Pinterest download request.'});
   }
 
-  // Pexels and Pixabay share one stock download flow; the asset is re-read from the provider.
   const stock = (provider: 'pexels' | 'pixabay', label: string) => async function (event: unknown, asset: unknown, fileId: unknown, profile: unknown, jobId: unknown): Promise<CompletedDownloadResult> {
     const adapter = deps[provider];
     if (!asset || typeof asset !== 'object' || typeof fileId !== 'string' || typeof jobId !== 'string' || !validProfile(profile) || !hasSender(event)) throw new Error(`Invalid ${label} download request.`);

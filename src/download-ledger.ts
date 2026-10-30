@@ -1,4 +1,3 @@
-// Electron-free ownership of session artifacts, history bindings and deletion decisions.
 import { randomUUID } from 'node:crypto';
 import { canonicalMediaPath } from './path-boundary';
 import { ManagedRoot } from './managed-root';
@@ -114,7 +113,6 @@ export class DownloadLedger {
   clearHistory(): number {
     const count = this.history.clear();
     for (const id of this.historyCards.keys()) this.unbindDrag(id);
-    // Session cards still own their files, but no longer belong to a History record.
     for (const [id, card] of this.cards) if (card.historyId) {
       const { historyId, ...unbound } = card;
       this.cards.set(id, Object.freeze(unbound));
@@ -125,7 +123,6 @@ export class DownloadLedger {
     const card = this.resolve(cardId);
     if (typeof cardId !== 'string' || !card) return { deleted: false, message: 'File was not deleted safely because its ClipDock history record is unavailable. It remains in the queue.' };
     try {
-      // A bound companion shares its media's history record: delete only its own file.
       const recorded = !card.ownerPath && card.historyId && this.history.get(card.historyId);
       const protectedPaths = this.protectedPaths(cardId, card.historyId ? this.historyCards.get(card.historyId) : undefined);
       const result = recorded && card.historyId
@@ -136,7 +133,7 @@ export class DownloadLedger {
       if (card.historyId && !card.ownerPath) this.unbind(card.historyId);
       for (const [id, companion] of this.cards) if (companion.ownerPath === card.path) this.cards.delete(id);
       this.sessionSubtitles.delete(card.path);
-      return { deleted: true, message: result.warning === 'Download history could not be updated.' ? 'File deleted, but download history could not be updated.' : result.warning ? `File deleted. ${result.warning}` : 'File deleted.' };
+      return { deleted: true, message: [result.historyWriteFailed ? 'File deleted, but download history could not be updated.' : 'File deleted.', result.warning].filter(Boolean).join(' ') };
     } catch (error) {
       return { deleted: false, message: error instanceof Error ? error.message : 'File was not deleted safely. It remains in the queue.' };
     }

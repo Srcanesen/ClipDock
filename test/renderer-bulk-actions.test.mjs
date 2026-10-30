@@ -21,6 +21,14 @@ function selectAll(h, checked = true) {
 function openDelete(h) { h.elements.get('history-delete-selected-btn').click(); }
 function confirmDelete(h) { h.elements.get('history-delete-confirm').click(); }
 
+test('bulk delete counts typed history-write failures as warnings and preserves companion diagnostics', async () => {
+  const h = await history([record('a')]);
+  h.api.historyDelete = async () => ({ deleted: true, removed: true, historyWriteFailed: true, warning: 'Subtitle was preserved.' });
+  selectAll(h); openDelete(h); confirmDelete(h); await h.flush();
+  assert.equal(h.elements.get('message').textContent, '1 deleted (1 with a warning: Download history could not be updated. Subtitle was preserved).');
+  assert.equal(h.elements.get('message').classList.contains('err'), true);
+});
+
 // Drive the actual row inputs: changes must keep the exact row/control instances.
 test('History click and Shift+click select/deselect ranges without rebuilding rows or losing focus', async () => {
   const h = await history(['a', 'b', 'c', 'd'].map(id => record(id)));

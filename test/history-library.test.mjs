@@ -258,7 +258,7 @@ test('history delete reports file and record outcomes without claiming false suc
   assert.equal(message.textContent, 'Removed from history and deleted the managed file.');
   assert.equal(message.classList.contains('ok'), true);
 
-  result = { deleted: true, removed: true, warning: 'Download history could not be updated.' };
+  result = { deleted: true, removed: true, historyWriteFailed: true };
   await context.historyAction(record, 'delete');
   assert.equal(message.textContent, 'File deleted, but download history could not be updated.');
   assert.equal(message.classList.contains('err'), true, 'persistence warning is never presented as full success');

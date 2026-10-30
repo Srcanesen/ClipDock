@@ -4,6 +4,16 @@ All notable changes to ClipDock are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and ClipDock follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-10-30
+
+### Fixed
+
+- **Accurate warnings after deleting downloads.** If a file is deleted but download history cannot be updated, ClipDock reports that failure even when another warning is present.
+
+### Changed
+
+- **Internal cleanup.** Code comments were pruned and the rules they described are now enforced by automated tests; behaviour is unchanged.
+
 ## [0.3.0] - 2026-10-28
 
 ### Added

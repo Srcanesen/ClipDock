@@ -11,9 +11,6 @@ export type WorkspaceCleanupResult = { deletedFileCount: number; deletedBytes: n
 type File = { path: string; bytes: number; owned: OwnedFile };
 type WorkspaceFileClass = 'media' | 'companion' | 'transient' | 'diagnostic';
 const PROVIDER_DIRECTORIES = ['youtube', 'social', 'pexels', 'pinterest', 'pixabay'] as const;
-// Subtitles are user content but are classified separately from media so counts
-// stay truthful; transient partial/temp files and the diagnostic log are never
-// presented as stored media. Anything else keeps the historical default (counted).
 const COMPANION_EXTENSIONS = new Set(['.srt']);
 const TRANSIENT_EXTENSIONS = new Set(['.part', '.tmp', '.temp', '.ytdl']);
 const DIAGNOSTIC_NAMES = new Set(['clipdock.log']);
@@ -84,8 +81,6 @@ export function inspectWorkspace(inputRoot: ManagedRoot | string, protectedPaths
   const root = captured(inputRoot);
   const all = files(root);
   const protectedSet = protectedFiles(root, protectedPaths);
-  // User-facing counts: media + companions only. Transient partial/temp files
-  // and the diagnostic log are never presented as stored media.
   const content = all.filter((file) => {
     const cls = classifyFile(basename(file.path));
     return cls !== 'transient' && cls !== 'diagnostic';

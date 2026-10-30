@@ -11,9 +11,6 @@ import { ManagedRoot } from './managed-root';
 import { AnchoredDir, SafeFsError, captureEntry, removeEntry, removeEmptyDir } from './safe-fs';
 import { StringDecoder } from 'node:string_decoder';
 
-// ---------------------------------------------------------------------------
-// Binary discovery (PATH enumeration + spawnSync version probe + override)
-// ---------------------------------------------------------------------------
 
 const VERSION_PROBE_TIMEOUT_MS = 3_000;
 const VERSION_PROBE_MAX_BYTES = 256 * 1024;
@@ -112,12 +109,8 @@ export function installCandidates(name: string, env: NodeJS.ProcessEnv, platform
   ];
 }
 
-// ---------------------------------------------------------------------------
-// LRU Search Cache with pristine-copy discipline
-// ---------------------------------------------------------------------------
 
 function cloneValue<V>(value: V): V {
-  // Prefer structuredClone for full fidelity (handles Map, Set, Dates)
   try {
     if (typeof (globalThis as unknown as { structuredClone?: (v: unknown) => unknown }).structuredClone === 'function') {
       return (globalThis as unknown as { structuredClone: (v: V) => V }).structuredClone(value);
@@ -156,10 +149,8 @@ export class LruCache<K, V> {
       this.store.delete(key);
       return null;
     }
-    // LRU: move to most-recently-used
     this.store.delete(key);
     this.store.set(key, entry);
-    // pristine-copy discipline: return cloned copy so mutation does not pollute cache
     return cloneValue(entry.value);
   }
 
@@ -169,7 +160,6 @@ export class LruCache<K, V> {
       ? (value as unknown as { createdAt: number }).createdAt
       : this.now();
     const stored: V = value;
-    // If key exists, refresh order
     if (this.store.has(key)) this.store.delete(key);
     this.store.set(key, { value: stored, createdAt });
     while (this.store.size > this.maxEntries) {
@@ -207,7 +197,6 @@ export class LruCache<K, V> {
       }
     })() as IterableIterator<[K, V]>;
   }
-  // Compat: allow iteration like Map
   [Symbol.iterator](): IterableIterator<[K, V]> { return this.entries(); }
   forEach(callback: (value: V, key: K) => void): void {
     for (const [k, v] of this.entries()) callback(v, k);
@@ -233,11 +222,6 @@ export function createSearchCache<R>(
     search: new LruCache<string, SearchCacheEntry<R>>(maxResults, ttl, now),
     thumbnails: new LruCache<string, ThumbnailCacheEntry>(maxThumbnails, thumbTtl, now),
   };
-}
-
-// Legacy helper: createSearchCache with single max for callers that only need one cache
-export function createSingleCache<V>(maxEntries: number, ttlMs: number, now: () => number = Date.now): LruCache<string, V> {
-  return new LruCache<string, V>(maxEntries, ttlMs, now);
 }
 
 // ---------------------------------------------------------------------------
@@ -478,7 +462,6 @@ export class SharedProviderOperation<T> {
       const abort = () => {
         detach();
         if (!this.outcome && this.subscribers.size === 0) {
-          // Evict before termination so a later request cannot join dying work.
           this.release();
           void this.operation.cancel().then(() => reject(signal.reason), reject);
         } else reject(signal.reason);

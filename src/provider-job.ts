@@ -273,7 +273,6 @@ export class ProviderJobRunner {
           }
         }
         for (const [path, directory] of directories) {
-          // An enclosing registration cannot revoke a published child.
           if (coveredByPublication(path) || [...publishedPaths].some(published => within(path, published))) continue;
           removePrivateDir(directory);
         }
@@ -327,10 +326,8 @@ export class ProviderSession {
   admit(): void {
     try { this.directory.verify(); }
     catch (error) {
-      // An arbitrary caller-selected session directory remains an immutable boundary.
       const name = basename(this.path);
       if (!this.prunable.includes(name)) throw error;
-      // Only absence permits recreation; an existing replacement stays rejected.
       try { lstatSync(this.parent.child(name)); }
       catch (missing) {
         if ((missing as NodeJS.ErrnoException).code !== 'ENOENT') throw missing;

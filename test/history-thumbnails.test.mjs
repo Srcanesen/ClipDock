@@ -106,6 +106,12 @@ test('failed decoding and oversized frames do not respawn on a second History re
 });
 
 test('video and portrait photo produce Retina-size bounded local thumbnails exactly once, including after restart', realTools, async t => {
+  const css = fs.readFileSync(new URL('../static/css/styles.css', import.meta.url), 'utf8');
+  for (const selector of ['.history-row .mini', '.download-card .operation-thumbnail']) {
+    const rule = css.slice(css.indexOf(`${selector} {`)).split('}')[0];
+    assert.match(rule, /width: 112px;/);
+    assert.match(rule, /aspect-ratio: 16 \/ 9;/);
+  }
   const calls = [];
   const f = fixture(t, { tools, spawn: (...args) => { calls.push(args); return spawn(...args); } });
   for (const image of [false, true]) {
@@ -122,6 +128,13 @@ test('video and portrait photo produce Retina-size bounded local thumbnails exac
     await restored.dispose();
   }
   assert.equal(calls.length, 4, 'one probe and one frame extraction per record');
+  for (const [, args] of calls.filter(([, args]) => args.includes('-frames:v'))) {
+    assert.equal(args[args.indexOf('-frames:v') + 1], '1');
+    assert.equal(args[args.indexOf('-q:v') + 1], '4');
+    assert.equal(args[args.indexOf('-f') + 1], 'image2pipe');
+    assert.equal(args.at(-1), 'pipe:1');
+    if (args.includes('-ss')) assert.ok(args.indexOf('-ss') < args.indexOf('-i'));
+  }
   assert.ok(calls.every(([, , opts]) => opts.shell === false && opts.detached === (process.platform !== 'win32' ? true : undefined)));
   assert.deepEqual(fs.readdirSync(f.root).sort(), ['photo.png', 'video.mp4'], 'no artwork in the download folder');
 });

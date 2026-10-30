@@ -121,8 +121,3 @@ export function saveDownloadFolder(file: string, folder: ManagedRoot | string): 
     rmSync(temp, { force: true });
   }
 }
-
-/** Validate every provider directory before changing any live worker root. */
-export function prepareManagedDownloadFolder(folder: string): string {
-  return ManagedRoot.prepare(folder).verify();
-}

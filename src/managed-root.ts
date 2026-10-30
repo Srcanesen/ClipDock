@@ -117,7 +117,6 @@ export class ManagedRootSelection {
           try { consumer(previous); } catch { this.transitionFailed = true; }
         }
       }
-      // If even rollback is unavailable, reject all consumers until a fully prepared change succeeds.
       throw error;
     }
   }

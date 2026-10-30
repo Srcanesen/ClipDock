@@ -1,4 +1,3 @@
-// ClipDock panel renderer. Plain browser script; all privileged work uses clipdockAPI.
 import { createGenerationGuard, searchOrientation, ORIENTATION_SUPPORT, type Orientation, type SearchOptions } from './renderer-state/search-session';
 import { PreviewSession } from './renderer-state/preview-session';
 import { MetadataSession, StatusRefreshSession } from './renderer-state/status-session';
@@ -28,7 +27,7 @@ interface YoutubeSearchEvent { generation: number; page: YoutubeSearchPage; }
 interface YoutubeEvent { jobId: string; state: string; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; subtitle?: MediaCard; warning?: string; }
 interface SocialEvent { jobId: string; state: string; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; warning?: string; }
 
-declare global { interface Window { clipdockAPI: { getStatus(): Promise<StatusSnapshot>; downloadFolderStatus(): Promise<DownloadFolderStatus>; chooseDownloadFolder(): Promise<DownloadFolderStatus>; onResolveQuit(callback: () => void): () => void; selectFile(): Promise<{ canceled: boolean; cardId?: string; fileName?: string }>; startNativeDrag(cardIds: string | string[]): void; importToMediaPool(id: string, bin: TargetBin): Promise<TransferResult>; addToTimeline(id: string, bin: TargetBin, placement: TimelinePlacement): Promise<TransferResult>; searchYoutube(query: string, page: number, generation?: number, options?: SearchOptions): Promise<YoutubeSearchPage>; onYoutubeSearchPage(callback: (event: YoutubeSearchEvent) => void): () => void; cancelYoutubeSearch(): Promise<boolean>; prefetchYoutube(url: string): Promise<void>; loadYoutube(url: string): Promise<YoutubeMetadata>; downloadYoutube(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string, options: DownloadOptions): Promise<{ cardId: string; fileName: string; subtitle?: MediaCard; warning?: string }>; cancelYoutube(id: string): Promise<boolean>; loadSocial(url: string): Promise<SocialMetadata>; loadSocialThumbnail?(url: string): Promise<string | null>; downloadSocial(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelSocial(id: string): Promise<boolean>; onSocialEvent(callback: (event: SocialEvent) => void): () => void; loadPinterest(url: string): Promise<PinterestMetadata>; searchPinterest(query: string, page: number, options?: SearchOptions): Promise<PinterestSearchPage>; downloadPinterest(url: string, itemIndex: number, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPinterest(id: string): Promise<boolean>; onPinterestEvent(callback: (event: PinterestEvent) => void): () => void; queueDelete(cardId: string): Promise<{ deleted: boolean; message: string }>; searchSubtitles(url: string, language: SubtitleLanguage): Promise<SubtitleCue[]>; onYoutubeEvent(callback: (event: YoutubeEvent) => void): () => void; setAlwaysOnTop(pinned: boolean): Promise<boolean>; pexelsKeyStatus(): Promise<PexelsConnectionStatus>; setPexelsKey(key: string): Promise<PexelsConnectionStatus>; clearPexelsKey(): Promise<PexelsConnectionStatus>; searchPexels(kind: PexelsKind, query: string, page: number, options?: SearchOptions): Promise<PexelsPage>; loadPexels(kind: PexelsKind, id: number): Promise<PexelsAsset>; downloadPexels(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPexels(id: string): Promise<boolean>; cancelPexelsRequests(): Promise<boolean>; onPexelsEvent(callback: (event: PexelsEvent) => void): () => void; openPexelsExternal(url: string): Promise<boolean>; pixabayKeyStatus(): Promise<PexelsConnectionStatus>; setPixabayKey(key: string): Promise<PexelsConnectionStatus>; clearPixabayKey(): Promise<PexelsConnectionStatus>; searchPixabay(kind: 'video', query: string, page: number, options?: SearchOptions): Promise<PexelsPage>; loadPixabay(kind: 'video', id: number): Promise<PexelsAsset>; downloadPixabay(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPixabay(id: string): Promise<boolean>; cancelPixabayRequests(): Promise<boolean>; onPixabayEvent(callback: (event: PexelsEvent) => void): () => void; openPixabayExternal(url: string): Promise<boolean>; openYoutubeExternal(videoId: string, startSeconds?: number): Promise<boolean>; openYoutubePreview(videoId: string, startSeconds: number | undefined, bounds: PreviewBounds): Promise<boolean>; closeYoutubePreview(): Promise<boolean>; setYoutubePreviewBounds(bounds: PreviewBounds): Promise<boolean>; onYoutubePreviewState(callback: (state: YoutubePreviewState) => void): () => void; workspaceStatus(): Promise<WorkspaceSummary>; openWorkspace(): Promise<boolean>; cleanupWorkspace(): Promise<WorkspaceCleanupResult>; historyList(): Promise<HistoryRecord[]>; historyThumbnail?(id: string): Promise<string | null>; historyClear(): Promise<number>; historyReuse(id: string): Promise<MediaCard | null>; historyReveal(id: string): Promise<boolean>; historyRevealSubtitle(id: string): Promise<boolean>; historySource(id: string): Promise<boolean>; historyCopy(id: string): Promise<boolean>; historyRelink(id: string): Promise<HistoryRecord | null>; historyDelete(id: string): Promise<{ deleted: boolean; removed: boolean; warning?: string; removedCardIds?: string[] }>; }; } }
+declare global { interface Window { clipdockAPI: { getStatus(): Promise<StatusSnapshot>; downloadFolderStatus(): Promise<DownloadFolderStatus>; chooseDownloadFolder(): Promise<DownloadFolderStatus>; onResolveQuit(callback: () => void): () => void; selectFile(): Promise<{ canceled: boolean; cardId?: string; fileName?: string }>; startNativeDrag(cardIds: string | string[]): void; importToMediaPool(id: string, bin: TargetBin): Promise<TransferResult>; addToTimeline(id: string, bin: TargetBin, placement: TimelinePlacement): Promise<TransferResult>; searchYoutube(query: string, page: number, generation?: number, options?: SearchOptions): Promise<YoutubeSearchPage>; onYoutubeSearchPage(callback: (event: YoutubeSearchEvent) => void): () => void; cancelYoutubeSearch(): Promise<boolean>; prefetchYoutube(url: string): Promise<void>; loadYoutube(url: string): Promise<YoutubeMetadata>; downloadYoutube(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string, options: DownloadOptions): Promise<{ cardId: string; fileName: string; subtitle?: MediaCard; warning?: string }>; cancelYoutube(id: string): Promise<boolean>; loadSocial(url: string): Promise<SocialMetadata>; loadSocialThumbnail?(url: string): Promise<string | null>; downloadSocial(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelSocial(id: string): Promise<boolean>; onSocialEvent(callback: (event: SocialEvent) => void): () => void; loadPinterest(url: string): Promise<PinterestMetadata>; searchPinterest(query: string, page: number, options?: SearchOptions): Promise<PinterestSearchPage>; downloadPinterest(url: string, itemIndex: number, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPinterest(id: string): Promise<boolean>; onPinterestEvent(callback: (event: PinterestEvent) => void): () => void; queueDelete(cardId: string): Promise<{ deleted: boolean; message: string }>; searchSubtitles(url: string, language: SubtitleLanguage): Promise<SubtitleCue[]>; onYoutubeEvent(callback: (event: YoutubeEvent) => void): () => void; setAlwaysOnTop(pinned: boolean): Promise<boolean>; pexelsKeyStatus(): Promise<PexelsConnectionStatus>; setPexelsKey(key: string): Promise<PexelsConnectionStatus>; clearPexelsKey(): Promise<PexelsConnectionStatus>; searchPexels(kind: PexelsKind, query: string, page: number, options?: SearchOptions): Promise<PexelsPage>; loadPexels(kind: PexelsKind, id: number): Promise<PexelsAsset>; downloadPexels(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPexels(id: string): Promise<boolean>; cancelPexelsRequests(): Promise<boolean>; onPexelsEvent(callback: (event: PexelsEvent) => void): () => void; openPexelsExternal(url: string): Promise<boolean>; pixabayKeyStatus(): Promise<PexelsConnectionStatus>; setPixabayKey(key: string): Promise<PexelsConnectionStatus>; clearPixabayKey(): Promise<PexelsConnectionStatus>; searchPixabay(kind: 'video', query: string, page: number, options?: SearchOptions): Promise<PexelsPage>; loadPixabay(kind: 'video', id: number): Promise<PexelsAsset>; downloadPixabay(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPixabay(id: string): Promise<boolean>; cancelPixabayRequests(): Promise<boolean>; onPixabayEvent(callback: (event: PexelsEvent) => void): () => void; openPixabayExternal(url: string): Promise<boolean>; openYoutubeExternal(videoId: string, startSeconds?: number): Promise<boolean>; openYoutubePreview(videoId: string, startSeconds: number | undefined, bounds: PreviewBounds): Promise<boolean>; closeYoutubePreview(): Promise<boolean>; setYoutubePreviewBounds(bounds: PreviewBounds): Promise<boolean>; onYoutubePreviewState(callback: (state: YoutubePreviewState) => void): () => void; workspaceStatus(): Promise<WorkspaceSummary>; openWorkspace(): Promise<boolean>; cleanupWorkspace(): Promise<WorkspaceCleanupResult>; historyList(): Promise<HistoryRecord[]>; historyThumbnail?(id: string): Promise<string | null>; historyClear(): Promise<number>; historyReuse(id: string): Promise<MediaCard | null>; historyReveal(id: string): Promise<boolean>; historyRevealSubtitle(id: string): Promise<boolean>; historySource(id: string): Promise<boolean>; historyCopy(id: string): Promise<boolean>; historyRelink(id: string): Promise<HistoryRecord | null>; historyDelete(id: string): Promise<{ deleted: boolean; removed: boolean; historyWriteFailed?: true; warning?: string; removedCardIds?: string[] }>; }; } }
 
 const $ = (id: string): HTMLElement => { const el = document.getElementById(id); if (!el) throw new Error(`Missing #${id}`); return el; };
 // Drawn contact print for results without a photo: a seeded skyline in darkroom
@@ -105,11 +104,7 @@ downloadQueue.subscribe(({ item, progress, settled, action }) => {
   // One workspace scan per run of downloads: only once nothing is downloading or queued.
   if (settled && !downloadQueue.activeId && !queue.some((entry) => entry.status === 'queued') && document.getElementById('workspace-status')) void refreshWorkspace();
 });
-// Result staging is renderer-session-only. Keys include the provider (and Pexels
-// media kind) so switching pages or providers cannot move a selection onto a
-// different source identity.
 const outputSession = new ItemOutputSession();
-// Disclosure is view state; all item output lives in the session.
 const cardOptionsOpen = new Map<string, boolean>();
 const inlineActionBusyKeys = new Set<string>();
 let selectedQueueLoadBusy = false;
@@ -141,8 +136,6 @@ let observedResultListWidth = 0;
 const statusSession = new StatusRefreshSession();
 let statusRefreshTimer: number | null = null;
 let hostStatus: StatusSnapshot | null = null;
-// An action result owns #message for ACTION_RESULT_MS (about three 3s polls), or until
-// the next action writes its own; after that the host refresh repaints the host message.
 const ACTION_RESULT_MS = 9_000;
 let actionResultUntil = 0;
 function showActionResult(text: string, ok?: boolean): void { actionResultUntil = Date.now() + ACTION_RESULT_MS; setText('message', text, ok); }
@@ -155,7 +148,6 @@ let provider: Provider = 'youtube';
 let pexelsKind: PexelsKind = 'video';
 let pexels: PexelsAsset | null = null;
 let pexelsSearch: PexelsPage | null = null;
-// The Stock tab reopens on the last stock source used.
 let lastStock: StockProvider = 'pexels';
 const stockConnected: Record<StockProvider, boolean> = { pexels: false, pixabay: false };
 const stockConnecting: Record<StockProvider, boolean> = { pexels: false, pixabay: false };
@@ -170,11 +162,6 @@ let openHistoryMenu: HTMLElement | null = null;
 let historyHostRefreshers: Array<() => void> = [];
 function refreshHistoryHostState(): void { for (const refresh of historyHostRefreshers) refresh(); }
 let historyMenuTrigger: HTMLButtonElement | null = null;
-// ---- History library state: search/filter/batch projection ------------------------
-// Pure client-side filtering over the newest-first list from main. The backend
-// MAX_RECORDS=200 list is never paginated; the renderer shows it in visible
-// batches of HISTORY_BATCH_SIZE and resets the batch whenever the query or a
-// filter changes.
 type HistoryProviderFilter = 'all' | Provider;
 type HistoryAvailabilityFilter = 'all' | 'available' | 'missing';
 const HISTORY_BATCH_SIZE = 20;
@@ -203,10 +190,6 @@ let socialState: BrowserState | null = null;
 let pinterestState: BrowserState | null = null;
 const pexelsStates = new Map<string, BrowserState>();
 
-// ---- Search detail rail: one adjustable sheet/detail seam -------------------------
-// The clip detail sits beside the contact sheet at 760px and wider. Its width is a
-// user layout choice that persists locally; applySplits always re-clamps the restored
-// value against the live window before exposing it through CSSOM and separator ARIA.
 const DETAIL_MIN_PX = 320;
 const DETAIL_DEFAULT_PX = 352;
 const SHEET_MIN_PX = 360;
@@ -219,14 +202,11 @@ let dragStartDetail = 0;
 function clampPx(value: number, min: number, max: number): number { return Math.min(max, Math.max(min, value)); }
 function setCssVar(target: HTMLElement | null, name: string, value: string): void { if (target && typeof target.style?.setProperty === 'function') target.style.setProperty(name, value); }
 function workspaceWidthPx(): number { const rect = document.getElementById('workspace')?.getBoundingClientRect(); return rect && rect.width > 0 ? Math.round(rect.width) : 0; }
-// One clamp/apply seam: bound the session value against live geometry, then write
-// the CSS custom property and separator ARIA values in one pass.
 function applySplits(): void {
   const workspace = document.getElementById('workspace');
   const split = document.getElementById('workspace-splitter');
   const width = workspaceWidthPx();
   if (width > 0 && workspace && split) {
-    // The detail max keeps at least one readable contact-sheet column beside it.
     const maxDetail = Math.max(DETAIL_MIN_PX, width - SHEET_MIN_PX);
     detailWidthPx = clampPx(detailWidthPx, DETAIL_MIN_PX, maxDetail);
     setCssVar(workspace, '--detail-w', `${detailWidthPx}px`);
@@ -239,7 +219,6 @@ function applySplits(): void {
 function splitterKeyTarget(key: string, current: number): number | null {
   if (key === 'Home') return DETAIL_MIN_PX;
   if (key === 'End') return Number.MAX_SAFE_INTEGER;
-  // The seam sits on the detail's left edge: moving it left grows the detail.
   if (key === 'ArrowLeft') return current + SPLIT_STEP_PX;
   if (key === 'ArrowRight') return current - SPLIT_STEP_PX;
   return null;
@@ -535,10 +514,6 @@ function hostActionReason(action: 'import' | 'timeline' | 'drag'): string | null
   if (action === 'timeline' && !hostStatus.timeline.loaded) return 'Open a timeline to use this handoff.';
   return null;
 }
-// Bounded bridge call: a hung getStatus() must not hold the single-flight guard
-// or the Refresh button forever. The timeout releases both so the visible poll or
-// a manual refresh can recover; the timed-out response is dropped by the epoch
-// guard and can never overwrite a newer snapshot.
 const HOST_STATUS_TIMEOUT_MS = 10_000;
 function refresh(): void {
   const flight = statusSession.begin();
@@ -550,8 +525,6 @@ function refresh(): void {
     if (trailing) refresh();
   };
   window.clipdockAPI.getStatus().then((s) => {
-    // Stale responses are dropped: ResolveQuit bumps the generation, and the
-    // bounded timeout bumps the epoch. Neither may overwrite newer state.
     if (!statusSession.accepts(flight)) return;
     const hostChanged = JSON.stringify(hostStatus) !== JSON.stringify(s);
     hostStatus = s;
@@ -564,7 +537,7 @@ function refresh(): void {
     setText('refresh-hint', s.refreshHint ?? ''); setText('last-updated', `Updated ${new Date().toLocaleTimeString()}`);
     if (hostChanged) { if (queue.length) renderQueue(); else updateControls(); refreshHistoryHostState(); }
   }).catch((err) => { if (statusSession.accepts(flight)) setText('message', `Renderer call failed: ${(err as Error).message}`); }).finally(() => {
-    if (!statusSession.holds(flight)) return; // the bounded timeout already released this flight
+    if (!statusSession.holds(flight)) return;
     release();
   });
   statusRefreshTimer = window.setTimeout(() => {
@@ -577,15 +550,10 @@ function scheduleHostRefresh(): void {
   if (hostRefreshTimer !== null) window.clearTimeout(hostRefreshTimer);
   hostRefreshTimer = window.setTimeout(() => { hostRefreshTimer = null; refresh(); }, 120);
 }
-// Live Resolve status: ONE bounded visible-only poll. ResolveQuit and host-status
-// events stay event-driven; the poll covers host changes that emit nothing (project
-// or timeline switch while ClipDock keeps focus). Hidden stops the poll entirely;
-// returning to visible restarts it and schedules an immediate refresh. Every tick
-// re-checks visibility, and the interval guard keeps at most one poll running.
 const HOST_POLL_MS = 3000;
 let hostPollTimer: number | null = null;
 function startHostPolling(): void {
-  if (hostPollTimer !== null) return; // one interval maximum
+  if (hostPollTimer !== null) return;
   hostPollTimer = window.setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, HOST_POLL_MS);
 }
 function stopHostPolling(): void {
@@ -601,10 +569,6 @@ function onHostVisibilityChange(): void {
     stopHostPolling();
   }
 }
-// Session-only Pin on top: the compact inline SVG icon is shipped in index.html;
-// aria-pressed/aria-label/title mutate only on a truthful success, the button
-// disables while IPC is pending, and failures report through the status footer
-// without lying about the window state. Closing the window resets everything.
 function pinState(pinned: boolean): { label: string; title: string } {
   return pinned
     ? { label: 'Unpin ClipDock', title: 'Return ClipDock to normal window order' }
@@ -720,7 +684,6 @@ function commitInspectorEdit(patch: RawItemOutput, preserveRangeText = false): v
   outputSession.edit('inspector', patch);
   applyDetailOutput(preserveRangeText); renderSelectionToolbar();
 }
-// applyDetailOutput repaints the selection, subtitle cues and range UI; callers do not render first.
 function commitRangeEdit(preserveRangeText = false): void {
   commitInspectorEdit({ selection: currentSelection(), selectionPlan: currentSelectionPlan() }, preserveRangeText);
 }
@@ -770,9 +733,6 @@ function updateCommonQualityOptions(values: string[]): void {
   for (const value of [...new Set(values)].filter((item) => item && item !== 'best')) { const option = document.createElement('option'); option.value = value; option.textContent = qualityLabel(Number(value.replace('p', ''))) || value; select.append(option); }
   select.value = Array.from(select.options ?? []).some((option) => option.value === current) ? current : 'best'; renderCommonOutputSummary();
 }
-// ---- Contact-sheet states ----------------------------------------------------------
-// One data attribute drives the sheet: idle, loading (developing frames), results,
-// empty, or error. The copy names the source and the query; CSS owns the visuals.
 let searchError: string | null = null;
 function renderSearchState(): void {
   const pane = document.getElementById('feed-pane'); if (!pane) return;
@@ -890,8 +850,6 @@ function appendThumbnailFallback(target: HTMLElement, title: string, seed = titl
   target.setAttribute('aria-label', `Thumbnail unavailable for ${title}`);
 }
 function reducedMotion(): boolean { return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false; }
-// Decorative source-lock acknowledgement for a newly validated selection. It has no
-// playback state and self-cleans through animationend instead of a timer.
 function playSourceLock(): void {
   if (reducedMotion()) return;
   const monitor = document.getElementById('source-monitor');
@@ -1165,7 +1123,6 @@ function appendResultCardControls(row: HTMLElement, key: string, selection: Resu
   const nowButton = button(downloadQueue.activeId ? 'Download next' : 'Download now', () => { void enqueueResultCard(key, selection, 'after-active'); }); nowButton.className = 'result-now-action'; nowButton.dataset.cardControl = 'true'; nowButton.dataset.cardAction = 'now'; nowButton.setAttribute('aria-label', `${downloadQueue.activeId ? 'Download next' : 'Download now'}: ${selection.title}`);
   for (const control of [playButton, queueButton, nowButton]) { control.addEventListener('click', (event) => event.stopPropagation?.()); control.addEventListener('keydown', (event) => event.stopPropagation?.()); }
   actions.append(queueButton, nowButton);
-  // The quick actions ride on the frame's lower-left corner, on the thumbnail like the play pill.
   if (thumbnail) thumbnail.append(actions); else controls.append(actions);
   const options = document.createElement('div'); options.className = `result-options download-options${optionsOpen ? '' : ' hidden'}`; options.id = resultOptionsId(key); options.dataset.field = 'options'; options.hidden = !optionsOpen; options.setAttribute('aria-hidden', String(!optionsOpen));
   if (!photo) options.append(createResultOptionSelect('Profile', 'profile', effective.profile, [['original', 'Original'], ['fast', 'Fast'], ['editing', 'Edit-ready']], false, (value) => updateResultOption(key, 'profile', value, row, photo)));
@@ -1370,7 +1327,7 @@ function youtubeUrlFromSearch(input: string): string | null {
   try { parsed = new URL(input); } catch { return null; }
   const host = parsed.hostname.toLowerCase();
   const hosts = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'youtube-nocookie.com', 'www.youtube-nocookie.com']);
-  const pathname = parsed['pathname']; // Keep provider URL parsing separate from file-location authority.
+  const pathname = parsed['pathname'];
   if (parsed.protocol !== 'https:' || parsed.port || parsed.username || parsed.password || !hosts.has(host) || parsed.searchParams.has('list') || pathname.startsWith('/playlist')) return null;
   let id: string | null = null;
   if (host === 'youtu.be') id = pathname.match(/^\/([^/]+)\/?$/)?.[1] ?? null;
@@ -1392,7 +1349,7 @@ function pinterestUrlFromSearch(input: string): string | null {
     return short ? `https://pin.it/${short[1]}` : null;
   }
   if (host !== 'pinterest.com' && host !== 'www.pinterest.com') return null;
-  const match = parsed['pathname'].match(/^\/pin\/(\d{1,40}|e1_[A-Za-z0-9_-]{40,100})\/?$/);  // bracket access keeps file-location wording out of the renderer
+  const match = parsed['pathname'].match(/^\/pin\/(\d{1,40}|e1_[A-Za-z0-9_-]{40,100})\/?$/);
   return match ? `https://www.pinterest.com/pin/${match[1]}/` : null;
 }
 function clearResultSelection(): void {
@@ -1483,8 +1440,6 @@ function searchPageRelative(delta: number): void {
   else if (provider === 'pinterest' && pinterestSearch) void searchPinterest(pinterestSearch.page + delta);
   else if (searchPage) void searchYoutube(searchPage.page + delta);
 }
-// Edge code over the clip detail: the frame number when the clip came from the sheet,
-// LINK when it was pasted.
 function renderInspectorTitle(source: Provider, _id: string, label: string = providerLabel(source)): void {
   const page = source === 'youtube' ? searchPage : isStock(source) ? pexelsSearch : source === 'pinterest' ? pinterestSearch : null;
   const results = (page?.results ?? []) as Array<{ id: string | number }>;
@@ -1610,7 +1565,6 @@ function renderPlacementWarning(): void {
   const downloadOnly = document.getElementById('download-only-btn') as HTMLButtonElement | null;
   if (downloadOnly) { downloadOnly.classList.toggle('hidden', value === 'download'); downloadOnly.disabled = (document.getElementById('download-youtube-btn') as HTMLButtonElement | null)?.disabled ?? true; }
 }
-// ---- Intent split-button menu --------------------------------------------------------
 function intentMenuItems(): HTMLElement[] { return (Array.from(document.getElementById('intent-menu')?.children ?? []) as HTMLElement[]).filter((item) => !!item.dataset?.intent); }
 function setIntentMenuOpen(open: boolean, focusItem = false): void {
   const menu = document.getElementById('intent-menu'); const trigger = document.getElementById('intent-menu-btn');
@@ -1639,7 +1593,6 @@ function wireIntentMenu(): void {
   });
   document.addEventListener?.('pointerdown', (event) => { if (!menu.classList.contains('hidden') && event.target instanceof Node && !menu.contains(event.target) && !trigger.contains(event.target)) setIntentMenuOpen(false); });
 }
-// ---- Destination bin cards mirror the native select --------------------------------
 function renderBinChoice(): void {
   const value = (document.getElementById('youtube-target-bin') as HTMLSelectElement | null)?.value ?? 'active';
   for (const choice of Array.from(document.getElementById('bin-controls')?.children ?? []) as HTMLElement[]) {
@@ -1707,7 +1660,6 @@ function writeRangeInput(id: 'range-in' | 'range-out', seconds: number | string 
   if (seconds === null || seconds === undefined || seconds === '') { control.value = ''; return; }
   const numeric = typeof seconds === 'number' ? seconds : Number(seconds);
   const formatted = Number.isFinite(numeric) && numeric >= 0 ? formatTimecode(numeric) : null;
-  // Display rounding must never alter the range that will be downloaded.
   control.value = formatted !== null && Number(timecodeSeconds(formatted)) === numeric ? formatted : String(seconds);
 }
 function setPercent(element: HTMLElement | null, property: string, value: number): void { element?.style?.setProperty?.(property, `${Math.max(0, Math.min(100, value)).toFixed(3)}%`); }
@@ -1736,7 +1688,6 @@ function renderRangeUi(): void {
   document.getElementById('range-handle-in')?.setAttribute('aria-valuetext', formatTimecode(envelope?.start ?? 0));
   document.getElementById('range-handle-out')?.setAttribute('aria-valuetext', formatTimecode(envelope?.end ?? duration));
 }
-// Ruler handles write the same In/Out fields a person types into, then take the manual path.
 function currentRangeBounds(): { start: number; end: number } {
   const duration = youtube?.duration ?? 0;
   const start = Number(readRangeInput('range-in')); const end = Number(readRangeInput('range-out'));
@@ -2085,9 +2036,6 @@ function renderCompletedDownloads(): void {
 function renderQueue(): void {
   pruneQueueSelection();
   const container = $('youtube-download-queue'); const restoreFocus = captureListFocus(container, 'queueId'); container.replaceChildren(); queueProgressViews.clear();
-  // Newest-first presentation only: iterate a reversed copy so a fresh enqueue or
-  // retry lands at the top without scrolling. The queue module keeps
-  // FIFO processing; the source array is never reversed in place.
   for (const item of [...queue].reverse()) {
     const source = providerLabel(item.provider, item.platform ?? null);
     const file = item.fileName ? ` File: ${item.fileName}.` : '';
@@ -2141,7 +2089,6 @@ function renderQueue(): void {
       const importLabel = 'Add to Media Pool';
       const importAction = button(importLabel, () => { void fallbackTransfer(item, 'import'); });
       const timelineAction = button('Add to timeline', () => { void fallbackTransfer(item, item.placement); });
-      // Handoff and managed delete of one file are mutually exclusive.
       importAction.disabled = !!importReason || !!item.handingOff || !!item.deleting;
       timelineAction.disabled = !!timelineReason || !!item.handingOff || !!item.deleting;
       if (importReason) { importAction.title = importReason; importAction.setAttribute('aria-label', `${importLabel}. ${importReason}`); }
@@ -2172,8 +2119,6 @@ async function loadStagedMetadata(stage: StagedSelection): Promise<YoutubeMetada
 function enqueueStagedSelection(stage: StagedSelection, metadata: QueueMetadata, mode: QueueInsertionMode = 'tail'): number {
   const choices = 'heights' in metadata ? sourceQualityChoices(stage.provider, metadata.heights) : undefined;
   const context = 'files' in metadata ? { files: metadata.files, kind: metadata.kind } : { choices };
-  // Capture click-time requested values, then resolve through the session. Reads
-  // of live defaults must not change the queued snapshot while metadata loads.
   const snapshotSession = new ItemOutputSession();
   const requested = { ...stage.snapshot, ...stage.overrides };
   snapshotSession.select({ provider: stage.provider, kind: stage.pexelsKind });
@@ -2215,7 +2160,7 @@ async function enqueueSelected(): Promise<void> {
     try {
       const metadata = await loadStagedMetadata(stage);
       added += enqueueStagedSelection(outputSession.staged.get(stage.key) ?? stage, metadata);
-      outputSession.unstage(stage.key); // successful metadata includes duplicates already represented in Queue
+      outputSession.unstage(stage.key);
     } catch (error) { failures.push(`${stage.title}: ${(error as Error).message}`); }
   }
   selectedQueueLoadBusy = false;
@@ -2282,7 +2227,6 @@ function setProvider(next: Provider): void {
   $('pexels-credit').classList.toggle('hidden', !isStock(next));
   // Pixabay requires naming the result source wherever results are shown.
   if (isStock(next)) { setOptionalText('stock-credit-lead', next === 'pixabay' ? 'Results from' : 'Media provided by'); setOptionalText('pexels-link', stockLabel(next)); }
-  // The feed toolbar's single live status line carries provider context.
   ($('youtube-search-input') as HTMLInputElement).placeholder = isStock(next) ? `Search ${stockLabel(next)}` : next === 'pinterest' ? 'Search Pinterest or paste a Pin URL' : 'Search permitted sources';
   $('metadata-verified').textContent = isStock(next) ? stockLabel(next) : next === 'social' ? 'Social' : next === 'pinterest' ? 'Pinterest' : 'Verified metadata';
   outputSession.select({ provider: next, kind: stockKind() });
@@ -2392,12 +2336,8 @@ async function historyAction(record: HistoryRecord, action: string): Promise<voi
       const outcome = result.deleted
         ? result.removed ? 'Removed from history and deleted the managed file.' : 'The managed file was deleted. The history entry was kept.'
         : result.removed ? 'Removed from history. The file was kept.' : 'Nothing was removed. The file was kept.';
-      // A removed in-memory record can still fail to persist. Keep the existing
-      // wording for that specific diagnostic; other warnings describe other risks.
-      const message = result.deleted && result.removed && result.warning === 'Download history could not be updated.'
-        ? 'File deleted, but download history could not be updated.'
-        : [outcome, result.warning].filter(Boolean).join(' ');
-      showActionResult(message, result.deleted && result.removed && !result.warning);
+      const message = [result.historyWriteFailed ? 'File deleted, but download history could not be updated.' : outcome, result.warning].filter(Boolean).join(' ');
+      showActionResult(message, result.deleted && result.removed && !result.historyWriteFailed && !result.warning);
     } else if (action === 'reveal') await window.clipdockAPI.historyReveal(record.id);
     else if (action === 'reveal-subtitle') await window.clipdockAPI.historyRevealSubtitle(record.id);
     else if (action === 'source') await window.clipdockAPI.historySource(record.id);
@@ -2570,7 +2510,7 @@ async function deleteSelectedHistory(): Promise<void> {
       if (result.deleted) deleted += 1;
       else if (result.removed) removed += 1;
       else { failed += 1; firstReason ||= result.warning || 'The file could not be deleted safely.'; }
-      const warning = result.warning || (result.deleted && !result.removed ? 'The file was deleted, but its history entry was kept.' : '');
+      const warning = [result.historyWriteFailed ? 'Download history could not be updated.' : '', result.warning || (result.deleted && !result.removed ? 'The file was deleted, but its history entry was kept.' : '')].filter(Boolean).join(' ');
       if ((result.deleted || result.removed) && warning) { warnings += 1; firstWarning ||= warning; }
     } catch (error) { failed += 1; firstReason ||= (error as Error).message; }
   }
@@ -2620,7 +2560,6 @@ function wireHistoryControls(): void {
   document.getElementById('history-availability-filter')?.addEventListener('change', changeHistoryFilters);
   document.getElementById('history-show-more')?.addEventListener('click', () => { historyVisibleCount += HISTORY_BATCH_SIZE; renderHistory(); });
   document.getElementById('history-refresh-btn')?.addEventListener('click', () => { void refreshHistory(); });
-  // Filter chips are the visible face of the two native filter selects.
   for (const [groupId, selectId] of [['history-provider-chips', 'history-provider-filter'], ['history-availability-chips', 'history-availability-filter']] as const) {
     for (const chip of Array.from(document.getElementById(groupId)?.children ?? []) as HTMLButtonElement[]) {
       chip.addEventListener('click', () => {
@@ -2643,7 +2582,7 @@ async function renderHistory(): Promise<void> {
   const filters = historyFilters();
   const matches = filterHistoryRecords(historyRecords, filters.query, filters.provider, filters.availability);
   const visible = matches.slice(0, historyVisibleCount);
-  closeHistoryActions(); // its menu is replaced below
+  closeHistoryActions();
   const restoreFocus = captureListFocus(list, 'recordId');
   list.replaceChildren(); historyHostRefreshers = []; historySelectionViews.clear(); renderHistoryChips();
   renderHistoryStatus();
@@ -2659,8 +2598,6 @@ async function renderHistory(): Promise<void> {
     const availability = record.available ? 'Available' : 'Missing';
     const row = document.createElement('div'); row.className = 'history-row ledger-row history-operation-row'; row.dataset.recordId = record.id; row.dataset.provider = record.provider; row.dataset.state = record.available ? 'available' : 'missing'; row.tabIndex = 0;
     const summary = document.createElement('span'); summary.className = 'history-summary history-source'; summary.dataset.field = 'history-ledger'; summary.textContent = `Source: ${source} · Title: ${record.title} · File: ${record.fileName} · Size: ${formatBytes(record.bytes)} · Status: ${availability}${record.project ? ` · Project: ${record.project}` : ''}`;
-    // Native drag is pointer/OS-bound and cardId-only: available rows drag exactly
-    // their opaque cardId through the existing startCardDrag/startNativeDrag seam.
     const cardId = record.cardId;
     if (record.available && cardId) row.addEventListener('dragstart', (event) => { if (row.draggable) startCardDrag(event, cardId); else event.preventDefault(); });
     const dragHint = document.createElement('span');
@@ -2677,7 +2614,7 @@ async function renderHistory(): Promise<void> {
     };
     summary.append(dragHint); historyHostRefreshers.push(refreshDrag); refreshDrag();
     const more = button('More', () => openHistoryActions(menu, more)); more.className = 'history-actions'; more.setAttribute('aria-label', `Actions for ${record.fileName}`); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
-    const menu = document.createElement('div'); menu.className = 'history-menu hidden operation-actions'; menu.setAttribute('role', 'menu'); menu.title = ''; // An empty title stops the row's drag-reason tooltip from covering the menu.
+    const menu = document.createElement('div'); menu.className = 'history-menu hidden operation-actions'; menu.setAttribute('role', 'menu'); menu.title = '';
     menu.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeHistoryActions(true); if (currentSurface === 'library' && selectedHistoryIds.size) clearHistorySelection(); return; } if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return; const items = (Array.from(menu.children) as HTMLButtonElement[]).filter((item) => !item.disabled); if (!items.length) return; const current = items.indexOf(document.activeElement as HTMLButtonElement); const target = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : event.key === 'ArrowDown' ? (current + 1) % items.length : (current - 1 + items.length) % items.length; event.preventDefault(); items[target].focus(); });
     const historyActions = [['reuse', 'Add to Media Pool'], ['playhead', 'Add at playhead'], ['end', 'Add to timeline end'], ['reveal', 'Reveal in Finder'], ['reveal-subtitle', 'Reveal subtitle'], ['source', 'Open source'], ['copy', 'Copy path'], ['relink', 'Relink…'], ['delete', 'Delete']] as const;
     for (const [action, label] of historyActions) {
@@ -2718,8 +2655,6 @@ function loadHistoryThumbnail(id: string): Promise<string | null> {
   historyThumbnailRequests.set(id, request);
   return request;
 }
-// The visible face of a history row: a contact print, the clip line, and the one or two
-// actions that fit the row's state. Everything else stays in the More menu.
 function appendHistoryRowFace(row: HTMLElement, record: HistoryRecord, more: HTMLButtonElement): void {
   const mini = document.createElement('span'); mini.className = 'mini'; mini.setAttribute('aria-hidden', 'true');
   const poster = document.createElement('img'); poster.alt = ''; const fallback = skylinePoster(record.id); const cached = historyThumbnailCache.get(record.id); poster.src = cached ?? fallback; mini.append(poster);
@@ -2775,8 +2710,6 @@ window.addEventListener('DOMContentLoaded', () => {
   const unsubscribeYoutubeSearch = window.clipdockAPI.onYoutubeSearchPage?.(handleYoutubeSearchPage) ?? (() => undefined);
   const unsubscribeYoutubePreview = window.clipdockAPI.onYoutubePreviewState?.(handleYoutubePreviewState) ?? (() => undefined);
   const unsubscribeResolveQuit = window.clipdockAPI.onResolveQuit(() => {
-    // Invalidate an older in-flight response before rendering the disconnected
-    // snapshot; it must never restore a stale Connected state after Resolve quits.
     statusSession.invalidate();
     // Resolve quit is synchronous: render a safe disconnected snapshot NOW so host
     // actions disable immediately, then let the controlled refresh confirm recovery.
@@ -2821,7 +2754,6 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('first-use-ack')?.addEventListener('click', () => { writePreference('permitted-content-ack', 'true'); const dialog = document.getElementById('first-use-dialog') as HTMLDialogElement | null; try { dialog?.close?.(); } catch { /* fallback dialog has no close method */ } dialog?.removeAttribute?.('open'); });
   wirePreviewControls();
   document.addEventListener?.('pointerdown', (event) => { if (openHistoryMenu && event.target instanceof Node && !openHistoryMenu.contains(event.target) && event.target !== historyMenuTrigger) closeHistoryActions(); });
-  // The common-output panel is a dropdown in the sheet head: a click elsewhere folds it.
   document.addEventListener?.('pointerdown', (event) => { const common = document.getElementById('common-output') as HTMLDetailsElement | null; if (common?.open && event.target instanceof Node && !common.contains(event.target)) common.open = false; });
   ($('youtube-search-input') as HTMLInputElement).addEventListener('input', () => {
     if (provider !== 'youtube' || youtubeSearchPending === null) return;

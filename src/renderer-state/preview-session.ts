@@ -74,14 +74,11 @@ export class PreviewSession<Target> {
     return { provider, closeToken };
   }
 
-  // Main sends no acknowledgement for a close that did not succeed.
   closeSettled(token: object, closed: boolean): void {
     if (!closed) this.#pendingCloses.delete(token);
   }
 
   receiveYoutubeState(signal: YoutubePreviewSignal): YoutubePreviewOutcome {
-    // Main acknowledges each successful renderer close in IPC order. That event
-    // belongs to the stopped lifecycle, even if another preview is now active.
     if (signal.state === 'closed' && signal.reason === 'closed' && this.#pendingCloses.size) {
       this.#pendingCloses.delete(this.#pendingCloses.values().next().value!);
       return 'acknowledged';

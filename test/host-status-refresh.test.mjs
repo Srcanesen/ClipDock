@@ -290,6 +290,7 @@ test('hidden state stops the poll; becoming visible restarts one poll and refres
 
   h.document.visibilityState = 'visible';
   h.fireVisibilityChange();
+  h.fireVisibilityChange();
   assert.equal(h.intervalCount(), 1); // exactly one poll restarted
   assert.equal(h.timeoutCount(), 1);  // immediate refresh debounce
   h.advance(REFRESH_DEBOUNCE_MS);

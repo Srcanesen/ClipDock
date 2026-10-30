@@ -80,7 +80,6 @@ const SOCIAL_ERRORS = new Set([
 
 export function discoverYtdlp(env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':')): string | null {
   const names = platform === 'win32' ? ['yt-dlp.exe', 'yt-dlp.bat'] : ['yt-dlp'];
-  // The override allows any executable absolute path (no version check).
   const configured = env.CLIPDOCK_YTDLP_PATH;
   if (configured && isAbsolute(configured) && executable(configured)) return configured;
   return discoverBinary(names, null, { env, platform, pathEntries, extraCandidates: installCandidates('yt-dlp', env, platform, {programDir: 'yt-dlp', localAppDataDir: 'yt-dlp'}) });
@@ -493,8 +492,6 @@ export class YtdlpWorker {
     if (!query) throw new Error('Enter 2–100 characters to search YouTube.');
     if (typeof page !== 'number' || !Number.isInteger(page) || page < 1 || page > 3) throw new Error('Invalid search request.');
     const mode = orientation === 'vertical' ? 'shorts' : 'videos';
-    // All and Horizontal share the original, unfiltered videos corpus. Shorts
-    // has a different provider request and must never reuse that corpus.
     const key = JSON.stringify([query.toLocaleLowerCase('en-US'), mode]);
     const cached = this.searchCache.get(key);
     if (cached) {
@@ -646,7 +643,6 @@ export class YtdlpWorker {
       let raw: Record<string, unknown>; try { raw = JSON.parse(result.stdout.trim()) as Record<string, unknown>; } catch { this.log('social metadata returned invalid JSON'); throw new Error('Could not load public social video metadata.'); }
       const entry = socialVideoEntry(raw);
       const metadata = narrowSocialMetadata(raw, entry, valid, null);
-      // Reused by the download, as for YouTube; ClipDock owns the single URL retry.
       const reusable = {...raw}; delete reusable.webpage_url;
       this.metadataStore.raw.set(valid.url, JSON.stringify(reusable));
       this.metadataStore.social.set(valid.url, {metadata, thumbnail: typeof entry.thumbnail === 'string' ? entry.thumbnail : null});
@@ -663,16 +659,11 @@ export class YtdlpWorker {
     const selection = options.selection === undefined || options.selection === null ? null : validateRange(options.selection, null);
     if (!validOptions(options) || (options.selection && !selection) || !format) throw new Error('Invalid download request.');
     const selectedFormat = format;
-    // Fast output: at 1080p and below prefer YouTube's H.264/AAC rendition at the best
-    // available height, so media prep can keep the file as-is instead of transcoding.
     const fastHeight = options.mediaMode === 'video' && options.preferH264 === true && typeof quality === 'string' && /^\d+p$/.test(quality) ? Number(quality.slice(0, -1)) : null;
     const formatSort = fastHeight !== null && fastHeight <= 1080 ? ['-S', `res:${fastHeight},vcodec:h264,acodec:aac`] : [];
     const ffmpegPath = this.ffmpegPath!;
     const jobDir = join(this.sessionDir, `download-${randomUUID()}`);
     const infoKey = 'videoId' in valid ? valid.videoId : valid.url;
-    // A stall is silence, not slowness: every progress line rearms the window. Silent
-    // phases (merge, audio extraction, a range's keyframe re-encode) scale with the media;
-    // an unknown duration is budgeted as one hour.
     const knownDuration = 'videoId' in valid ? this.metadataStore.youtube.get(valid.videoId)?.duration : this.metadataStore.social.get(valid.url)?.metadata.duration;
     const mediaSeconds = selection ? selection.end - selection.start : knownDuration ?? 3600;
     const stallMs = Math.max(10 * 60 * 1000, mediaSeconds * (selection ? 4000 : 500));
@@ -779,8 +770,6 @@ export class YtdlpWorker {
           const pendingSubtitle = selection ? this.begin([...BASE, '--quiet', '--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', subtitleLanguage, '--convert-subs', 'srt', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', literalPath(ffmpegPath, this.platform), '-o', literalPath(join(jobDir.replace(/%/g, '%%'), '%(title).150B [%(id)s].%(ext)s'), this.platform, true), valid.url], { jobDir, kind: 'download', emit, jobId, stallMs }) : Promise.resolve({code: 0});
           const subtitle = await pendingSubtitle;
           context.check();
-          // Full clips use the existing cue normalizer to write SRT directly.
-          // This avoids a failing subtitle converter poisoning the media exit code.
           const directory = this.session.jobDirectories.get(jobDir)!;
           const candidates = readdirSync(directory.verify()).filter(name => /\.srt$/i.test(name) || (!selection && /\.vtt$/i.test(name))).filter(name => {
             const path = directory.child(name);

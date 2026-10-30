@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { tryAcquireFileLock } from './file-lock';
 import { validatePinterestUrl, validateSocialUrl } from './ytdlp-url';
 import { HistoryThumbnails, type HistoryThumbnailOptions } from './history-thumbnails';
+import type { HistoryDeleteResult } from './shared';
 
 export type HistoryProvider = 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest';
 export type HistorySelection = { start: number; end: number; label: string } | null;
@@ -46,7 +47,6 @@ export function safeHistorySource(provider: HistoryProvider, source: unknown): s
   } catch { return null; }
 }
 
-// Persist opaque source descriptors for local file reuse, never as reloadable URLs.
 function storedHistorySource(provider: HistoryProvider, source: unknown): string | null {
   return provider === 'pinterest' ? validatePinterestUrl(source)?.url ?? null : safeHistorySource(provider, source);
 }
@@ -158,7 +158,6 @@ export class DownloadHistory {
         const trustedRoot = typeof r.trustedRoot === 'string' ? r.trustedRoot : this.legacyRoots.get(r.id);
         return [{ id: r.id, provider: r.provider, source, project: typeof r.project === 'string' ? r.project.slice(0, 200) : null, filePath: r.filePath, managed: r.managed === true, trustedRoot: r.managed === true ? trustedRoot : undefined, fileName: r.fileName.slice(0, 300), bytes: Number.isSafeInteger(r.bytes) && Number(r.bytes) >= 0 ? Number(r.bytes) : 0, assetId: typeof r.assetId === 'string' ? r.assetId.slice(0, 100) : null, title: typeof r.title === 'string' ? r.title.slice(0, 300) : r.fileName.slice(0, 300), creator: typeof r.creator === 'string' ? r.creator.slice(0, 200) : null, profile: typeof r.profile === 'string' ? r.profile.slice(0, 40) : 'original', quality: typeof r.quality === 'string' ? r.quality.slice(0, 80) : null, mediaMode: typeof r.mediaMode === 'string' ? r.mediaMode.slice(0, 20) : 'video', selection, automation: { provider: r.provider, source, selection, chapters }, createdAt, lastUsedAt: Number.isFinite(r.lastUsedAt) ? Number(r.lastUsedAt) : createdAt, subtitlePath }];
       }).slice(0, MAX_RECORDS);
-      // Capture session protection once. Extra fields from the unreleased identity format are discarded above.
       for (const record of this.records) { if (record.managed) this.recordRoot(record); this.captureRecord(record); }
     } catch {
       this.records = [];
@@ -179,13 +178,11 @@ export class DownloadHistory {
     if (!lock) throw new Error('Download history is locked by another writer. Retry after it finishes.');
     let before = this.records;
     try {
-      // Reload while exclusively owning the store, so stale instances cannot lose or resurrect records.
       if (existsSync(this.file) && statSync(this.file).isFile()) {
         const raw = JSON.parse(readFileSync(this.file, 'utf8')) as Store;
         if (raw?.schemaVersion !== 1 || !Array.isArray(raw.records)) throw new Error('Unsupported history store.');
         this.load();
       }
-      // Only our UUID-named metadata attempts are disposable, and only while owning the write lock.
       const prefix = `${basename(this.file)}.`;
       const temps = readdirSync(this.storeDirectory.verify()).filter(name => name.startsWith(prefix) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i.test(name.slice(prefix.length))).map(name => captureEntry(this.storeDirectory, name));
       for (const temp of temps) removeEntry(temp);
@@ -248,15 +245,13 @@ export class DownloadHistory {
     r.filePath = safe; r.fileName = basename(safe); r.bytes = statSync(safe).size; r.managed = retained;
     if (!retained) r.trustedRoot = undefined;
     r.lastUsedAt = Date.now(); this.moveToFront(r); this.save();
-    // Explicit relink admits this selected media inode after persistence succeeds.
-    // Preserve companion authority; transaction reloads still never re-admit files.
     this.captureRecord(r, true);
     this.thumbnails.remove(r.id);
     return this.public(r);
   }
 
   /** Session ownership outlives the history cap and failed metadata writes. Never grant it from location alone. */
-  deleteUnrecorded(filePath: string, trustedRoot: ManagedRoot | undefined, protectedPaths: Iterable<string>, files: { media: OwnedFile | null; subtitle: OwnedFile | null }, busy = false, subtitlePath?: string): { deleted: boolean; removed: boolean; warning?: string } {
+  deleteUnrecorded(filePath: string, trustedRoot: ManagedRoot | undefined, protectedPaths: Iterable<string>, files: { media: OwnedFile | null; subtitle: OwnedFile | null }, busy = false, subtitlePath?: string): HistoryDeleteResult {
     return this.transaction(() => {
       if (busy) throw new Error('Wait for active downloads or media preparation to finish.');
       const safe = regular(filePath);
@@ -273,10 +268,10 @@ export class DownloadHistory {
       return warning ? { deleted: true, removed: false, warning } : { deleted: true, removed: false };
     });
   }
-  delete(id: unknown, protectedPaths: Iterable<string>, busy = false, preserveOnFailure = false): { deleted: boolean; removed: boolean; warning?: string } {
+  delete(id: unknown, protectedPaths: Iterable<string>, busy = false, preserveOnFailure = false): HistoryDeleteResult {
     return this.transaction(() => this.deleteRecord(id, protectedPaths, busy, preserveOnFailure));
   }
-  private deleteRecord(id: unknown, protectedPaths: Iterable<string>, busy: boolean, preserveOnFailure: boolean): { deleted: boolean; removed: boolean; warning?: string } {
+  private deleteRecord(id: unknown, protectedPaths: Iterable<string>, busy: boolean, preserveOnFailure: boolean): HistoryDeleteResult {
     if (busy) throw new Error('Wait for active downloads or media preparation to finish.');
     const index = typeof id === 'string' ? this.records.findIndex((r) => r.id === id) : -1; if (index < 0) return { deleted: false, removed: false };
     const r = this.records[index]; const protectedSet = new Set([...protectedPaths].flatMap((p) => { const safe = regular(p); return safe ? [safe] : []; }));
@@ -288,8 +283,6 @@ export class DownloadHistory {
       if (owned && owned.path === safe && removeOwned(owned) === 'removed') deleted = true;
       else warning = 'Media changed or was replaced; preserved.';
     }
-    // The subtitle companion is removed only when the media file itself was
-    // deleted and it passes the same managed-root/symlink/protection checks.
     if (deleted && r.subtitlePath) {
       const companion = regular(r.subtitlePath);
       if (!companion && this.identities.get(r.id)?.subtitle) warning = 'Media deleted, but its subtitle could not be deleted.';
@@ -300,7 +293,7 @@ export class DownloadHistory {
     if (preserveOnFailure && !deleted) return warning ? { deleted: false, removed: false, warning } : { deleted: false, removed: false };
     this.records.splice(index, 1);
     this.thumbnails.remove(r.id);
-    try { this.save(); } catch (error) { if (deleted) return { deleted: true, removed: true, warning: [warning, 'Download history could not be updated.'].filter(Boolean).join(' ') }; throw error; }
+    try { this.save(); } catch (error) { if (deleted) return { deleted: true, removed: true, historyWriteFailed: true, ...(warning ? { warning } : {}) }; throw error; }
     return warning ? { deleted, removed: true, warning } : { deleted, removed: true };
   }
 }

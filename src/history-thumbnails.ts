@@ -10,7 +10,6 @@ export type HistoryThumbnailOptions = {
   tools: () => Promise<{ ffmpegPath: string | null; ffprobePath: string | null }>;
   spawn?: Spawn;
 };
-// The largest History box is 112 × 63 CSS px. JPEG q=4 at Retina size.
 const MAX_BYTES = 32 * 1024;
 const PREFIX = 'clipdock-history-';
 const OWN_NAME = /^clipdock-history-[a-f0-9]{64}(?:\.jpg|\.[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.tmp)$/;

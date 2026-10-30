@@ -309,3 +309,13 @@ test('gate: card failure after persisted history and an ancestor swap preserves 
   assert.equal(readFileSync(join(relocated, 'social', 'original.mp4'), 'utf8'), 'downloaded');
   assert.equal(f.events.filter(event => event.state === 'completed').length, 0);
 });
+
+test('gate: persisted History retains media when card binding fails without a filesystem swap', async t => {
+  const f = fixture(t, 'social');
+  f.dependencies.completion.registerCard = () => { throw new Error('Card binding failed.'); };
+  await assert.rejects(f.start('original'), { message: 'Card binding failed.' });
+  assert.equal(f.history.list().length, 1);
+  assert.equal(f.history.list()[0].fileName, 'original.mp4');
+  assert.equal(readFileSync(f.original, 'utf8'), 'downloaded');
+  assert.equal(f.events.filter(event => event.state === 'completed').length, 0);
+});

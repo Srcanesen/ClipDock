@@ -61,9 +61,6 @@ export interface QueueItem {
   handingOff?: boolean;
 }
 
-// Key format is provider identity: `provider:id` except stock sources which include kind
-// (`pexels:kind:id`) so photo/video pages cannot move a selection onto the wrong kind.
-// This string is the identity for staged selections and per-card output and option state.
 export function resultKeyFor(providerValue: Provider, id: string, kind: PexelsKind = 'video'): string {
   return `${providerValue}:${isStock(providerValue) ? `${kind}:` : ''}${id}`;
 }
@@ -193,7 +190,6 @@ export class DownloadQueue {
     const index = this.queue.findIndex((item) => item.queueId === id);
     if (index >= 0) {
       const [item] = this.queue.splice(index, 1);
-      // Removing a row keeps its completed download in This session; deleting its file does not.
       if (item.status !== 'completed' || item.fileDeleted || item.deleting) this.sessionItems = this.sessionItems.filter(entry => entry !== item);
       this.changed();
     }

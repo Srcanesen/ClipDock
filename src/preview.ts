@@ -177,8 +177,6 @@ const PREVIEW_HISTORY: PreviewHistoryRecord[] = [
   { id: 'preview-history-4', provider: 'youtube', source: 'https://www.youtube.com/watch?v=9bZkp7q19f0', project: null, fileName: 'Preview second video [9bZkp7q19f0].mp4', bytes: 5_000_000, assetId: '9bZkp7q19f0', title: 'Preview second video', creator: null, profile: 'original', quality: '1080p', mediaMode: 'video', selection: null, automation: { provider: 'youtube', source: 'https://www.youtube.com/watch?v=9bZkp7q19f0', selection: null, chapters: [] }, createdAt: Date.now() - 345_600_000, lastUsedAt: Date.now() - 345_600_000, available: false },
 ];
 
-// Sample card the preview file picker returns in every fixture, so each fixture
-// can exercise the controlled error results below.
 const SAMPLE_CARD: PreviewSelectResult = { canceled: false, cardId: 'preview-card-1', fileName: 'sample-clip.mp4' };
 
 const IMPORT_OK: PreviewTransferResult = {
@@ -252,7 +250,6 @@ function previewDimensionsMatch(item: {width: number | null; height: number | nu
   return orientation === 'vertical' ? height > width : orientation === 'horizontal' ? width > height : width === height;
 }
 
-// Metadata shape per search kind; carousels queue each item separately.
 function previewPinterestItems(found: PreviewPinterestSearchItem): PreviewPinterestItem[] {
   if (found.kind === 'carousel') {
     return [
@@ -316,8 +313,6 @@ if (previewParam !== null) {
     searchSubtitles: async () => [{start: 0, end: 2, text: 'Preview subtitle'}],
     historyRevealSubtitle: async () => false,
     getStatus: async () => snapshot,
-    // Browser preview has no real directory dialog: status reports the default and
-    // choosing reports a selected fixed folder, so the Settings folder UI stays exercisable.
     downloadFolderStatus: async () => ({ folder: '/tmp/ClipDock (preview)', userSelected: false }),
     chooseDownloadFolder: async () => ({ folder: '/tmp/ClipDock (preview)', userSelected: true }),
     onResolveQuit: () => () => undefined,
@@ -431,7 +426,6 @@ if (previewParam !== null) {
     },
     cancelPinterest: async (jobId) => { if (previewDownloadJob !== jobId) return false; previewDownloadJob = null; pinterestListener?.({ jobId, state: 'cancelled', percent: null, message: 'Download cancelled.' }); return true; },
     onPinterestEvent: (callback) => { pinterestListener = callback; return () => { pinterestListener = null; }; },
-    // Browser preview: truthfully report the requested state; no real window stacking.
     setAlwaysOnTop: async (pinned) => pinned,
     pexelsKeyStatus: async () => ({ connected: previewParam === 'pexels-photo' || previewParam === 'pexels-video', persisted: true, message: 'Connected · saved securely' }),
     setPexelsKey: async () => ({ connected: true, persisted: true, message: 'Connected · saved securely' }), clearPexelsKey: async () => ({ connected: false, persisted: false, message: 'Disconnected.' }),

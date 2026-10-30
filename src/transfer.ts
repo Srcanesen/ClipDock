@@ -48,8 +48,6 @@ export interface Transfer {
 }
 export type TimelineAutomation = { provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; selection: { start: number; end: number; label: string } | null; chapters: Array<{ start: number; end: number; title: string }> };
 
-// Duck-typed Resolve scripting surface (mirrors status-provider's approach: the
-// native module returns plain objects; we cast narrowly where we call).
 interface ResolveLike {
   OpenPage(page: string): Promise<unknown> | unknown;
   GetMediaStorage(): Promise<unknown> | unknown;
@@ -408,15 +406,12 @@ export function createTransfer(
       const wanted = await pathKey(filePath);
       const existing = index.clips.get(wanted);
       if (existing) {
-        // Resolve can remove, move or relink a remembered item between transfers.
         if (list.includes(existing)) {
           const candidate = await clipFilePath(existing);
           if (candidate !== null && await pathKey(candidate) === wanted) return existing;
         }
         binIndex = null;
       }
-      // A miss or failed validation needs current properties for every member,
-      // including previously indexed items that may now point at the wanted file.
       const refreshed = indexFor(project, folder);
       refreshed.clips.clear();
       for (const clip of list) {
@@ -598,7 +593,6 @@ export function createTransfer(
         return { ok: false, kind: 'bridge-error', message: 'Resolve returned no MediaPool object.' };
       }
 
-      // Resolve the destination bin; reuse an existing clip there, otherwise self-import.
       const ctx = await openTargetContext(mediaPool, targetBin, checkDestination);
       if ('error' in ctx) { binIndex = null; return ctx.error; }
       try {

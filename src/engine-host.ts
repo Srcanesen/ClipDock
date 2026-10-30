@@ -1,4 +1,3 @@
-// Electron-free owner of engine readiness, worker roles and managed operation lifetime.
 import type { SearchOptions } from './renderer-state/search-session';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
@@ -96,7 +95,6 @@ export function createEngineHost(deps: EngineHostDependencies) {
     displayedFallback = root.verify();
   }
   function createWorkers(engines: Engines) {
-    // Each role admits one job at a time. Metadata/search cannot share download workers.
     const yt = (role: string) => { const worker = deps.workers.youtube(engines, path.join(deps.runtimeRoot, role)); lifecycle.push(worker); return worker; };
     const searchSnapshots = createPinterestSearchSnapshotStore();
     const pin = (role: string) => { const worker = deps.workers.pinterest(engines, path.join(deps.runtimeRoot, role), searchSnapshots); lifecycle.push(worker); return worker; };
@@ -266,7 +264,6 @@ export function createEngineHost(deps: EngineHostDependencies) {
     credential,
     async handoff<T>(operation: () => T | Promise<T>): Promise<T> {
       assertActive();
-      // Register before entering native code, which can itself trigger ResolveQuit.
       const pending = operations.run(() => Promise.resolve().then(operation));
       handoffs.add(pending);
       try { return await pending; } finally { handoffs.delete(pending); }

@@ -315,8 +315,7 @@ export class MacKeychainPexelsCredentialStore implements PexelsCredentialPersist
     const deadline = setTimeout(() => rollback.abort(), KEYCHAIN_ROLLBACK_TIMEOUT_MS);
     try {
       if (previous === null) {
-        const result = await this.#deleteStored(KEYCHAIN_ROLLBACK_TIMEOUT_MS, rollback.signal);
-        if (result.code !== 0 && result.code !== KEYCHAIN_NOT_FOUND) return;
+        await this.#deleteStored(KEYCHAIN_ROLLBACK_TIMEOUT_MS, rollback.signal);
         return;
       }
       if (!await this.#writeAndVerify(previous, KEYCHAIN_ROLLBACK_TIMEOUT_MS, rollback.signal)) return;

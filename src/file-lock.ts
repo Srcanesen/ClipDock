@@ -1,4 +1,3 @@
-// Cooperative process locks. A live owner is never displaced, regardless of age.
 import { closeSync, fstatSync, linkSync, lstatSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { uptime } from 'node:os';
@@ -27,10 +26,7 @@ function snapshot(file: string): Snapshot | null {
   }
 }
 function recoverable(owner: Snapshot): boolean {
-  // Previous versions created the lock before writing its owner. Preserve a
-  // possible writer mid-write, but recover old empty/corrupt files after 60s.
   if (owner.pid === null) return Date.now() - owner.mtimeMs >= LOCK_STALE_MS;
-  // An owner from a previous boot is dead even if the OS has reused its PID.
   if (owner.createdAt !== null && owner.createdAt < Date.now() - uptime() * 1000 - BOOT_MARGIN_MS) return true;
   try { process.kill(owner.pid, 0); return false; }
   catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
@@ -49,8 +45,6 @@ function publish(file: string): FileLock | null {
     const createdAt = Date.now();
     const encoded = JSON.stringify({pid: process.pid, token: randomUUID(), createdAt});
     writeFileSync(fd, encoded);
-    // Capture release authority before publication; no fallible pathname read
-    // or candidate cleanup may strand a successfully linked live-owner lock.
     const info = fstatSync(fd);
     owner = {dev: info.dev, ino: info.ino, mtimeMs: info.mtimeMs, encoded, pid: process.pid, createdAt};
     try { linkSync(candidate, file); linked = true; }

@@ -188,7 +188,6 @@ export function createMediaPrep(options: Options = {}) {
         verifyFile(prepared); verifySource(ownedSource);
         return validated(source, output, request.profile, attempt) ? prepared : null;
         };
-        // A copy can expose timing its container hid (Matroska reports timebase rates for VFR): re-encode once.
         let final = action;
         let prepared = await convert(action);
         if (!prepared && action !== 'transcode') prepared = await convert(final = 'transcode');

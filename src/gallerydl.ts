@@ -602,7 +602,6 @@ function searchStderrFailed(stderr: string): boolean {
 export class GalleryDlWorker {
   private readonly jobs = new ProviderJobRunner({cancelledMessage: 'Download cancelled.', busyMessage: 'Another Pinterest job is already active.', disposedMessage: 'Pinterest worker is shut down.'});
   private current: (JobDetails & {context: ProviderJobContext}) | null = null;
-  // Only the named provider is pruned by cleanup; a selected session root remains immutable.
   private readonly session: ProviderSession;
   private readonly platform: NodeJS.Platform;
   private readonly processSpawn: Spawn;
@@ -668,7 +667,6 @@ export class GalleryDlWorker {
     const env = ffmpegDir
       ? {...literal ?? process.env, PATH: `${ffmpegDir}${inheritedPath ? (this.platform === 'win32' ? ';' : ':') : ''}${inheritedPath}`}
       : literal;
-    // Single shell:false spawn site via provider-platform
     const bounded = spawnBounded(this.assertAvailable(), args, this.spawn as unknown as import('./provider-platform').Spawn, {
       detached: true,
       env,

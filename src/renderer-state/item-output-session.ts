@@ -1,7 +1,5 @@
 import { cloneOutputDefaults, cloneOutputOverrides, createCommonDefaults, normalizeSourceOutput, outputOverridesFrom, resolvePexelsRendition, resolveQualityChoice, isStock, type OutputDefaults, type OutputOverrides, type Provider, type PexelsKind, type Rendition, type ResultSelection, type StagedSelection } from './output-model';
 
-// Renderer callers read these helpers through the session module; output-model is
-// an implementation detail shared with the range and rendition calculations.
 export { cardOutputSummary, cardQualityLabel, resultOptionsId, profileLabel, intentLabel, cloneOutputDefaults, cloneOutputOverrides, normalizeSourceOutput, transitionSourceSelection, selectSourceSegments, resolveSourceSelection, selectionEnvelope, renditionHeight, resolveQualityChoice, resolvePexelsRendition, sourceQualityChoices, isStock, type StockProvider } from './output-model';
 export type { OutputDefaults, OutputOverrides, SourceSelection, ResultSelection, StagedSelection } from './output-model';
 
@@ -15,9 +13,6 @@ type Selection = { provider: Provider; kind?: PexelsKind } | { clear: Provider }
 type OutputContext = { photo?: boolean; choices?: string[]; files?: Rendition[]; kind?: PexelsKind };
 type SavedOutput = { snapshot: OutputDefaults; overrides: OutputOverrides };
 
-// The only raw-control validation path, used for defaults, cards and inspector.
-// Invalid fields leave their previous requested values unchanged. Rendition IDs
-// are opaque; a range plan preserves even unfinished or invalid text as intent.
 function validateOutput(raw: RawItemOutput, provider: Provider): OutputOverrides {
   const value: OutputOverrides = {};
   if (raw.profile === 'original' || raw.profile === 'fast' || raw.profile === 'editing') value.profile = raw.profile;
@@ -60,13 +55,11 @@ export class ItemOutputSession {
   get defaults(): OutputDefaults { return cloneOutputDefaults(this.common); }
   get selected(): SelectedResult | null { return this.identity ? { ...this.identity } : null; }
   get staged(): ReadonlyMap<string, StagedSelection> { return new Map([...this.stages].map(([key, stage]) => [key, copyStage(stage)])); }
-  // Copy-free reads for per-row rendering; `staged` copies every stage.
   get stagedCount(): number { return this.stages.size; }
   isStaged(key: string): boolean { return this.stages.has(key); }
 
   select(next: Selection): OutputDefaults {
     if (next && 'source' in next) {
-      // Range intent belongs to one video; the other detached edits survive loads.
       if (!this.identity && this.draft.selectionPlan?.source !== next.source) {
         delete this.draft.selection; delete this.draft.selectionPlan;
       }

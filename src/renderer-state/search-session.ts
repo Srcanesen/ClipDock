@@ -33,7 +33,6 @@ export function createGenerationGuard(initial = 0): GenerationGuard {
   };
 }
 
-// Search options are shared by the browser and main-owned provider boundaries.
 export type Orientation = 'all' | 'vertical' | 'horizontal' | 'square';
 export type SearchOptions = { orientation?: Orientation };
 export const ORIENTATION_SUPPORT = {

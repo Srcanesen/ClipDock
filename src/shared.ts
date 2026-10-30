@@ -1,29 +1,19 @@
-// Shared IPC contract between main, preload and renderer.
-// Preload imports ONLY types from this module (`import type`), which TypeScript
-// erases at compile time. The renderer is a plain browser script with no imports.
-
 import type { Orientation, SearchOptions } from './renderer-state/search-session';
 export type { Orientation, SearchOptions };
 import type { StatusSnapshot } from './status';
 import type { TargetBin, TimelinePlacement, TransferResult } from './transfer';
-// Re-export so main/preload import the narrow transfer types from the shared IPC contract.
 export type { TargetBin, TimelinePlacement };
 
-// Single contract source: canonical values live in scripts/lib/contracts.mjs
 // @ts-ignore — plain .mjs contract module, no declaration file needed; re-exported as canonical runtime values
 import { IPC_CHANNELS as CONTRACT_IPC_CHANNELS } from '../scripts/lib/contracts.mjs';
 export const IPC_CHANNELS = CONTRACT_IPC_CHANNELS as typeof CONTRACT_IPC_CHANNELS;
-// Re-export contract constants for runtime consumers that import from shared
-// (and for type parity checks). The verifier imports the contracts directly.
-// @ts-ignore — contracts.mjs is plain JS
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 // @ts-expect-error no types for .mjs contract
 export { PLUGIN_ID, DOWNLOAD_INTENTS, MEDIA_PROFILES, DIST_REQUIRED_FILES, REQUIRED_HTML_IDS, REQUIRED_HTML_IDS_FLAT } from '../scripts/lib/contracts.mjs';
 
 
 
 /** History deletion also invalidates any session cards bound to the removed record. */
-export type HistoryDeleteResult = { deleted: boolean; removed: boolean; warning?: string; removedCardIds?: string[] };
+export type HistoryDeleteResult = { deleted: boolean; removed: boolean; historyWriteFailed?: true; warning?: string; removedCardIds?: string[] };
 
 /** Result of selecting a local file. The absolute path NEVER crosses IPC: only a cardId. */
 export type SelectFileResult = { canceled: true } | { canceled: false; cardId: string; fileName: string };

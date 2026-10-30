@@ -19,7 +19,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const WorkflowIntegration = require('./WorkflowIntegration.node');
 
 import { IPC_CHANNELS, PLUGIN_ID } from './shared';
@@ -79,7 +78,6 @@ function requireClipdockSender(event: IpcMainInvokeEvent): void {
   }
 }
 
-/** Trusted-sender check shaped for the Electron-free handler seams (see main-process.ts). */
 const requireTrustedSender = (event: unknown): void => requireClipdockSender(event as IpcMainInvokeEvent);
 
 // Bridge-status provider. main.ts is the ONLY owner of WorkflowIntegration.node:
@@ -399,7 +397,6 @@ async function restoreStockCredential(provider: StockProvider, client: Pick<Stoc
   }
 }
 
-/** Each stock provider has its own key, Keychain item and IPC channels; the flows are identical. */
 function stockHandlers(provider: StockProvider, label: string, safeExternal: (url: unknown) => string | null) {
   const credentials = stockCredentials[provider];
   return {
@@ -560,15 +557,12 @@ function createWindow(): void {
     app.quit();
   });
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
-  // mainWindow.webContents.openDevTools(); // uncomment for development
 }
 
 app.whenReady().then(() => {
   // One panel process per persistent store also prevents cross-process workspace cleanup during a live download.
   const instanceApp = app as typeof app & { requestSingleInstanceLock(): boolean };
   if (!instanceApp.requestSingleInstanceLock()) { app.quit(); return; }
-  // Handler registration and window creation stay synchronous; credential
-  // restoration continues in the background afterwards.
   runStartupSequence({
     registerHandlers: () => {
       registerExternalOpenHandlers();

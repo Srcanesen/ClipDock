@@ -119,7 +119,6 @@ export class StockClient {
   #connectionMessage = 'Disconnected.';
   #downloads: ProviderJobRunner;
   #apiJobs: ProviderJobRunner;
-  // Metadata steps of download jobs; browse cancellation must not reach them.
   #jobApiJobs: ProviderJobRunner;
   #metadataCache: LruCache<string, Record<string, unknown>>;
   #metadataPending = new Map<string, SharedMetadataRequest>();
@@ -225,7 +224,6 @@ export class StockClient {
 
   abortApiRequests(): boolean {
     const pending = this.#apiJobs.cancel();
-    // Retries must not attach to a request whose cancellation cleanup is pending.
     this.#metadataPending.clear();
     return pending !== null;
   }
@@ -284,7 +282,6 @@ export class StockClient {
     const detach = (): void => {
       shared.consumers.delete(consumer);
       if (!shared.settled && !shared.consumers.size && !shared.controller.signal.aborted) {
-        // Remove synchronously: an immediate retry must never join abandoned work.
         if (this.#metadataPending.get(cacheKey) === shared) this.#metadataPending.delete(cacheKey);
         shared.controller.abort(signal.reason);
         // The last consumer owns upstream termination, including a late HTTP body.
@@ -309,7 +306,6 @@ export class StockClient {
     try {
       response = await this.#fetchResponse(target, { headers: this.#source.auth === 'header' ? { Authorization: key } : {}, signal, redirect: 'error' }, signal);
     } catch {
-      // Never surface the underlying error: with query authentication it can carry the key.
       if (signal.aborted) throw new Error(this.#cancelled);
       throw new Error(`${label} request failed.`);
     }
@@ -349,7 +345,6 @@ export class StockClient {
     }
     if (!Number.isInteger(page) || (page as number) < 1 || (page as number) > maxPage) throw new Error(`${this.#label} page must be between 1 and ${maxPage}.`);
     return this.#runApi('search', async (signal, metadataReady) => {
-      // Search hits already carry the provider's full asset; opening one then costs no request.
       const seed = (raw: Record<string, unknown>): Array<[URL, Record<string, unknown>]> => this.#source.loadEntries(raw, kind as StockKind)
         .flatMap(([id, entry]): Array<[URL, Record<string, unknown>]> => this.#source.parseAsset(entry, kind as StockKind, id) ? [[this.#source.loadUrl(kind as StockKind, id), entry]] : []);
       const raw = await this.#requestJson(this.#source.searchUrl(kind as StockKind, query.trim(), page as number, orientation), signal, this.#key, true, false, seed);
