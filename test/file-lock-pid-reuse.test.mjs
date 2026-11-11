@@ -8,12 +8,13 @@ import {test} from 'node:test';
 
 const require = createRequire(import.meta.url);
 const now = Date.now(), self = 4000, pid = 54321;
-function load({platform = 'darwin', execFileSync = () => '00:00', kill = () => true} = {}) {
+const lockCreatedAt = now - 370000;
+function load({platform = 'darwin', execFileSync = () => '00:00', kill = () => true, clock = () => now} = {}) {
   const module = {exports: {}};
   vm.runInNewContext(fs.readFileSync(new URL('../dist/file-lock.js', import.meta.url), 'utf8'), {
     module, exports: module.exports,
     process: {pid: self, platform, kill},
-    Date: class extends Date {static now() {return now;}},
+    Date: class extends Date {static now() {return clock();}},
     require: id => id === 'node:child_process' ? {execFileSync} : id === 'node:os' ? {uptime: () => 3600} : require(id),
   });
   assert.equal(typeof module.exports.probeProcessStart, 'function', 'export the injectable process-start probe');
@@ -24,14 +25,14 @@ function fixture(t, options) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clipdock-pid-reuse-')));
   t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
   const file = path.join(dir, 'writer.lock');
-  const owner = JSON.stringify({pid, token: 'crashed-owner', createdAt: now - 10000});
+  const owner = JSON.stringify({pid, token: 'crashed-owner', createdAt: lockCreatedAt});
   return {api, file, owner, acquire: probe => api.tryAcquireFileLock(file, 0, probe)};
 }
 
-test('a reused live PID that started after lock creation is recovered', t => {
+test('a reused live PID that started six minutes after lock creation is recovered', t => {
   const {file, owner, acquire} = fixture(t);
   fs.writeFileSync(file, owner);
-  const probe = t.mock.fn(ownerPid => {assert.equal(ownerPid, pid); return now - 2000;});
+  const probe = t.mock.fn(ownerPid => {assert.equal(ownerPid, pid); return lockCreatedAt + 6 * 60 * 1000;});
   const acquired = acquire(probe);
   assert.equal(typeof acquired?.release, 'function');
   assert.equal(probe.mock.callCount(), 3, 'recheck under the recovery guard and before unlink');
@@ -55,7 +56,18 @@ test('acquisition defaults to the real process-start probe', t => {
   assert.equal(fs.existsSync(file), false);
 });
 
-for (const [kind, startedAt] of [['before', now - 20000], ['at', now - 10000], ['unknown at', undefined]]) {
+for (const minutes of [4, 5]) {
+  test(`a live PID starting ${minutes} minutes after lock creation keeps blocking despite clock skew`, t => {
+    const {file, owner, acquire} = fixture(t);
+    fs.writeFileSync(file, owner);
+    const probe = t.mock.fn(() => lockCreatedAt + minutes * 60 * 1000);
+    assert.equal(acquire(probe), null);
+    assert.equal(probe.mock.callCount(), 1);
+    assert.equal(fs.readFileSync(file, 'utf8'), owner);
+  });
+}
+
+for (const [kind, startedAt] of [['before', lockCreatedAt - 10000], ['at', lockCreatedAt], ['unknown at', undefined]]) {
   test(`a live PID whose start is ${kind} lock creation keeps blocking`, t => {
     const {file, owner, acquire} = fixture(t);
     fs.writeFileSync(file, owner);
@@ -144,6 +156,7 @@ for (const platform of ['darwin', 'linux']) {
       assert.equal(calls[0][0], 'ps');
       assert.deepEqual(Array.from(calls[0][1]), ['-o', 'etime=', '-p', String(pid)]);
       assert.equal(calls[0][2].timeout, 2000);
+      assert.equal(calls[0][2].killSignal, 'SIGKILL');
       assert.equal(calls[0][2].shell, false);
     });
   }
@@ -157,11 +170,34 @@ test('Windows probes the process start in epoch milliseconds without opening a w
   assert.equal(calls[0][0], 'powershell');
   assert.deepEqual(Array.from(calls[0][1]), ['-NoProfile', '-NonInteractive', '-Command', `[DateTimeOffset]::new((Get-Process -Id ${pid}).StartTime).ToUnixTimeMilliseconds()`]);
   assert.equal(calls[0][2].timeout, 2000);
+  assert.equal(calls[0][2].killSignal, 'SIGKILL');
   assert.equal(calls[0][2].shell, false);
   assert.equal(calls[0][2].windowsHide, true);
 });
 
 for (const platform of ['darwin', 'linux', 'win32']) {
+  test(`${platform} delayed probe retains the start bound from before the command`, () => {
+    let currentTime = now;
+    const {probeProcessStart} = load({platform, clock: () => currentTime, execFileSync: () => {
+      currentTime += 1500;
+      return platform === 'win32' ? String(now - 3000) : '00:02';
+    }});
+    assert.equal(probeProcessStart(pid), now - 3000);
+    assert.equal(currentTime, now + 1500);
+  });
+
+  test(`${platform} probe timeouts use SIGKILL after 2000 ms and return undefined`, () => {
+    const calls = [];
+    const {probeProcessStart} = load({platform, execFileSync: (...args) => {
+      calls.push(args);
+      throw Object.assign(Error('probe timed out'), {code: 'ETIMEDOUT', signal: 'SIGKILL', stdout: platform === 'win32' ? String(now) : '00:02'});
+    }});
+    assert.equal(probeProcessStart(pid), undefined);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][2].timeout, 2000);
+    assert.equal(calls[0][2].killSignal, 'SIGKILL');
+  });
+
   test(`${platform} probe errors, timeouts and invalid output fail closed`, () => {
     for (const output of ['', 'nonsense', 'NaN', 'Infinity', '01:99', '2-03:04']) {
       assert.equal(load({platform, execFileSync: () => output}).probeProcessStart(pid), undefined);

@@ -7,6 +7,8 @@ const LOCK_STALE_MS = 60_000;
 
 // Clock steps after boot shift this estimate; the margin keeps a current-boot owner live.
 const BOOT_MARGIN_MS = 60_000;
+// Allow small backward clock steps between process start and lock creation.
+const PID_REUSE_MARGIN_MS = 5 * 60 * 1000;
 
 type Snapshot = { dev: number; ino: number; mtimeMs: number; encoded: string; pid: number | null; createdAt: number | null };
 export type FileLock = { release(): void };
@@ -15,20 +17,21 @@ export type ProcessStartProbe = (pid: number) => number | undefined;
 export const probeProcessStart: ProcessStartProbe = pid => {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   try {
-    const options: ExecFileSyncOptionsWithStringEncoding = {encoding: 'utf8', timeout: 2000, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore']};
+    const options: ExecFileSyncOptionsWithStringEncoding = {encoding: 'utf8', timeout: 2000, killSignal: 'SIGKILL', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore']};
     if (process.platform === 'win32') {
       const output = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', `[DateTimeOffset]::new((Get-Process -Id ${pid}).StartTime).ToUnixTimeMilliseconds()`], options).trim();
       const startedAt = /^-?\d+$/.test(output) ? Number(output) : NaN;
       return Number.isFinite(startedAt) ? startedAt : undefined;
     }
     if (process.platform !== 'darwin' && process.platform !== 'linux') return undefined;
+    const sampledFrom = Date.now();
     const output = execFileSync('ps', ['-o', 'etime=', '-p', String(pid)], options).trim();
     const match = /^(?:(?:(\d+)-)?(\d+):)?(\d{1,2}):(\d{2})$/.exec(output);
     if (!match) return undefined;
     const days = Number(match[1] ?? 0), hours = Number(match[2] ?? 0), minutes = Number(match[3]), seconds = Number(match[4]);
     if (minutes >= 60 || seconds >= 60 || (match[1] !== undefined && hours >= 24)) return undefined;
     const elapsedMs = ((days * 24 + hours) * 3600 + minutes * 60 + seconds) * 1000;
-    return Number.isFinite(elapsedMs) ? Date.now() - elapsedMs - 1000 : undefined;
+    return Number.isFinite(elapsedMs) ? sampledFrom - elapsedMs - 1000 : undefined;
   } catch { return undefined; }
 };
 function snapshot(file: string): Snapshot | null {
@@ -55,7 +58,7 @@ function recoverable(owner: Snapshot, processStartProbe: ProcessStartProbe): boo
   catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
   if (owner.createdAt === null) return false;
   const startedAt = processStartProbe(owner.pid);
-  return startedAt !== undefined && startedAt > owner.createdAt;
+  return startedAt !== undefined && startedAt > owner.createdAt + PID_REUSE_MARGIN_MS;
 }
 function unlinkOwned(file: string, owner: Snapshot, recovering = false, processStartProbe: ProcessStartProbe = probeProcessStart): void {
   const current = snapshot(file);
