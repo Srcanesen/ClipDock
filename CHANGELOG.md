@@ -4,6 +4,21 @@ All notable changes to ClipDock are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and ClipDock follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.3] - 2026-11-11
+
+### Added
+
+- **Retry conversion in History.** A download that was kept after a failed conversion shows a **Not converted** label and a **Retry conversion** button. The retry uses the conversion you chose for the download, shows its progress in the row, and can be cancelled. On success the same History entry points to the converted file. If the retry fails or is cancelled, the original file stays as it was. If the original is still in use, it is kept and the converted file is added as a separate entry. Cards in **Downloads** follow the file they belong to, and a running conversion keeps its **Cancel** button after the panel reloads. The button appears for conversions that fail from this version on.
+
+### Changed
+
+- **Conversions wait their turn.** A retry and a download that reaches conversion at the same time now run one after the other instead of one of them failing.
+- An entry cannot be deleted or relinked, and History cannot be cleared, while a conversion is running; cancel the conversion first.
+
+### Fixed
+
+- **A lock left by a crashed session is released** even when the system has given the crashed session's process number to another program, so History and saved credentials do not stay blocked. To stay safe, this applies only when that program started at least five minutes after the lock was taken.
+
 ## [0.3.2] - 2026-11-11
 
 ### Added
