@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes target ClipDock **0.1.x**.
+Security fixes target the latest released series, currently ClipDock **0.3.x**.
 Use the latest available patch in that series when reporting an issue.
 
 ## Report a vulnerability
