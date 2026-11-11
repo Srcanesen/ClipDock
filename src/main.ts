@@ -447,7 +447,10 @@ function registerWorkspaceHandlers(): void {
 }
 
 function registerHistoryHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.historyRetryPreparation, createSensitiveIpcHandler(requireTrustedSender, async (event, id: unknown) => historyPreparation.retryPreparation(id, update => sendProviderEvent(event, IPC_CHANNELS.historyPreparationProgress, update))));
+  ipcMain.handle(IPC_CHANNELS.historyRetryPreparation, createSensitiveIpcHandler(requireTrustedSender, async (event, id: unknown) => {
+    ledger.bindHistory(id);
+    return historyPreparation.retryPreparation(id, update => sendProviderEvent(event, IPC_CHANNELS.historyPreparationProgress, update));
+  }));
   ipcMain.handle(IPC_CHANNELS.historyCancelPreparation, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => historyPreparation.cancelPreparation(id)));
   ipcMain.handle(IPC_CHANNELS.historyList, createSensitiveIpcHandler(requireTrustedSender, async () => {
     return ledger.listHistory();
@@ -608,7 +611,7 @@ app.on('before-quit', (event) => {
   quitPending = true;
   shutdown.beginShutdown('window-quit');
   closeYoutubePreview('closed', false);
-  void Promise.allSettled([engineHost.dispose(), history.dispose()]).finally(() => {
+  void historyPreparation.shutdown().then(() => Promise.allSettled([engineHost.dispose(), history.dispose()])).finally(() => {
     try { WorkflowIntegration.CleanUp(); } catch { /* best-effort cleanup */ }
     quitReady = true;
     app.quit();

@@ -461,10 +461,13 @@ export function createHistoryPreparationHandlers(deps: {
   cancelMediaPreparation: ReturnType<typeof createMediaPrep>['cancel'];
   replaced: (id: string) => void;
 }) {
-  const active = new Map<string, { jobId: string; cancelled: boolean }>();
+  const active = new Map<string, { jobId: string; cancelled: boolean; done: Promise<void> }>();
+  let shuttingDown = false;
+  let shutdownPromise: Promise<void> | undefined;
   const validId = (id: unknown): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(id);
   async function retryPreparation(id: unknown, emit: (event: { id: string; percent: number | null }) => void = () => undefined): Promise<{ cancelled: true } | { cancelled: false; profile: Exclude<MediaProfile, 'original'> }> {
     if (!validId(id)) throw new Error('Invalid history record ID.');
+    if (shuttingDown) throw new ProviderJobRejectedError('disposed', 'History conversion is shut down.');
     if (active.has(id)) throw new ProviderJobRejectedError('busy', 'Conversion is already running for this item.');
     const record = deps.history.get(id);
     if (!record?.preparationFailed) throw new Error('This item has no failed conversion to retry.');
@@ -473,7 +476,9 @@ export function createHistoryPreparationHandlers(deps: {
     const root = hit.trustedRoot;
     const source = captureFile(AnchoredDir.capture(root.verify(), root), hit.path);
     const release = deps.history.holdPreparation(id);
-    const run = { jobId: `history-${randomUUID()}`, cancelled: false };
+    let finish!: () => void;
+    const done = new Promise<void>(resolve => { finish = resolve; });
+    const run = { jobId: `history-${randomUUID()}`, cancelled: false, done };
     active.set(id, run);
     let output: OwnedFile | undefined;
     try {
@@ -492,7 +497,7 @@ export function createHistoryPreparationHandlers(deps: {
       if (output) removeOwned(output);
       if (error instanceof ProviderJobCancelledError) return { cancelled: true };
       throw error;
-    } finally { active.delete(id); release(); }
+    } finally { active.delete(id); release(); finish(); }
   }
   async function cancelPreparation(id: unknown): Promise<boolean> {
     if (!validId(id)) throw new Error('Invalid history record ID.');
@@ -502,7 +507,16 @@ export function createHistoryPreparationHandlers(deps: {
     await deps.cancelMediaPreparation(run.jobId);
     return true;
   }
-  return { retryPreparation, cancelPreparation };
+  function shutdown(): Promise<void> {
+    if (shutdownPromise) return shutdownPromise;
+    shuttingDown = true;
+    const runs = [...active.values()];
+    // Mark every continuation cancelled before yielding or disposing the worker.
+    const cancellations = [...active.keys()].map(id => cancelPreparation(id));
+    shutdownPromise = Promise.allSettled(cancellations).then(async () => { await Promise.all(runs.map(run => run.done)); });
+    return shutdownPromise;
+  }
+  return { retryPreparation, cancelPreparation, shutdown };
 }
 
 // ---- Provider download orchestration seam ---------------------------------

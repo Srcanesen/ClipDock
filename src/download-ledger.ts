@@ -6,13 +6,18 @@ import { DownloadHistory, recordHistory, type HistoryInput, type HistoryRecord }
 import type { TimelineAutomation } from './transfer';
 import type { HistoryDeleteResult } from './shared';
 
-export type Card = Readonly<{ path: string; automation?: TimelineAutomation; historyId?: string; trustedRoot?: ManagedRoot; passive?: boolean; subtitlePath?: string; ownerPath?: string; ownedMedia?: OwnedFile; ownedSubtitle?: OwnedFile }>;
+export type Card = Readonly<{ path: string; profile?: string; automation?: TimelineAutomation; historyId?: string; trustedRoot?: ManagedRoot; passive?: boolean; subtitlePath?: string; ownerPath?: string; ownedMedia?: OwnedFile; ownedSubtitle?: OwnedFile }>;
 export class DownloadLedger {
   private readonly cards = new Map<string, Card>();
   private readonly historyCards = new Map<string, string>();
   private readonly subtitleCards = new Map<string, string>();
   private readonly sessionSubtitles = new Map<string, string>();
+  private readonly failedPreparations = new Map<string, { path: string; profile: string }>();
   constructor(private readonly history: DownloadHistory, private readonly mediaInUse: () => boolean) {}
+
+  private rememberPreparation(record: HistoryRecord | null, path: string): void {
+    if (record?.preparationFailed) this.failedPreparations.set(record.id, { path, profile: record.preparationFailed.profile });
+  }
 
   register(input: { path: string; automation?: TimelineAutomation; historyId?: string }, root: ManagedRoot): string {
     if (!root.resolve(input.path)) throw new Error('Could not safely register managed download.');
@@ -24,6 +29,9 @@ export class DownloadLedger {
     return this.insert({ path: safe });
   }
   private insert(card: Card): string {
+    const record = card.historyId ? this.history.get(card.historyId) : null;
+    this.rememberPreparation(record, card.path);
+    if (record) card = { ...card, profile: record.profile };
     if (card.trustedRoot) {
       const dir = AnchoredDir.capture(card.trustedRoot.verify(), card.trustedRoot);
       const ownedMedia = captureFile(dir, card.path);
@@ -40,6 +48,7 @@ export class DownloadLedger {
   }
   record(input: HistoryInput): { record: HistoryRecord | null; warning?: string } {
     const result = recordHistory(this.history, input);
+    this.rememberPreparation(result.record, input.filePath);
     if (input.subtitle?.filePath) {
       this.sessionSubtitles.set(input.filePath, input.subtitle.filePath);
       const id = this.subtitleCards.get(input.subtitle.filePath);
@@ -77,15 +86,32 @@ export class DownloadLedger {
       removedCardIds.push(id);
     }
     this.historyCards.delete(recordId);
+    this.failedPreparations.delete(recordId);
     return removedCardIds;
   }
   bindHistory(recordId: unknown): string | null {
     const hit = this.history.resolve(recordId);
     if (!hit) return null;
+    const failed = this.failedPreparations.get(hit.record.id);
+    if (failed && !hit.record.preparationFailed && hit.record.profile === failed.profile && hit.trustedRoot) {
+      // A completed preparation replaces every active alias, preserving opaque card ids.
+      // Relinking leaves the failure marker in place and does not move active cards.
+      const media = captureFile(AnchoredDir.capture(hit.trustedRoot.verify(), hit.trustedRoot), hit.path);
+      for (const [id, card] of this.cards) {
+        if (card.passive) continue;
+        if (card.path === failed.path) this.cards.set(id, Object.freeze({ ...card, path: hit.path, profile: hit.record.profile, ownedMedia: card.trustedRoot ? media : undefined }));
+        else if (card.ownerPath === failed.path) this.cards.set(id, Object.freeze({ ...card, ownerPath: hit.path }));
+      }
+      if (hit.path !== failed.path) {
+        const subtitle = this.sessionSubtitles.get(failed.path);
+        if (subtitle) { this.sessionSubtitles.set(hit.path, subtitle); this.sessionSubtitles.delete(failed.path); }
+      }
+      this.failedPreparations.delete(hit.record.id);
+    }
     const existingId = this.historyCards.get(hit.record.id);
     if (existingId) {
       const existing = this.resolve(existingId);
-      if (existing?.path === hit.path && existing.trustedRoot === hit.trustedRoot) return existingId;
+      if (existing?.path === hit.path && existing.trustedRoot === hit.trustedRoot && existing.profile === hit.record.profile) return existingId;
       this.unbindDrag(hit.record.id);
     }
     const id = this.insert({ path: hit.path, automation: hit.record.automation, historyId: hit.record.id, trustedRoot: hit.trustedRoot, passive: true });
@@ -112,6 +138,7 @@ export class DownloadLedger {
   }
   clearHistory(): number {
     const count = this.history.clear();
+    this.failedPreparations.clear();
     for (const id of this.historyCards.keys()) this.unbindDrag(id);
     for (const [id, card] of this.cards) if (card.historyId) {
       const { historyId, ...unbound } = card;

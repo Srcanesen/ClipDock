@@ -282,3 +282,88 @@ for (const outcome of ['success', 'cancel', 'shutdown']) test(`registered main H
     if (outcome === 'shutdown') { for (let i = 0; i < 20 && !f.lifecycle.completedQuits; i++) await tick(); assert.equal(f.lifecycle.completedQuits, 1); }
   }
 });
+
+test('prepared replacement rebinds all active source aliases with the prepared path, profile and ownership', async t => {
+  const f = fixture(t, { profile: 'editing' });
+  const oldDrag = f.ledger.listHistory()[0].cardId;
+  const reused = f.ledger.reuseHistory(f.record.id);
+  const root = f.history.resolve(f.record.id).trustedRoot;
+  const alias = f.ledger.register({ path: f.file }, root);
+  const external = f.ledger.registerExternal(f.file);
+  assert.deepEqual(await f.controller().retryPreparation(f.record.id), { cancelled: false, profile: 'editing' });
+  const prepared = f.history.resolve(f.record.id).path;
+  assert.equal(prepared, path.join(f.managed, 'retained.resolve.mov'));
+  for (const id of [reused.cardId, alias, external]) {
+    const card = f.ledger.resolve(id);
+    assert.equal(card?.path, prepared); assert.equal(card?.profile, 'editing');
+  }
+  assert.equal(f.ledger.resolve(alias).ownedMedia.path, prepared);
+  assert.equal(f.ledger.resolve(external).trustedRoot, undefined);
+  assert.equal(f.ledger.resolve(external).ownedMedia, undefined);
+  assert.deepEqual(f.ledger.protectedPaths(), [prepared]);
+  assert.equal(f.ledger.resolve(oldDrag), null);
+});
+
+test('ordinary relinking keeps active source cards bound to the original artifact', async t => {
+  const f = fixture(t); const reused = f.ledger.reuseHistory(f.record.id);
+  const other = path.join(f.managed, 'selected.mp4'); writeFileSync(other, 'selected');
+  f.history.relink(f.record.id, other); f.ledger.bindHistory(f.record.id);
+  assert.equal(f.ledger.resolve(reused.cardId).path, f.file);
+  assert.equal(readFileSync(f.file, 'utf8'), 'original bytes');
+});
+
+test('retry shutdown marks published work cancelled synchronously, drains cleanup, and refuses new retries', async t => {
+  const f = fixture(t); let published, release;
+  const reached = new Promise(resolve => { published = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const api = mainProcess.createHistoryPreparationHandlers({
+    history: f.history,
+    prepareMedia: async request => { const prepared = await f.worker.prepare(request); published(); await gate; return prepared; },
+    cancelMediaPreparation: f.worker.cancel,
+    replaced: id => f.ledger.bindHistory(id),
+  });
+  const before = readFileSync(f.store, 'utf8'); const pending = api.retryPreparation(f.record.id); await reached;
+  let stopped = false;
+  const shutdown = api.shutdown(); shutdown.then(() => { stopped = true; });
+  assert.equal(api.shutdown(), shutdown);
+  await tick(); assert.equal(stopped, false);
+  await assert.rejects(api.retryPreparation(f.record.id), error => { assert.equal(error.kind, 'disposed'); return true; });
+  release(); assert.deepEqual(await pending, { cancelled: true }); await shutdown;
+  assert.equal(stopped, true); assert.equal(readFileSync(f.store, 'utf8'), before);
+  assert.equal(readFileSync(f.file, 'utf8'), 'original bytes'); assert.deepEqual(readdirSync(f.managed), ['retained.webm']);
+});
+
+test('a direct retry refreshes active and passive card profiles without deleting the source', async t => {
+  const f = fixture(t); const passive = f.ledger.listHistory()[0].cardId;
+  assert.equal(f.ledger.resolve(passive).profile, 'original');
+  const reused = f.ledger.reuseHistory(f.record.id);
+  const api = mainProcess.createHistoryPreparationHandlers({ history: f.history,
+    prepareMedia: async () => ({ filePath: f.file, fileName: path.basename(f.file), action: 'direct' }),
+    cancelMediaPreparation: f.worker.cancel, replaced: id => f.ledger.bindHistory(id),
+  });
+  assert.deepEqual(await api.retryPreparation(f.record.id), { cancelled: false, profile: 'fast' });
+  assert.equal(f.ledger.resolve(reused.cardId).profile, 'fast');
+  assert.equal(f.ledger.resolve(f.ledger.listHistory()[0].cardId).profile, 'fast');
+  assert.equal(readFileSync(f.file, 'utf8'), 'original bytes');
+});
+
+test('main retry updates a file-dialog card even before History has ever been listed', async t => {
+  const { mainFixture, historyInput } = await import('./helpers/files-main.mjs');
+  let output;
+  const f = await mainFixture(t, { modules: { './media-prep': { createMediaPrep: () => ({
+    isActive: () => false, dispose() {}, cancel: () => null,
+    prepare: async request => {
+      assert.equal(request.preserveSource, true);
+      output = path.join(path.dirname(request.inputPath), 'retained.resolve.mp4'); writeFileSync(output, 'prepared bytes');
+      return { filePath: output, fileName: path.basename(output), action: 'transcode' };
+    },
+  }) } } });
+  const source = path.join(f.root, 'retained.webm'); writeFileSync(source, 'original bytes');
+  const record = f.controls.history.add({ ...historyInput(source), preparationFailed: { profile: 'fast' } });
+  f.controls.dialog = async () => ({ canceled: false, filePaths: [source] });
+  const selected = await f.invoke('selectFile'); assert.equal(selected.canceled, false);
+  const transferred = []; f.controls.transfer = async file => { transferred.push(file); return { ok: true, kind: 'imported' }; };
+  assert.equal(JSON.stringify(await f.invoke('historyRetryPreparation', record.id)), JSON.stringify({ cancelled: false, profile: 'fast' }));
+  assert.equal((await f.invoke('importToMediaPool', selected.cardId, 'active')).ok, true);
+  assert.deepEqual(transferred, [output]); assert.equal(existsSync(source), false);
+});
