@@ -178,7 +178,7 @@ const selectedHistoryIds = new Set<string>();
 const historySelectionViews = new Map<string, { row: HTMLElement; checkbox: HTMLInputElement }>();
 let historySelectionAnchor: string | null = null;
 const historyPreparations = new Map<string, { percent: number | null; cancelling: boolean }>();
-const historyPreparationViews = new Map<string, { badge: HTMLElement; label: HTMLElement; control: HTMLButtonElement; fileName: string }>();
+const historyPreparationViews = new Map<string, { badge: HTMLElement; label: HTMLElement; icon: SVGUseElement; control: HTMLButtonElement; fileName: string }>();
 let historyDeleteIds: string[] = [];
 let historyDeleteBusy = false;
 const historyThumbnailCache = new Map<string, string>();
@@ -2358,6 +2358,7 @@ function paintHistoryPreparation(id: string): void {
   view.badge.textContent = run ? `Converting…${run.percent === null ? '' : ` ${Math.round(run.percent)}%`}` : 'Not converted';
   const label = run ? 'Cancel' : 'Retry conversion';
   view.label.textContent = label;
+  view.icon.setAttribute('href', run ? '#i-x' : '#i-retry');
   view.control.setAttribute('aria-label', `${label}: ${view.fileName}`);
   view.control.disabled = run?.cancelling === true;
 }
@@ -2768,7 +2769,7 @@ function appendHistoryRowFace(row: HTMLElement, record: HistoryRecord, more: HTM
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); icon.setAttribute('aria-hidden', 'true'); icon.setAttribute('focusable', 'false');
     const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', '#i-retry'); icon.append(use);
     const label = document.createElement('span'); control.append(icon, label); acts.prepend(control);
-    historyPreparationViews.set(record.id, { badge, label, control, fileName: record.fileName }); paintHistoryPreparation(record.id);
+    historyPreparationViews.set(record.id, { badge, label, icon: use, control, fileName: record.fileName }); paintHistoryPreparation(record.id);
   }
   more.title = 'More actions';
   row.append(mini, info, acts);

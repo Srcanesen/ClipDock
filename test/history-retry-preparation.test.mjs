@@ -161,10 +161,12 @@ for (const outcome of ['success', 'failure', 'cancel']) test(`renderer retry row
   assert.equal(badge()?.textContent, 'Not converted'); assert.ok(control());
   assert.equal(descend(control()).find(el => el.tagName === 'USE').getAttribute('href'), '#i-retry');
   control().click(); await h.flush(); assert.equal(control().getAttribute('aria-label'), 'Cancel: retained.webm');
+  assert.equal(descend(control()).find(el => el.tagName === 'USE').getAttribute('href'), '#i-x');
   progress({ id: 'retry-row', percent: 42 }); assert.equal(badge().textContent, 'Converting… 42%');
   h.elements.get('history-refresh-btn').click(); await h.flush();
   h.test.setSurface('queue'); h.test.setSurface('library'); await h.flush();
   assert.equal(badge().textContent, 'Converting… 42%');
+  assert.equal(descend(control()).find(el => el.tagName === 'USE').getAttribute('href'), '#i-x');
   progress({ id: 'retry-row', percent: null }); assert.equal(badge().textContent, 'Converting…');
   if (outcome === 'success') { record = { ...record, profile: 'editing', fileName: 'retained.resolve.mov' }; delete record.preparationFailed; resolve({ cancelled: false, profile: 'editing' }); }
   else if (outcome === 'failure') reject({ message: 'Fixture conversion failed.' });
@@ -173,6 +175,7 @@ for (const outcome of ['success', 'failure', 'cancel']) test(`renderer retry row
   assert.equal(h.elements.get('message').textContent, outcome === 'success' ? 'Converted to Edit-ready.' : outcome === 'failure' ? 'Fixture conversion failed. The original is still in History.' : 'Conversion cancelled.');
   assert.equal(badge()?.textContent, outcome === 'success' ? undefined : 'Not converted');
   assert.equal(!!control(), outcome !== 'success');
+  if (outcome !== 'success') assert.equal(descend(control()).find(el => el.tagName === 'USE').getAttribute('href'), '#i-retry');
 });
 
 for (const profile of ['fast', 'editing']) test(`failed download records the requested ${profile} preparation profile`, async t => {

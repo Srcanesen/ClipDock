@@ -5,12 +5,12 @@ import {mainFixture, deferred} from './helpers/files-main.mjs';
 
 // Exercise registered handlers, including descriptor and transfer registrations.
 // No source-shape assertions remain: a missing registration or sender gate fails here.
-test('all 58 invoke channels reject foreign senders and frames before engine readiness or side effects', async t => {
+test('all 60 invoke channels reject foreign senders and frames before engine readiness or side effects', async t => {
   const discovery = deferred(), f = await mainFixture(t, {discovery: discovery.promise});
-  const notifications = new Set(['resolveQuit', 'nativeDragStart', 'youtubeEvent', 'socialEvent', 'pinterestEvent', 'pexelsEvent', 'pixabayEvent', 'youtubePreviewState', 'youtubeSearchPage']);
+  const notifications = new Set(['resolveQuit', 'nativeDragStart', 'youtubeEvent', 'socialEvent', 'pinterestEvent', 'pexelsEvent', 'pixabayEvent', 'youtubePreviewState', 'youtubeSearchPage', 'historyPreparationProgress']);
   const expected = Object.entries(IPC_CHANNELS).filter(([key]) => !notifications.has(key)).map(([, channel]) => channel).sort();
-  assert.equal(expected.length, 58);
-  assert.equal(f.registrations.length, 58);
+  assert.equal(expected.length, 60);
+  assert.equal(f.registrations.length, 60);
   assert.deepEqual([...f.registrations].sort(), expected);
   assert.deepEqual([...f.handlers.keys()].sort(), expected);
   const foreignEvents = [
@@ -35,11 +35,11 @@ test('all 58 invoke channels reject foreign senders and frames before engine rea
 
 test('IPC fixture refuses duplicate registrations without replacing the registered handler', async t => {
   const f = await mainFixture(t);
-  assert.equal(f.registrations.length, 58);
+  assert.equal(f.registrations.length, 60);
   assert.throws(() => f.registerInvoke(IPC_CHANNELS.setAlwaysOnTop, () => 'overwritten'), {
     message: "Attempted to register a second handler for 'clipdock:set-always-on-top'",
   });
-  assert.equal(f.registrations.length, 58);
+  assert.equal(f.registrations.length, 60);
   assert.equal(await f.invoke('setAlwaysOnTop', true), true);
 });
 
