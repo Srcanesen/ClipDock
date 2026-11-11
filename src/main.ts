@@ -22,7 +22,7 @@ import { pathToFileURL } from 'node:url';
 const WorkflowIntegration = require('./WorkflowIntegration.node');
 
 import { IPC_CHANNELS, PLUGIN_ID } from './shared';
-import { normalizeSearchOptions, isSafeMediaFile as isSafeMediaFileHelper, normalizePreviewBounds, registerMainTransferInvokeHandlers, SessionTransferCards, resolveMainProcessCard, createSensitiveIpcHandler as sensitiveHandler, discoverEnginePaths, applyDockIcon, runStartupSequence, youtubePreviewUrl, YOUTUBE_PREVIEW_REFERRER, type ArtifactCompletionDependencies, type MainIpcRegistrar, type PreviewBounds } from './main-process';
+import { createHistoryPreparationHandlers, normalizeSearchOptions, isSafeMediaFile as isSafeMediaFileHelper, normalizePreviewBounds, registerMainTransferInvokeHandlers, SessionTransferCards, resolveMainProcessCard, createSensitiveIpcHandler as sensitiveHandler, discoverEnginePaths, applyDockIcon, runStartupSequence, youtubePreviewUrl, YOUTUBE_PREVIEW_REFERRER, type ArtifactCompletionDependencies, type MainIpcRegistrar, type PreviewBounds } from './main-process';
 import { createStatusProvider } from './status-provider';
 import { createTransfer, type TimelineAutomation } from './transfer';
 import { createSharedWorkflowIntegration } from './workflow-integration';
@@ -125,6 +125,7 @@ const stockCredentials: Record<StockProvider, PexelsCredentialPersistence> = {
 };
 let currentProjectName: string | null = null;
 let currentProjectReadAt: number | null = null;
+let mediaPreparation: ReturnType<typeof createMediaPrep>;
 const busy = () => engineHost.isBusy();
 /** Deleting one file waits only for work that reads existing media (Resolve handoffs, media preparation); downloads and searches write elsewhere. */
 const mediaInUse = () => engineHost.mediaInUse();
@@ -171,7 +172,7 @@ const engineHost = createEngineHost({
     pinterest: (engines, sessionDir, searchSnapshots) => new GalleryDlWorker(engines.galleryDlPath, undefined, { ffmpegPath: engines.ffmpegPath, sessionDir, searchSnapshots }),
     pexels: sessionDir => new PexelsClient(sessionDir),
     pixabay: sessionDir => new PixabayClient(sessionDir),
-    mediaPrep: engines => createMediaPrep(engines),
+    mediaPrep: engines => (mediaPreparation = createMediaPrep(engines)),
   },
   registerSubtitle: (filePath, fileName) => ({cardId: ledger.registerSubtitle(filePath, engineHost.operationRoot()), fileName}),
   emit: (provider, event, update) => ({
@@ -188,6 +189,12 @@ const engineHost = createEngineHost({
 // History can consult the root while loading legacy records; capture it first.
 const history = new DownloadHistory(path.join(app.getPath('userData'), 'download-history.json'), activeRoot, () => currentProjectName, { tools: () => engineHost.ready() });
 const ledger = new DownloadLedger(history, mediaInUse);
+const historyPreparation = createHistoryPreparationHandlers({
+  history,
+  prepareMedia: request => engineHost.operation(() => engineHost.prepareMedia(request)),
+  cancelMediaPreparation: jobId => mediaPreparation.cancel(jobId),
+  replaced: id => { ledger.bindHistory(id); },
+});
 
 // OS drag icon. macOS startDrag REQUIRES a non-empty icon; a 32x32 PNG data URL
 // is a valid NativeImage (no asset file needed). Keep it accent-colored for visibility.
@@ -440,6 +447,8 @@ function registerWorkspaceHandlers(): void {
 }
 
 function registerHistoryHandlers(): void {
+  ipcMain.handle(IPC_CHANNELS.historyRetryPreparation, createSensitiveIpcHandler(requireTrustedSender, async (event, id: unknown) => historyPreparation.retryPreparation(id, update => sendProviderEvent(event, IPC_CHANNELS.historyPreparationProgress, update))));
+  ipcMain.handle(IPC_CHANNELS.historyCancelPreparation, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => historyPreparation.cancelPreparation(id)));
   ipcMain.handle(IPC_CHANNELS.historyList, createSensitiveIpcHandler(requireTrustedSender, async () => {
     return ledger.listHistory();
   }, 'immediate'));

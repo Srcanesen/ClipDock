@@ -7,7 +7,7 @@
 // pattern as the official SamplePlugin). Local module imports stay type-only:
 // they are erased at compile time, so this file has no runtime requires of local files.
 import { contextBridge, ipcRenderer } from 'electron/renderer';
-import type { SearchOptions, ClipdockApi, DownloadFolderStatus, HistoryDeleteResult, HistoryRecord, MediaProfile, PexelsAsset, PexelsEvent, PexelsKind, PexelsPage, PinterestEvent, PinterestMetadata, PinterestSearchPage, PreviewBounds, QueueDeleteResult, SelectFileResult, SocialEvent, SocialMetadata, SubtitleCue, TargetBin, TimelinePlacement, YoutubeDownloadOptions, YoutubeEvent, YoutubeMetadata, YoutubePreviewState, YoutubeQuality, YoutubeSearchEvent, YoutubeSearchPage, SubtitleLanguage } from './shared';
+import type { SearchOptions, ClipdockApi, DownloadFolderStatus, HistoryDeleteResult, HistoryPreparationProgress, HistoryPreparationResult, HistoryRecord, MediaProfile, PexelsAsset, PexelsEvent, PexelsKind, PexelsPage, PinterestEvent, PinterestMetadata, PinterestSearchPage, PreviewBounds, QueueDeleteResult, SelectFileResult, SocialEvent, SocialMetadata, SubtitleCue, TargetBin, TimelinePlacement, YoutubeDownloadOptions, YoutubeEvent, YoutubeMetadata, YoutubePreviewState, YoutubeQuality, YoutubeSearchEvent, YoutubeSearchPage, SubtitleLanguage } from './shared';
 import type { TransferResult } from './transfer';
 import type { StatusSnapshot } from './status';
 
@@ -100,6 +100,13 @@ const api: ClipdockApi = {
   workspaceStatus: () => ipcRenderer.invoke('clipdock:workspace-status') as Promise<{ fileCount: number; totalBytes: number; cleanupFileCount: number; cleanupBytes: number }>,
   openWorkspace: () => ipcRenderer.invoke('clipdock:open-workspace') as Promise<boolean>,
   cleanupWorkspace: () => ipcRenderer.invoke('clipdock:cleanup-workspace') as Promise<{ deletedFileCount: number; deletedBytes: number; fileCount: number; totalBytes: number }>,
+  historyRetryPreparation: (id: string) => ipcRenderer.invoke('clipdock:history-retry-preparation', id) as Promise<HistoryPreparationResult>,
+  historyCancelPreparation: (id: string) => ipcRenderer.invoke('clipdock:history-cancel-preparation', id) as Promise<boolean>,
+  onHistoryPreparationProgress: callback => {
+    const listener = (_event: unknown, ...args: unknown[]) => callback(args[0] as HistoryPreparationProgress);
+    ipcRenderer.on('clipdock:history-preparation-progress', listener);
+    return () => ipcRenderer.removeListener('clipdock:history-preparation-progress', listener);
+  },
   historyList: () => ipcRenderer.invoke('clipdock:history-list') as Promise<HistoryRecord[]>,
   historyThumbnail: (id: string) => ipcRenderer.invoke('clipdock:history-thumbnail', id) as Promise<string | null>,
   historyClear: () => ipcRenderer.invoke('clipdock:history-clear') as Promise<number>,

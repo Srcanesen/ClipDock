@@ -36,6 +36,7 @@ export function createFakeDom({ onFocus = () => {}, onReplaceChildren = () => {}
     getAttribute(name) { return this.attributes[name] ?? null; },
     removeAttribute(name) { if (name === 'class') tokens.clear(); delete this.attributes[name]; },
     append(...children) { for (const child of children) { if (child && typeof child === 'object') child.parentElement = this; this.children.push(child); } },
+    prepend(...children) { for (const child of children) if (child && typeof child === 'object') child.parentElement = this; this.children.unshift(...children); },
     replaceChildren(...children) { onReplaceChildren(this); this.children = []; this.append(...children); },
     remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); },
     querySelector(selector) { return selector === 'button' ? this.children.find((child) => child.tagName === 'BUTTON') ?? null : null; },

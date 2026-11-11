@@ -93,7 +93,7 @@ export function createHarness({ eventsOnly = false, preferencesInit = {}, previe
   const document = {
     visibilityState: 'visible', body: { dataset: {}, classList: { add() {}, remove() {} } },
     get activeElement() { return activeElement; }, getElementById: (id) => elements.get(id) ?? null,
-    createElement: (tag) => makeElement(tag), createTextNode: (text) => ({ textContent: text, tagName: '#TEXT', children: [] }),
+    createElement: (tag) => makeElement(tag), createElementNS: (_namespace, tag) => makeElement(tag), createTextNode: (text) => ({ textContent: text, tagName: '#TEXT', children: [] }),
     querySelector: (selector) => selector === '.advanced-options' ? makeElement('details') : selector === '.feed-toolbar' ? makeElement('div') : selector === '.inspector-thumb' ? makeElement('div') : null,
     querySelectorAll: (selector) => {
       if (!['#youtube-search-results .result-card-thumbnail.card-thumb', '#youtube-search-results .youtube-details'].includes(selector)) return [];

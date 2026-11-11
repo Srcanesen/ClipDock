@@ -169,7 +169,7 @@ export function createMediaPrep(options: Options = {}) {
     if (result.overflow) throw new Error('ffprobe output exceeded the 2 MB limit.');
     return parseFfprobe(result.stdout);
   }
-  async function prepare(request: { jobId: string; inputPath: string; allowedRoot: string | ManagedRoot; source?: OwnedFile; profile: MediaProfile; emit: (event: MediaPrepEvent) => void }): Promise<MediaPrepResult> {
+  async function prepare(request: { jobId: string; inputPath: string; allowedRoot: string | ManagedRoot; source?: OwnedFile; /** History retries retain the source until their metadata commit. */ preserveSource?: boolean; profile: MediaProfile; emit: (event: MediaPrepEvent) => void }): Promise<MediaPrepResult> {
     if ((request.profile !== 'fast' && request.profile !== 'editing')) throw new Error('Invalid media preparation request.');
     let input: string, ownedSource: OwnedFile;
     const preparing = 'Preparing for Resolve…';
@@ -218,7 +218,7 @@ export function createMediaPrep(options: Options = {}) {
         context.register(published);
         context.publish(published.path, () => {
           verifySource(ownedSource);
-          if (removeOwned(ownedSource) !== 'removed') throw new Error('Media source was replaced; replacement preserved.');
+          if (!request.preserveSource && removeOwned(ownedSource) !== 'removed') throw new Error('Media source was replaced; replacement preserved.');
         });
         return { filePath: published.path, fileName: basename(published.path), action: final };
       } finally { removePrivateDir(privateDir); }

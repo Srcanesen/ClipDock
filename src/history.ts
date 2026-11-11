@@ -10,17 +10,22 @@ import { tryAcquireFileLock } from './file-lock';
 import { validatePinterestUrl, validateSocialUrl } from './ytdlp-url';
 import { HistoryThumbnails, type HistoryThumbnailOptions } from './history-thumbnails';
 import type { HistoryDeleteResult } from './shared';
+import type { MediaProfile } from './media-prep';
 
 export type HistoryProvider = 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest';
 export type HistorySelection = { start: number; end: number; label: string } | null;
 export type HistoryAutomation = { provider: HistoryProvider; source: string; selection: HistorySelection; chapters: Array<{ start: number; end: number; title: string }> };
 /** Public, path-free subtitle companion metadata. */
 export type HistorySubtitle = { fileName: string; bytes: number; available: boolean };
-type StoredRecord = { id: string; provider: HistoryProvider; source: string; project: string | null; filePath: string; managed: boolean; /** Main-only registration-time boundary; absent for old/external records. */ trustedRoot?: string; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; subtitlePath: string | null };
+type StoredRecord = { id: string; provider: HistoryProvider; source: string; project: string | null; filePath: string; managed: boolean; /** Main-only registration-time boundary; absent for old/external records. */ trustedRoot?: string; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; preparationFailed?: { profile: MediaProfile }; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; subtitlePath: string | null };
 type Store = { schemaVersion: 1; records: StoredRecord[] };
 export type HistoryRecord = Omit<StoredRecord, 'filePath' | 'managed' | 'trustedRoot' | 'subtitlePath'> & { available: boolean; subtitle: HistorySubtitle | null };
 export type HistoryInput = Omit<StoredRecord, 'id' | 'project' | 'managed' | 'trustedRoot' | 'fileName' | 'bytes' | 'createdAt' | 'lastUsedAt' | 'subtitlePath'> & { /** Main-only companion input; the path is validated but never exposed publicly. */ subtitle?: { filePath: string } | null };
 const MAX_RECORDS = 200;
+const preparationFailure = (value: unknown): { profile: MediaProfile } | undefined => {
+  const profile = (value as { profile?: unknown } | null)?.profile;
+  return profile === 'fast' || profile === 'editing' ? { profile } : undefined;
+};
 const SUBTITLE_EXTENSIONS = new Set(['.srt']);
 const inside = (root: ManagedRoot, target: string): boolean => { try { return root.contains(target); } catch { return false; } };
 const regular = (file: string): string | null => regularFile(file);
@@ -62,6 +67,15 @@ export function recordHistoryWarning(history: Pick<DownloadHistory, 'add'>, inpu
 export class DownloadHistory {
   private records: StoredRecord[] = [];
   private saveBlocked = false;
+  private readonly preparations = new Set<string>();
+  private assertNotPreparing(id: unknown): void {
+    if (typeof id === 'string' && this.preparations.has(id)) throw new Error('Conversion is running for this item. Cancel it first.');
+  }
+  holdPreparation(id: string): () => void {
+    this.assertNotPreparing(id);
+    this.preparations.add(id);
+    return () => { this.preparations.delete(id); };
+  }
   private readonly storeDirectory: AnchoredDir;
   private readonly thumbnails: HistoryThumbnails;
   private readonly identities = new Map<string, {media: OwnedFile | null; subtitle: OwnedFile | null}>();
@@ -98,6 +112,7 @@ export class DownloadHistory {
   }
   clear(): number {
     return this.transaction(() => {
+      for (const id of this.preparations) this.assertNotPreparing(id);
       const count = this.records.length;
       this.records = []; this.save(); this.cleanupThumbnails();
       return count;
@@ -156,7 +171,7 @@ export class DownloadHistory {
         // Transaction reloads reuse the startup binding instead of the folder active now.
         if (initial && typeof r.trustedRoot !== 'string') this.legacyRoots.set(r.id, this.root()?.verify());
         const trustedRoot = typeof r.trustedRoot === 'string' ? r.trustedRoot : this.legacyRoots.get(r.id);
-        return [{ id: r.id, provider: r.provider, source, project: typeof r.project === 'string' ? r.project.slice(0, 200) : null, filePath: r.filePath, managed: r.managed === true, trustedRoot: r.managed === true ? trustedRoot : undefined, fileName: r.fileName.slice(0, 300), bytes: Number.isSafeInteger(r.bytes) && Number(r.bytes) >= 0 ? Number(r.bytes) : 0, assetId: typeof r.assetId === 'string' ? r.assetId.slice(0, 100) : null, title: typeof r.title === 'string' ? r.title.slice(0, 300) : r.fileName.slice(0, 300), creator: typeof r.creator === 'string' ? r.creator.slice(0, 200) : null, profile: typeof r.profile === 'string' ? r.profile.slice(0, 40) : 'original', quality: typeof r.quality === 'string' ? r.quality.slice(0, 80) : null, mediaMode: typeof r.mediaMode === 'string' ? r.mediaMode.slice(0, 20) : 'video', selection, automation: { provider: r.provider, source, selection, chapters }, createdAt, lastUsedAt: Number.isFinite(r.lastUsedAt) ? Number(r.lastUsedAt) : createdAt, subtitlePath }];
+        return [{ id: r.id, provider: r.provider, source, project: typeof r.project === 'string' ? r.project.slice(0, 200) : null, filePath: r.filePath, managed: r.managed === true, trustedRoot: r.managed === true ? trustedRoot : undefined, fileName: r.fileName.slice(0, 300), bytes: Number.isSafeInteger(r.bytes) && Number(r.bytes) >= 0 ? Number(r.bytes) : 0, assetId: typeof r.assetId === 'string' ? r.assetId.slice(0, 100) : null, title: typeof r.title === 'string' ? r.title.slice(0, 300) : r.fileName.slice(0, 300), creator: typeof r.creator === 'string' ? r.creator.slice(0, 200) : null, profile: typeof r.profile === 'string' ? r.profile.slice(0, 40) : 'original', ...(preparationFailure(r.preparationFailed) ? { preparationFailed: preparationFailure(r.preparationFailed) } : {}), quality: typeof r.quality === 'string' ? r.quality.slice(0, 80) : null, mediaMode: typeof r.mediaMode === 'string' ? r.mediaMode.slice(0, 20) : 'video', selection, automation: { provider: r.provider, source, selection, chapters }, createdAt, lastUsedAt: Number.isFinite(r.lastUsedAt) ? Number(r.lastUsedAt) : createdAt, subtitlePath }];
       }).slice(0, MAX_RECORDS);
       for (const record of this.records) { if (record.managed) this.recordRoot(record); this.captureRecord(record); }
     } catch {
@@ -205,7 +220,7 @@ export class DownloadHistory {
     try { return { fileName: basename(r.subtitlePath), bytes: resolved ? statSync(resolved).size : 0, available: !!resolved }; }
     catch { return { fileName: basename(r.subtitlePath), bytes: 0, available: false }; }
   }
-  private public(r: StoredRecord): HistoryRecord { return { id: r.id, provider: r.provider, source: r.source, project: r.project, fileName: r.fileName, bytes: r.bytes, assetId: r.assetId, title: r.title, creator: r.creator, profile: r.profile, quality: r.quality, mediaMode: r.mediaMode, selection: r.selection, automation: r.automation, createdAt: r.createdAt, lastUsedAt: r.lastUsedAt, available: !!this.safePath(r, r.filePath), subtitle: this.subtitle(r) }; }
+  private public(r: StoredRecord): HistoryRecord { return { id: r.id, provider: r.provider, source: r.source, project: r.project, fileName: r.fileName, bytes: r.bytes, assetId: r.assetId, title: r.title, creator: r.creator, profile: r.profile, ...(r.preparationFailed ? { preparationFailed: { ...r.preparationFailed } } : {}), quality: r.quality, mediaMode: r.mediaMode, selection: r.selection, automation: r.automation, createdAt: r.createdAt, lastUsedAt: r.lastUsedAt, available: !!this.safePath(r, r.filePath), subtitle: this.subtitle(r) }; }
   list(): HistoryRecord[] { return this.records.map((r) => this.public(r)); }
   get(id: unknown): HistoryRecord | null { const r = typeof id === 'string' ? this.records.find((x) => x.id === id) : null; return r ? this.public(r) : null; }
   add(input: HistoryInput): HistoryRecord { return this.transaction(() => this.addRecord(input)); }
@@ -219,7 +234,7 @@ export class DownloadHistory {
     if (!root) throw new Error('Managed root failed the safety check.');
     const trustedRoot = inside(root, filePath) ? root : undefined;
     if (trustedRoot) this.recordRoot({trustedRoot: trustedRoot.verify()} as StoredRecord);
-    const record: StoredRecord = { id: randomUUID(), provider: input.provider, source, project: this.projectName(), filePath, managed: !!trustedRoot, trustedRoot: trustedRoot?.verify(), fileName: basename(filePath), bytes: statSync(filePath).size, assetId: input.assetId?.slice(0, 100) ?? null, title: input.title.slice(0, 300), creator: input.creator?.slice(0, 200) ?? null, profile: input.profile.slice(0, 40), quality: input.quality?.slice(0, 80) ?? null, mediaMode: input.mediaMode.slice(0, 20), selection, automation: { provider: input.provider, source, selection, chapters }, createdAt: now, lastUsedAt: now, subtitlePath: regularSubtitle(input.subtitle?.filePath) };
+    const record: StoredRecord = { id: randomUUID(), provider: input.provider, source, project: this.projectName(), filePath, managed: !!trustedRoot, trustedRoot: trustedRoot?.verify(), fileName: basename(filePath), bytes: statSync(filePath).size, assetId: input.assetId?.slice(0, 100) ?? null, title: input.title.slice(0, 300), creator: input.creator?.slice(0, 200) ?? null, profile: input.profile.slice(0, 40), ...(preparationFailure(input.preparationFailed) ? { preparationFailed: preparationFailure(input.preparationFailed) } : {}), quality: input.quality?.slice(0, 80) ?? null, mediaMode: input.mediaMode.slice(0, 20), selection, automation: { provider: input.provider, source, selection, chapters }, createdAt: now, lastUsedAt: now, subtitlePath: regularSubtitle(input.subtitle?.filePath) };
     this.captureRecord(record);
     this.records = [record, ...this.records].slice(0, MAX_RECORDS); this.save(); this.cleanupThumbnails(); return this.public(record);
   }
@@ -237,6 +252,7 @@ export class DownloadHistory {
   private reuseRecord(id: unknown): { path: string; trustedRoot?: ManagedRoot; record: HistoryRecord } | null { const hit = this.resolve(id); if (!hit) return null; const r = this.records.find((x) => x.id === id)!; r.lastUsedAt = Date.now(); r.project = this.projectName(); this.moveToFront(r); this.save(); return { path: hit.path, trustedRoot: hit.trustedRoot, record: this.public(r) }; }
   relink(id: unknown, filePath: string): HistoryRecord | null { return this.transaction(() => this.relinkRecord(id, filePath)); }
   private relinkRecord(id: unknown, filePath: string): HistoryRecord | null {
+    this.assertNotPreparing(id);
     const r = typeof id === 'string' ? this.records.find((x) => x.id === id) : null;
     const safe = regular(filePath);
     if (!r || !safe || !supportedHistoryMediaPath(safe)) return null;
@@ -247,6 +263,24 @@ export class DownloadHistory {
     this.captureRecord(r, true);
     this.thumbnails.remove(r.id);
     return this.public(r);
+  }
+
+  replacePreparedArtifact(id: string, next: { filePath: string; profile: MediaProfile }): HistoryRecord | null {
+    return this.transaction(() => {
+      const r = this.records.find(record => record.id === id);
+      if (!r || (next.profile !== 'fast' && next.profile !== 'editing')) return null;
+      const root = r.managed ? this.recordRoot(r) : null;
+      if (!root) return null;
+      const filePath = root.resolve(next.filePath);
+      if (!filePath || !supportedHistoryMediaPath(filePath)) return null;
+      const media = captureFile(AnchoredDir.capture(root.verify(), root), filePath);
+      r.filePath = filePath; r.fileName = basename(filePath); r.bytes = statSync(filePath).size;
+      r.profile = next.profile; delete r.preparationFailed;
+      this.save();
+      this.identities.set(r.id, { media, subtitle: this.identities.get(r.id)?.subtitle ?? null });
+      this.thumbnails.remove(r.id);
+      return this.public(r);
+    });
   }
 
   /** Session ownership outlives the history cap and failed metadata writes. Never grant it from location alone. */
@@ -271,6 +305,7 @@ export class DownloadHistory {
     return this.transaction(() => this.deleteRecord(id, protectedPaths, busy, preserveOnFailure));
   }
   private deleteRecord(id: unknown, protectedPaths: Iterable<string>, busy: boolean, preserveOnFailure: boolean): HistoryDeleteResult {
+    this.assertNotPreparing(id);
     if (busy) throw new Error('Wait for active downloads or media preparation to finish.');
     const index = typeof id === 'string' ? this.records.findIndex((r) => r.id === id) : -1; if (index < 0) return { deleted: false, removed: false };
     const r = this.records[index]; const protectedSet = new Set([...protectedPaths].flatMap((p) => { const safe = regular(p); return safe ? [safe] : []; }));

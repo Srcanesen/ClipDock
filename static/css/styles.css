@@ -661,6 +661,10 @@ body[data-phase="no-project"] .ins-foot:has(#download-youtube-btn:not([data-inte
 .history-row .status { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; font-family: var(--f-mono); font-variant-numeric: tabular-nums; color: var(--fixer); flex-wrap: wrap; min-width: 0; }
 .history-row .miss-note { font-family: var(--f-ui); font-size: 13px; color: var(--amber); }
 .history-row .acts { grid-area: acts; display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.history-row:has(.history-retry-preparation) .acts { flex-wrap: wrap; }
+.history-row .history-retry-preparation { gap: 6px; }
+.history-retry-preparation svg { width: 16px; height: 16px; flex: none; }
+.history-preparation-badge { color: var(--amber); }
 .history-row .history-actions { grid-area: more; position: relative; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--fixer); font-size: 0; display: grid; place-items: center; }
 .history-row .history-actions::before { content: ""; width: 16px; height: 16px; background: currentColor; -webkit-mask: var(--i-more) center / 16px no-repeat; mask: var(--i-more) center / 16px no-repeat; }
 .history-row .history-actions::after { content: ""; position: absolute; inset: -8px; }

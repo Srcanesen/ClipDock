@@ -5,16 +5,17 @@
 
 import { searchOrientation, type ORIENTATION_SUPPORT, type SearchOptions } from './renderer-state/search-session';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
+import { randomUUID } from 'node:crypto';
 import {dirname} from 'node:path';
 import { isSafeMediaFile as pathIsSafeMediaFile } from './path-boundary';
 import {PIN_ID, validatePinterestUrl, validateSocialUrl} from './ytdlp-url';
-import type {MediaPrepEvent} from './media-prep';
+import type {createMediaPrep, MediaPrepEvent} from './media-prep';
 import type {PinterestMetadata, TargetBin, TimelinePlacement, MediaProfile, YoutubeDownloadOptions} from './shared';
-import type {HistoryInput, HistoryRecord} from './history';
+import type {DownloadHistory, HistoryInput, HistoryRecord} from './history';
 import type {DownloadLedger} from './download-ledger';
 import {ManagedRoot} from './managed-root';
-import type {OwnedFile} from './safe-fs';
-import {ProviderJobRunner, ProviderJobCancelledError, ProviderJobFailureError, requireFfprobe, type ProviderJobContext} from './provider-job';
+import { AnchoredDir, captureFile, removeOwned, verifyFile, type OwnedFile } from './safe-fs';
+import {ProviderJobRejectedError, ProviderJobRunner, ProviderJobCancelledError, ProviderJobFailureError, requireFfprobe, type ProviderJobContext} from './provider-job';
 import type {TimelineAutomation, Transfer, TransferResult} from './transfer';
 import type {DownloadEvent, DownloadOptions, Quality, YtdlpWorker} from './ytdlp';
 import {PINTEREST_OPAQUE_VIDEO_ERROR, type GalleryDlWorker, type PinterestDownloadEvent} from './gallerydl';
@@ -409,7 +410,7 @@ export function createArtifactCompletionService(deps: ArtifactCompletionDependen
       job.onFailure(() => {
         // A replacement cannot become the retained original merely by using its path.
         try { job.owned(request.artifact.filePath); } catch { return; }
-        const {record} = deps.recordHistory({...history, filePath: request.artifact.filePath, profile: 'original', subtitle: undefined});
+        const {record} = deps.recordHistory({...history, filePath: request.artifact.filePath, profile: 'original', preparationFailed: request.prepare ? { profile: request.prepare.profile } : undefined, subtitle: undefined});
         if (record) {
           job.retain(request.artifact.filePath);
           failure.message += ' The original download was kept in History.';
@@ -451,6 +452,57 @@ export function createArtifactCompletionService(deps: ArtifactCompletionDependen
     return result;
   }
   return {completeDownload};
+}
+
+/** Retry a retained source using the same preparation worker and shutdown lifecycle as downloads. */
+export function createHistoryPreparationHandlers(deps: {
+  history: DownloadHistory;
+  prepareMedia: ReturnType<typeof createMediaPrep>['prepare'];
+  cancelMediaPreparation: ReturnType<typeof createMediaPrep>['cancel'];
+  replaced: (id: string) => void;
+}) {
+  const active = new Map<string, { jobId: string; cancelled: boolean }>();
+  const validId = (id: unknown): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(id);
+  async function retryPreparation(id: unknown, emit: (event: { id: string; percent: number | null }) => void = () => undefined): Promise<{ cancelled: true } | { cancelled: false; profile: Exclude<MediaProfile, 'original'> }> {
+    if (!validId(id)) throw new Error('Invalid history record ID.');
+    if (active.has(id)) throw new ProviderJobRejectedError('busy', 'Conversion is already running for this item.');
+    const record = deps.history.get(id);
+    if (!record?.preparationFailed) throw new Error('This item has no failed conversion to retry.');
+    const hit = deps.history.resolve(id);
+    if (!hit?.trustedRoot) throw new Error('Retry conversion requires an existing managed file.');
+    const root = hit.trustedRoot;
+    const source = captureFile(AnchoredDir.capture(root.verify(), root), hit.path);
+    const release = deps.history.holdPreparation(id);
+    const run = { jobId: `history-${randomUUID()}`, cancelled: false };
+    active.set(id, run);
+    let output: OwnedFile | undefined;
+    try {
+      const prepared = await deps.prepareMedia({ jobId: run.jobId, inputPath: hit.path, allowedRoot: root, source, preserveSource: true, profile: record.preparationFailed.profile, emit: event => emit({ id, percent: event.percent }) });
+      if (prepared.filePath !== hit.path) output = captureFile(AnchoredDir.capture(root.verify(), root), prepared.filePath);
+      verifyFile(source);
+      if (run.cancelled) throw new ProviderJobCancelledError('Conversion cancelled.');
+      const next = deps.history.replacePreparedArtifact(id, { filePath: prepared.filePath, profile: record.preparationFailed.profile });
+      if (!next) throw new Error('History item could not be updated.');
+      // The saved record now owns the prepared output. Cleanup cannot roll back that commit.
+      const converted = output; output = undefined;
+      try { deps.replaced(id); } catch { /* The next History listing retries the ledger binding. */ }
+      if (converted) { try { removeOwned(source); } catch { /* Preserve the source if safe cleanup is no longer possible. */ } }
+      return { cancelled: false, profile: record.preparationFailed.profile };
+    } catch (error) {
+      if (output) removeOwned(output);
+      if (error instanceof ProviderJobCancelledError) return { cancelled: true };
+      throw error;
+    } finally { active.delete(id); release(); }
+  }
+  async function cancelPreparation(id: unknown): Promise<boolean> {
+    if (!validId(id)) throw new Error('Invalid history record ID.');
+    const run = active.get(id);
+    if (!run) return false;
+    run.cancelled = true;
+    await deps.cancelMediaPreparation(run.jobId);
+    return true;
+  }
+  return { retryPreparation, cancelPreparation };
 }
 
 // ---- Provider download orchestration seam ---------------------------------

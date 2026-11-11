@@ -45,7 +45,7 @@ interface PreviewPinterestMetadata { pinId: string; source: string; title: strin
 interface PreviewPinterestSearchItem { id: string; title: string; creator: string | null; kind: 'image' | 'video' | 'carousel'; width: number | null; height: number | null; url: string; thumbnailUrl: string | null; }
 interface PreviewPinterestSearchPage { query: string; page: number; pageSize: 10; results: PreviewPinterestSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: { failed: number; total: number; reason: string; node: string }; }
 interface PreviewPinterestEvent { jobId: string; state: string; percent: number | null; message: string; cardId?: string; fileName?: string; warning?: string; }
-interface PreviewHistoryRecord { id: string; provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; quality: string | null; mediaMode: string; selection: null; automation: { provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; selection: null; chapters: [] }; createdAt: number; lastUsedAt: number; available: boolean; cardId?: string; }
+interface PreviewHistoryRecord { id: string; provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; preparationFailed?: { profile: 'fast' | 'editing' }; quality: string | null; mediaMode: string; selection: null; automation: { provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; selection: null; chapters: [] }; createdAt: number; lastUsedAt: number; available: boolean; cardId?: string; }
 
 interface PreviewApi {
   onYoutubeSearchPage(callback: (event: { generation: number; page: Omit<PreviewYoutubeSearchPage, 'totalResults' | 'pageCount'> & { totalResults: null; pageCount: null } }) => void): () => void;
@@ -106,6 +106,9 @@ interface PreviewApi {
   openWorkspace(): Promise<boolean>;
   cleanupWorkspace(): Promise<{ deletedFileCount: number; deletedBytes: number; fileCount: number; totalBytes: number }>;
   queueDelete(cardId: string): Promise<{ deleted: boolean; message: string }>;
+  historyRetryPreparation(id: string): Promise<{ cancelled: true } | { cancelled: false; profile: 'fast' | 'editing' }>;
+  historyCancelPreparation(id: string): Promise<boolean>;
+  onHistoryPreparationProgress(callback: (event: { id: string; percent: number | null }) => void): () => void;
   historyList(): Promise<PreviewHistoryRecord[]>;
   historyThumbnail(id: string): Promise<string | null>;
   historyClear(): Promise<number>;
@@ -165,6 +168,7 @@ const BRIDGE_ERROR: StatusSnapshot = {
 
 const FIXTURES: Record<string, StatusSnapshot> = {
   ready: READY,
+  'history-retry': READY,
   'no-project': NO_PROJECT,
   'no-timeline': NO_TIMELINE,
   'bridge-error': BRIDGE_ERROR,
@@ -302,9 +306,39 @@ if (previewParam !== null) {
   let previewDownloadSequence = 0;
   let readyDownloadAttempt = 0;
   let readyDownloadReject: ((error: Error) => void) | null = null;
-  let historyRecords = [...PREVIEW_HISTORY];
+  let historyRecords: PreviewHistoryRecord[] = previewParam === 'history-retry'
+    ? [{ ...PREVIEW_HISTORY[0], id: 'preview-history-retry', title: 'Retained download', fileName: 'Retained download.webm', preparationFailed: { profile: 'editing' } }]
+    : [...PREVIEW_HISTORY];
+  let preparationListener: ((event: { id: string; percent: number | null }) => void) | null = null;
+  const preparationRuns = new Map<string, { cancel: () => void }>();
   const metadata: PreviewYoutubeMetadata = { id: 'dQw4w9WgXcQ', title: 'Preview video', duration: 213, channel: 'ClipDock Preview', thumbnailUrl: SYNTHETIC_THUMBNAIL_DATA_URL, heights: [360, 720, 1080, 1440, 2160], formatSummary: ['360p', '720p', '1080p', '1440p', '2160p'] };
   const api: PreviewApi = {
+    onHistoryPreparationProgress: callback => { preparationListener = callback; return () => { preparationListener = null; }; },
+    historyRetryPreparation: async id => {
+      if (preparationRuns.has(id)) throw new Error('Conversion is already running for this item.');
+      const record = historyRecords.find(record => record.id === id);
+      const profile = record?.preparationFailed?.profile;
+      if (!record || !profile) throw new Error('This item has no failed conversion to retry.');
+      let cancel!: () => void;
+      const cancelled = new Promise<true>(resolve => { cancel = () => resolve(true); });
+      preparationRuns.set(id, { cancel });
+      try {
+        for (const percent of [0, 21, 42, 68, 85, 100]) {
+          preparationListener?.({ id, percent });
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const stopped = await Promise.race([cancelled, new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 600); })]);
+          clearTimeout(timer);
+          if (stopped) return { cancelled: true };
+        }
+        historyRecords = historyRecords.map(item => {
+          if (item.id !== id) return item;
+          const { preparationFailed, ...prepared } = item;
+          return { ...prepared, profile, fileName: `Retained download.resolve.${profile === 'editing' ? 'mov' : 'mp4'}` };
+        });
+        return { cancelled: false, profile };
+      } finally { preparationRuns.delete(id); }
+    },
+    historyCancelPreparation: async id => { const run = preparationRuns.get(id); if (!run) return false; run.cancel(); return true; },
     openYoutubeExternal: async () => true,
     openYoutubePreview: async () => { previewOpen = true; document.getElementById('source-monitor')?.setAttribute('data-preview-playing', 'true'); return true; },
     closeYoutubePreview: async () => { document.getElementById('source-monitor')?.removeAttribute('data-preview-playing'); if (previewOpen) { previewOpen = false; previewStateListener?.({state: 'closed', reason: 'closed'}); } return true; },
@@ -470,6 +504,7 @@ if (previewParam !== null) {
     onPixabayEvent: (callback) => { pixabayListener = callback; return () => { if (pixabayListener === callback) pixabayListener = null; }; },
     openPixabayExternal: async () => true,
     workspaceStatus: async () => ({ fileCount: 3, totalBytes: 48_000_000, cleanupFileCount: 2, cleanupBytes: 32_000_000 }), openWorkspace: async () => true, cleanupWorkspace: async () => ({ deletedFileCount: 2, deletedBytes: 32_000_000, fileCount: 1, totalBytes: 16_000_000 }), queueDelete: async () => previewParam === 'missing-file' ? { deleted: false, message: 'The file is no longer available. It remains in the queue.' } : { deleted: true, message: 'File deleted.' }, historyList: async () => historyRecords, historyThumbnail: async id => historyRecords.some(record => record.id === id) ? id === 'preview-history-2' ? PREVIEW_HISTORY_PHOTO : SYNTHETIC_THUMBNAIL_DATA_URL : null, historyClear: async () => { const count = historyRecords.length; historyRecords = []; return count; }, historyReuse: async () => null, historyReveal: async () => false, historySource: async () => false, historyCopy: async () => false, historyRelink: async () => null, historyDelete: async id => {
+      if (preparationRuns.has(id)) throw new Error('Conversion is running for this item. Cancel it first.');
       if (id === 'preview-history-3') throw new Error('Preview fixture: file is busy.');
       const record = historyRecords.find(record => record.id === id);
       historyRecords = historyRecords.filter(record => record.id !== id);
@@ -553,6 +588,7 @@ if (previewParam !== null) {
       (document.getElementById('download-youtube-btn') as HTMLButtonElement | null)?.click();
       return;
     }
+    if (previewParam === 'history-retry') { (document.getElementById('surface-nav-library') as HTMLButtonElement | null)?.click(); return; }
     if (previewParam === 'pixabay') {
       (document.getElementById('provider-pexels') as HTMLButtonElement | null)?.click();
       (document.getElementById('stock-source-pixabay') as HTMLButtonElement | null)?.click();

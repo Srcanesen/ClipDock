@@ -20,14 +20,14 @@ interface PreviewBounds { x: number; y: number; width: number; height: number; }
 interface YoutubePreviewState { state: 'closed' | 'failed'; reason: 'closed' | 'escape' | 'load' | 'crash'; }
 interface TransferResult { ok: boolean; kind: string; message: string; }
 interface SubtitleCue { start: number; end: number; text: string; }
-interface HistoryRecord { id: string; provider: Provider; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; quality: string | null; mediaMode: string; selection: YoutubeSelection; automation: { provider: Provider; source: string; selection: YoutubeSelection; chapters: YoutubeChapter[] }; createdAt: number; lastUsedAt: number; available: boolean; cardId?: string; subtitle?: { fileName: string; bytes: number; available: boolean }; }
+interface HistoryRecord { id: string; provider: Provider; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; preparationFailed?: { profile: Exclude<MediaProfile, 'original'> }; quality: string | null; mediaMode: string; selection: YoutubeSelection; automation: { provider: Provider; source: string; selection: YoutubeSelection; chapters: YoutubeChapter[] }; createdAt: number; lastUsedAt: number; available: boolean; cardId?: string; subtitle?: { fileName: string; bytes: number; available: boolean }; }
 interface YoutubeSearchItem { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; isShort: boolean | null; channelVerified: boolean; }
 interface YoutubeSearchPage { query: string; page: number; pageSize: number; results: YoutubeSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number | null; pageCount: number | null; thumbnailDiagnostic?: { failed: number; total: number; reason: string; node: string }; }
 interface YoutubeSearchEvent { generation: number; page: YoutubeSearchPage; }
 interface YoutubeEvent { jobId: string; state: string; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; subtitle?: MediaCard; warning?: string; }
 interface SocialEvent { jobId: string; state: string; percent: number | null; message: string; speedBytesPerSecond?: number | null; etaSeconds?: number | null; cardId?: string; fileName?: string; warning?: string; }
 
-declare global { interface Window { clipdockAPI: { getStatus(): Promise<StatusSnapshot>; downloadFolderStatus(): Promise<DownloadFolderStatus>; chooseDownloadFolder(): Promise<DownloadFolderStatus>; onResolveQuit(callback: () => void): () => void; selectFile(): Promise<{ canceled: boolean; cardId?: string; fileName?: string }>; startNativeDrag(cardIds: string | string[]): void; importToMediaPool(id: string, bin: TargetBin): Promise<TransferResult>; addToTimeline(id: string, bin: TargetBin, placement: TimelinePlacement): Promise<TransferResult>; searchYoutube(query: string, page: number, generation?: number, options?: SearchOptions): Promise<YoutubeSearchPage>; onYoutubeSearchPage(callback: (event: YoutubeSearchEvent) => void): () => void; cancelYoutubeSearch(): Promise<boolean>; prefetchYoutube(url: string): Promise<void>; loadYoutube(url: string): Promise<YoutubeMetadata>; downloadYoutube(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string, options: DownloadOptions): Promise<{ cardId: string; fileName: string; subtitle?: MediaCard; warning?: string }>; cancelYoutube(id: string): Promise<boolean>; loadSocial(url: string): Promise<SocialMetadata>; loadSocialThumbnail?(url: string): Promise<string | null>; downloadSocial(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelSocial(id: string): Promise<boolean>; onSocialEvent(callback: (event: SocialEvent) => void): () => void; loadPinterest(url: string): Promise<PinterestMetadata>; searchPinterest(query: string, page: number, options?: SearchOptions): Promise<PinterestSearchPage>; downloadPinterest(url: string, itemIndex: number, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPinterest(id: string): Promise<boolean>; onPinterestEvent(callback: (event: PinterestEvent) => void): () => void; queueDelete(cardId: string): Promise<{ deleted: boolean; message: string }>; searchSubtitles(url: string, language: SubtitleLanguage): Promise<SubtitleCue[]>; onYoutubeEvent(callback: (event: YoutubeEvent) => void): () => void; setAlwaysOnTop(pinned: boolean): Promise<boolean>; pexelsKeyStatus(): Promise<PexelsConnectionStatus>; setPexelsKey(key: string): Promise<PexelsConnectionStatus>; clearPexelsKey(): Promise<PexelsConnectionStatus>; searchPexels(kind: PexelsKind, query: string, page: number, options?: SearchOptions): Promise<PexelsPage>; loadPexels(kind: PexelsKind, id: number): Promise<PexelsAsset>; downloadPexels(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPexels(id: string): Promise<boolean>; cancelPexelsRequests(): Promise<boolean>; onPexelsEvent(callback: (event: PexelsEvent) => void): () => void; openPexelsExternal(url: string): Promise<boolean>; pixabayKeyStatus(): Promise<PexelsConnectionStatus>; setPixabayKey(key: string): Promise<PexelsConnectionStatus>; clearPixabayKey(): Promise<PexelsConnectionStatus>; searchPixabay(kind: 'video', query: string, page: number, options?: SearchOptions): Promise<PexelsPage>; loadPixabay(kind: 'video', id: number): Promise<PexelsAsset>; downloadPixabay(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPixabay(id: string): Promise<boolean>; cancelPixabayRequests(): Promise<boolean>; onPixabayEvent(callback: (event: PexelsEvent) => void): () => void; openPixabayExternal(url: string): Promise<boolean>; openYoutubeExternal(videoId: string, startSeconds?: number): Promise<boolean>; openYoutubePreview(videoId: string, startSeconds: number | undefined, bounds: PreviewBounds): Promise<boolean>; closeYoutubePreview(): Promise<boolean>; setYoutubePreviewBounds(bounds: PreviewBounds): Promise<boolean>; onYoutubePreviewState(callback: (state: YoutubePreviewState) => void): () => void; workspaceStatus(): Promise<WorkspaceSummary>; openWorkspace(): Promise<boolean>; cleanupWorkspace(): Promise<WorkspaceCleanupResult>; historyList(): Promise<HistoryRecord[]>; historyThumbnail?(id: string): Promise<string | null>; historyClear(): Promise<number>; historyReuse(id: string): Promise<MediaCard | null>; historyReveal(id: string): Promise<boolean>; historyRevealSubtitle(id: string): Promise<boolean>; historySource(id: string): Promise<boolean>; historyCopy(id: string): Promise<boolean>; historyRelink(id: string): Promise<HistoryRecord | null>; historyDelete(id: string): Promise<{ deleted: boolean; removed: boolean; historyWriteFailed?: true; warning?: string; removedCardIds?: string[] }>; }; } }
+declare global { interface Window { clipdockAPI: { getStatus(): Promise<StatusSnapshot>; downloadFolderStatus(): Promise<DownloadFolderStatus>; chooseDownloadFolder(): Promise<DownloadFolderStatus>; onResolveQuit(callback: () => void): () => void; selectFile(): Promise<{ canceled: boolean; cardId?: string; fileName?: string }>; startNativeDrag(cardIds: string | string[]): void; importToMediaPool(id: string, bin: TargetBin): Promise<TransferResult>; addToTimeline(id: string, bin: TargetBin, placement: TimelinePlacement): Promise<TransferResult>; searchYoutube(query: string, page: number, generation?: number, options?: SearchOptions): Promise<YoutubeSearchPage>; onYoutubeSearchPage(callback: (event: YoutubeSearchEvent) => void): () => void; cancelYoutubeSearch(): Promise<boolean>; prefetchYoutube(url: string): Promise<void>; loadYoutube(url: string): Promise<YoutubeMetadata>; downloadYoutube(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string, options: DownloadOptions): Promise<{ cardId: string; fileName: string; subtitle?: MediaCard; warning?: string }>; cancelYoutube(id: string): Promise<boolean>; loadSocial(url: string): Promise<SocialMetadata>; loadSocialThumbnail?(url: string): Promise<string | null>; downloadSocial(url: string, quality: YoutubeQuality, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelSocial(id: string): Promise<boolean>; onSocialEvent(callback: (event: SocialEvent) => void): () => void; loadPinterest(url: string): Promise<PinterestMetadata>; searchPinterest(query: string, page: number, options?: SearchOptions): Promise<PinterestSearchPage>; downloadPinterest(url: string, itemIndex: number, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPinterest(id: string): Promise<boolean>; onPinterestEvent(callback: (event: PinterestEvent) => void): () => void; queueDelete(cardId: string): Promise<{ deleted: boolean; message: string }>; searchSubtitles(url: string, language: SubtitleLanguage): Promise<SubtitleCue[]>; onYoutubeEvent(callback: (event: YoutubeEvent) => void): () => void; setAlwaysOnTop(pinned: boolean): Promise<boolean>; pexelsKeyStatus(): Promise<PexelsConnectionStatus>; setPexelsKey(key: string): Promise<PexelsConnectionStatus>; clearPexelsKey(): Promise<PexelsConnectionStatus>; searchPexels(kind: PexelsKind, query: string, page: number, options?: SearchOptions): Promise<PexelsPage>; loadPexels(kind: PexelsKind, id: number): Promise<PexelsAsset>; downloadPexels(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPexels(id: string): Promise<boolean>; cancelPexelsRequests(): Promise<boolean>; onPexelsEvent(callback: (event: PexelsEvent) => void): () => void; openPexelsExternal(url: string): Promise<boolean>; pixabayKeyStatus(): Promise<PexelsConnectionStatus>; setPixabayKey(key: string): Promise<PexelsConnectionStatus>; clearPixabayKey(): Promise<PexelsConnectionStatus>; searchPixabay(kind: 'video', query: string, page: number, options?: SearchOptions): Promise<PexelsPage>; loadPixabay(kind: 'video', id: number): Promise<PexelsAsset>; downloadPixabay(asset: PexelsAsset, fileId: string, profile: MediaProfile, id: string): Promise<{ cardId: string; fileName: string; warning?: string }>; cancelPixabay(id: string): Promise<boolean>; cancelPixabayRequests(): Promise<boolean>; onPixabayEvent(callback: (event: PexelsEvent) => void): () => void; openPixabayExternal(url: string): Promise<boolean>; openYoutubeExternal(videoId: string, startSeconds?: number): Promise<boolean>; openYoutubePreview(videoId: string, startSeconds: number | undefined, bounds: PreviewBounds): Promise<boolean>; closeYoutubePreview(): Promise<boolean>; setYoutubePreviewBounds(bounds: PreviewBounds): Promise<boolean>; onYoutubePreviewState(callback: (state: YoutubePreviewState) => void): () => void; workspaceStatus(): Promise<WorkspaceSummary>; openWorkspace(): Promise<boolean>; cleanupWorkspace(): Promise<WorkspaceCleanupResult>; historyRetryPreparation(id: string): Promise<{ cancelled: true } | { cancelled: false; profile: Exclude<MediaProfile, 'original'> }>; historyCancelPreparation(id: string): Promise<boolean>; onHistoryPreparationProgress(callback: (event: { id: string; percent: number | null }) => void): () => void; historyList(): Promise<HistoryRecord[]>; historyThumbnail?(id: string): Promise<string | null>; historyClear(): Promise<number>; historyReuse(id: string): Promise<MediaCard | null>; historyReveal(id: string): Promise<boolean>; historyRevealSubtitle(id: string): Promise<boolean>; historySource(id: string): Promise<boolean>; historyCopy(id: string): Promise<boolean>; historyRelink(id: string): Promise<HistoryRecord | null>; historyDelete(id: string): Promise<{ deleted: boolean; removed: boolean; historyWriteFailed?: true; warning?: string; removedCardIds?: string[] }>; }; } }
 
 const $ = (id: string): HTMLElement => { const el = document.getElementById(id); if (!el) throw new Error(`Missing #${id}`); return el; };
 // Drawn contact print for results without a photo: a seeded skyline in darkroom
@@ -177,6 +177,8 @@ let historyRecords: HistoryRecord[] = [];
 const selectedHistoryIds = new Set<string>();
 const historySelectionViews = new Map<string, { row: HTMLElement; checkbox: HTMLInputElement }>();
 let historySelectionAnchor: string | null = null;
+const historyPreparations = new Map<string, { percent: number | null; cancelling: boolean }>();
+const historyPreparationViews = new Map<string, { badge: HTMLElement; label: HTMLElement; control: HTMLButtonElement; fileName: string }>();
 let historyDeleteIds: string[] = [];
 let historyDeleteBusy = false;
 const historyThumbnailCache = new Map<string, string>();
@@ -2349,6 +2351,39 @@ async function useHistoryRecord(record: HistoryRecord, placement?: TimelinePlace
   showActionResult(result.message, result.ok);
 }
 function invalidateDeletedCards(cardIds: string[] = []): void { downloadQueue.invalidateCards(cardIds); }
+function paintHistoryPreparation(id: string): void {
+  const view = historyPreparationViews.get(id);
+  if (!view) return;
+  const run = historyPreparations.get(id);
+  view.badge.textContent = run ? `Converting…${run.percent === null ? '' : ` ${Math.round(run.percent)}%`}` : 'Not converted';
+  const label = run ? 'Cancel' : 'Retry conversion';
+  view.label.textContent = label;
+  view.control.setAttribute('aria-label', `${label}: ${view.fileName}`);
+  view.control.disabled = run?.cancelling === true;
+}
+async function retryHistoryPreparation(record: HistoryRecord): Promise<void> {
+  const run = historyPreparations.get(record.id);
+  if (run) {
+    if (run.cancelling) return;
+    run.cancelling = true; paintHistoryPreparation(record.id);
+    try { await window.clipdockAPI.historyCancelPreparation(record.id); }
+    catch (error) { run.cancelling = false; paintHistoryPreparation(record.id); showActionResult(error instanceof Error ? error.message : String(error), false); }
+    return;
+  }
+  historyPreparations.set(record.id, { percent: null, cancelling: false }); paintHistoryPreparation(record.id);
+  try {
+    const result = await window.clipdockAPI.historyRetryPreparation(record.id);
+    if (result.cancelled) showActionResult('Conversion cancelled.');
+    else { forgetHistoryThumbnail(record.id); showActionResult(`Converted to ${profileLabel(result.profile)}.`, true); }
+  } catch (error) {
+    const message = typeof (error as { message?: unknown })?.message === 'string' ? (error as { message: string }).message : String(error);
+    showActionResult(`${message} The original is still in History.`, false);
+  } finally {
+    historyPreparations.delete(record.id); paintHistoryPreparation(record.id);
+    await refreshHistory();
+  }
+}
+
 async function deleteHistoryRecord(id: string): ReturnType<Window['clipdockAPI']['historyDelete']> {
   const result = await window.clipdockAPI.historyDelete(id);
   if (result.removed) {
@@ -2618,7 +2653,7 @@ async function renderHistory(): Promise<void> {
   const visible = matches.slice(0, historyVisibleCount);
   closeHistoryActions();
   const restoreFocus = captureListFocus(list, 'recordId');
-  list.replaceChildren(); historyHostRefreshers = []; historySelectionViews.clear(); renderHistoryChips();
+  list.replaceChildren(); historyHostRefreshers = []; historySelectionViews.clear(); historyPreparationViews.clear(); renderHistoryChips();
   renderHistoryStatus();
   if (showMore) showMore.classList.toggle('hidden', visible.length >= matches.length);
   if (historyEmpty) {
@@ -2726,6 +2761,15 @@ function appendHistoryRowFace(row: HTMLElement, record: HistoryRecord, more: HTM
     const relink = quick('Relink…', 'relink', 'btn sm'); relink.dataset.icon = 'link'; acts.append(relink);
     const remove = quick('Delete', 'delete', 'icon-btn history-icon delete'); remove.title = 'Remove from history'; acts.append(remove);
   }
+  if (record.preparationFailed) {
+    const badge = document.createElement('span'); badge.className = 'st history-preparation-badge';
+    badge.setAttribute('role', 'status'); info.removeAttribute('aria-hidden'); status.append(badge);
+    const control = button('', () => { void retryHistoryPreparation(record); }); control.className = 'btn sm history-retry-preparation';
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); icon.setAttribute('aria-hidden', 'true'); icon.setAttribute('focusable', 'false');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', '#i-retry'); icon.append(use);
+    const label = document.createElement('span'); control.append(icon, label); acts.prepend(control);
+    historyPreparationViews.set(record.id, { badge, label, control, fileName: record.fileName }); paintHistoryPreparation(record.id);
+  }
   more.title = 'More actions';
   row.append(mini, info, acts);
 }
@@ -2741,6 +2785,10 @@ function clickButtonOnPlainEnter(inputId: string, buttonId: string): void {
 window.addEventListener('DOMContentLoaded', () => {
   $('refresh-btn').addEventListener('click', () => refresh());
   document.getElementById('clear-finished-btn')?.addEventListener('click', clearFinishedDownloads);
+  const unsubscribeHistoryPreparation = window.clipdockAPI.onHistoryPreparationProgress?.(event => {
+    const run = historyPreparations.get(event.id);
+    if (run) { run.percent = event.percent; paintHistoryPreparation(event.id); }
+  }) ?? (() => undefined);
   const unsubscribeYoutubeSearch = window.clipdockAPI.onYoutubeSearchPage?.(handleYoutubeSearchPage) ?? (() => undefined);
   const unsubscribeYoutubePreview = window.clipdockAPI.onYoutubePreviewState?.(handleYoutubePreviewState) ?? (() => undefined);
   const unsubscribeResolveQuit = window.clipdockAPI.onResolveQuit(() => {
@@ -2769,7 +2817,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.addEventListener?.('visibilitychange', onHostVisibilityChange);
   if (document.visibilityState === 'visible') startHostPolling();
   window.addEventListener('beforeunload', () => {
-    cancelPendingYoutubeSearch(); unsubscribeYoutubeSearch(); unsubscribeResolveQuit(); unsubscribeYoutubePreview();
+    cancelPendingYoutubeSearch(); unsubscribeHistoryPreparation(); unsubscribeYoutubeSearch(); unsubscribeResolveQuit(); unsubscribeYoutubePreview();
     window.removeEventListener('focus', scheduleHostRefresh);
     document.removeEventListener?.('visibilitychange', onHostVisibilityChange);
     stopHostPolling();

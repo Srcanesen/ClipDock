@@ -4,14 +4,21 @@ import type { StatusSnapshot } from './status';
 import type { TargetBin, TimelinePlacement, TransferResult } from './transfer';
 export type { TargetBin, TimelinePlacement };
 
-// @ts-ignore — plain .mjs contract module, no declaration file needed; re-exported as canonical runtime values
+// @ts-ignore — plain .mjs contract module, no declaration file needed
 import { IPC_CHANNELS as CONTRACT_IPC_CHANNELS } from '../scripts/lib/contracts.mjs';
-export const IPC_CHANNELS = CONTRACT_IPC_CHANNELS as typeof CONTRACT_IPC_CHANNELS;
+export const IPC_CHANNELS = {
+  ...CONTRACT_IPC_CHANNELS,
+  historyRetryPreparation: 'clipdock:history-retry-preparation',
+  historyCancelPreparation: 'clipdock:history-cancel-preparation',
+  historyPreparationProgress: 'clipdock:history-preparation-progress',
+} as const;
 // @ts-expect-error no types for .mjs contract
 export { PLUGIN_ID, DOWNLOAD_INTENTS, MEDIA_PROFILES, DIST_REQUIRED_FILES, REQUIRED_HTML_IDS, REQUIRED_HTML_IDS_FLAT } from '../scripts/lib/contracts.mjs';
 
 
 
+export type HistoryPreparationProgress = { id: string; percent: number | null };
+export type HistoryPreparationResult = { cancelled: true } | { cancelled: false; profile: Exclude<MediaProfile, 'original'> };
 /** History deletion also invalidates any session cards bound to the removed record. */
 export type HistoryDeleteResult = { deleted: boolean; removed: boolean; historyWriteFailed?: true; warning?: string; removedCardIds?: string[] };
 
@@ -54,7 +61,7 @@ export type SubtitleCue = { start: number; end: number; text: string };
 export type YoutubeMetadata = { id: string; title: string; duration: number | null; channel: string | null; thumbnailUrl: string | null; heights: number[]; formatSummary: string[]; chapters: YoutubeChapter[] };
 export type HistorySelection = { start: number; end: number; label: string } | null;
 export type HistoryAutomation = { provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; selection: HistorySelection; chapters: YoutubeChapter[] };
-export type HistoryRecord = { id: string; provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; available: boolean; /** Optional companion subtitle persisted by main; safe metadata only, never a path. */ subtitle?: { fileName: string; bytes: number; available: boolean }; /** Main-enriched opaque cardId bound for native drag. Present only when the record's file resolves and a card is registered; the absolute path never crosses IPC. */ cardId?: string };
+export type HistoryRecord = { id: string; provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; preparationFailed?: { profile: Exclude<MediaProfile, 'original'> }; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; available: boolean; /** Optional companion subtitle persisted by main; safe metadata only, never a path. */ subtitle?: { fileName: string; bytes: number; available: boolean }; /** Main-enriched opaque cardId bound for native drag. Present only when the record's file resolves and a card is registered; the absolute path never crosses IPC. */ cardId?: string };
 export type YoutubeSearchItem = { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; isShort: boolean | null; channelVerified: boolean };
 export type ThumbnailDiagnostic = { failed: number; total: number; reason: string; node: string };
 export type YoutubeSearchPage = { query: string; page: number; pageSize: 10; results: YoutubeSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: ThumbnailDiagnostic };
@@ -148,6 +155,9 @@ export interface ClipdockApi {
   workspaceStatus(): Promise<WorkspaceSummary>;
   openWorkspace(): Promise<boolean>;
   cleanupWorkspace(): Promise<WorkspaceCleanupResult>;
+  historyRetryPreparation(id: string): Promise<HistoryPreparationResult>;
+  historyCancelPreparation(id: string): Promise<boolean>;
+  onHistoryPreparationProgress(callback: (event: HistoryPreparationProgress) => void): () => void;
   historyList(): Promise<HistoryRecord[]>;
   historyThumbnail(id: string): Promise<string | null>;
   historyClear(): Promise<number>;
