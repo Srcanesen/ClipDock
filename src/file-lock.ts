@@ -1,6 +1,7 @@
 import { closeSync, fstatSync, linkSync, lstatSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { uptime } from 'node:os';
+import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 
 const LOCK_STALE_MS = 60_000;
 
@@ -9,6 +10,27 @@ const BOOT_MARGIN_MS = 60_000;
 
 type Snapshot = { dev: number; ino: number; mtimeMs: number; encoded: string; pid: number | null; createdAt: number | null };
 export type FileLock = { release(): void };
+/** Earliest possible start of the live process `pid`, epoch ms; undefined when it cannot be determined. */
+export type ProcessStartProbe = (pid: number) => number | undefined;
+export const probeProcessStart: ProcessStartProbe = pid => {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+  try {
+    const options: ExecFileSyncOptionsWithStringEncoding = {encoding: 'utf8', timeout: 2000, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore']};
+    if (process.platform === 'win32') {
+      const output = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', `[DateTimeOffset]::new((Get-Process -Id ${pid}).StartTime).ToUnixTimeMilliseconds()`], options).trim();
+      const startedAt = /^-?\d+$/.test(output) ? Number(output) : NaN;
+      return Number.isFinite(startedAt) ? startedAt : undefined;
+    }
+    if (process.platform !== 'darwin' && process.platform !== 'linux') return undefined;
+    const output = execFileSync('ps', ['-o', 'etime=', '-p', String(pid)], options).trim();
+    const match = /^(?:(?:(\d+)-)?(\d+):)?(\d{1,2}):(\d{2})$/.exec(output);
+    if (!match) return undefined;
+    const days = Number(match[1] ?? 0), hours = Number(match[2] ?? 0), minutes = Number(match[3]), seconds = Number(match[4]);
+    if (minutes >= 60 || seconds >= 60 || (match[1] !== undefined && hours >= 24)) return undefined;
+    const elapsedMs = ((days * 24 + hours) * 3600 + minutes * 60 + seconds) * 1000;
+    return Number.isFinite(elapsedMs) ? Date.now() - elapsedMs - 1000 : undefined;
+  } catch { return undefined; }
+};
 function snapshot(file: string): Snapshot | null {
   try {
     const info = lstatSync(file);
@@ -25,15 +47,19 @@ function snapshot(file: string): Snapshot | null {
     throw error;
   }
 }
-function recoverable(owner: Snapshot): boolean {
+function recoverable(owner: Snapshot, processStartProbe: ProcessStartProbe): boolean {
   if (owner.pid === null) return Date.now() - owner.mtimeMs >= LOCK_STALE_MS;
+  if (owner.pid === process.pid) return false;
   if (owner.createdAt !== null && owner.createdAt < Date.now() - uptime() * 1000 - BOOT_MARGIN_MS) return true;
-  try { process.kill(owner.pid, 0); return false; }
+  try { process.kill(owner.pid, 0); }
   catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+  if (owner.createdAt === null) return false;
+  const startedAt = processStartProbe(owner.pid);
+  return startedAt !== undefined && startedAt > owner.createdAt;
 }
-function unlinkOwned(file: string, owner: Snapshot, recovering = false): void {
+function unlinkOwned(file: string, owner: Snapshot, recovering = false, processStartProbe: ProcessStartProbe = probeProcessStart): void {
   const current = snapshot(file);
-  if (current?.dev === owner.dev && current.ino === owner.ino && current.encoded === owner.encoded && (!recovering || recoverable(current))) unlinkSync(file);
+  if (current?.dev === owner.dev && current.ino === owner.ino && current.encoded === owner.encoded && (!recovering || recoverable(current, processStartProbe))) unlinkSync(file);
 }
 function publish(file: string): FileLock | null {
   // Publish complete owner data atomically: a crash cannot leave an empty lock.
@@ -56,20 +82,20 @@ function publish(file: string): FileLock | null {
   if (!linked) return null;
   return {release: () => unlinkOwned(file, owner)};
 }
-/** Nonblocking acquisition. Recover dead PIDs or aged legacy locks without a valid owner. */
-export function tryAcquireFileLock(file: string, recoveryDepth = 0): FileLock | null {
+/** Try to acquire, recovering dead owners or aged legacy locks without a valid owner. */
+export function tryAcquireFileLock(file: string, recoveryDepth = 0, processStartProbe: ProcessStartProbe = probeProcessStart): FileLock | null {
   const acquired = publish(file);
   if (acquired) return acquired;
   const before = snapshot(file);
-  if (!before || !recoverable(before) || recoveryDepth >= 8) return null;
+  if (!before || !recoverable(before, processStartProbe) || recoveryDepth >= 8) return null;
   // Serialize stale-owner recovery. Re-read INSIDE this guard: a contender may
   // have replaced the pathname while we waited. A crashed guard is recovered
   // by the same protocol at the next level; excessive crash chains fail closed.
-  const recovery = tryAcquireFileLock(`${file}.recovery`, recoveryDepth + 1);
+  const recovery = tryAcquireFileLock(`${file}.recovery`, recoveryDepth + 1, processStartProbe);
   if (!recovery) return null;
   try {
     const current = snapshot(file);
-    if (current && recoverable(current)) unlinkOwned(file, current, true);
+    if (current && recoverable(current, processStartProbe)) unlinkOwned(file, current, true, processStartProbe);
     return publish(file);
   } finally { recovery.release(); }
 }
