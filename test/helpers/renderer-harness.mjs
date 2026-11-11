@@ -7,7 +7,7 @@ import { transpilePreviewAdapter } from '../../scripts/lib/preview-adapter.mjs';
 
 const renderer = readFileSync(new URL('../../dist/renderer.js', import.meta.url), 'utf8');
 
-export function createHarness({ eventsOnly = false, preferencesInit = {}, previewMode } = {}) {
+export function createHarness({ eventsOnly = false, preferencesInit = {}, previewMode, setInterval = () => 0 } = {}) {
   const elements = new Map();
   let activeElement = null;
   const { makeElement } = createFakeDom({ onFocus: (element) => { activeElement = element; }, bounds: { right: 800, bottom: 500, width: 800, height: 500 } });
@@ -105,7 +105,7 @@ export function createHarness({ eventsOnly = false, preferencesInit = {}, previe
   };
   const preferences = new Map(Object.entries(preferencesInit));
   const preferenceWrites = [];
-  const fakeWindow = { clipdockAPI: api, innerWidth: 960, innerHeight: 720, localStorage: { getItem: (key) => preferences.get(key) ?? null, setItem: (key, value) => { preferences.set(key, String(value)); preferenceWrites.push([key, String(value)]); } }, matchMedia: () => ({ matches: false }), addEventListener: (type, callback) => { (windowListeners[type] ??= []).push(callback); }, removeEventListener: () => undefined, requestAnimationFrame: () => { animationFrameRequests += 1; return animationFrameRequests; }, setTimeout, clearTimeout, setInterval: () => 0, clearInterval: () => undefined, confirm: () => true };
+  const fakeWindow = { clipdockAPI: api, innerWidth: 960, innerHeight: 720, localStorage: { getItem: (key) => preferences.get(key) ?? null, setItem: (key, value) => { preferences.set(key, String(value)); preferenceWrites.push([key, String(value)]); } }, matchMedia: () => ({ matches: false }), addEventListener: (type, callback) => { (windowListeners[type] ??= []).push(callback); }, removeEventListener: () => undefined, requestAnimationFrame: () => { animationFrameRequests += 1; return animationFrameRequests; }, setTimeout, clearTimeout, setInterval, clearInterval: () => undefined, confirm: () => true };
   const sandbox = { window: fakeWindow, document, console, Date, Intl, Math, Number, Promise, URL, WeakMap, Set, Map, queueMicrotask, crypto: { randomUUID: (() => { let i = 0; return () => `test-${++i}`; })(), getRandomValues: (value) => value }, setTimeout, clearTimeout };
   if (previewMode) {
     fakeWindow.location = { search: `?preview=${previewMode}` };

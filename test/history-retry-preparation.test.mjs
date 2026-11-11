@@ -347,7 +347,7 @@ test('a direct retry refreshes active and passive card profiles without deleting
   assert.equal(readFileSync(f.file, 'utf8'), 'original bytes');
 });
 
-test('main retry updates a file-dialog card even before History has ever been listed', async t => {
+test('main retry keeps a file-dialog card on its in-use original before History has ever been listed', async t => {
   const { mainFixture, historyInput } = await import('./helpers/files-main.mjs');
   let output;
   const f = await mainFixture(t, { modules: { './media-prep': { createMediaPrep: () => ({
@@ -365,7 +365,7 @@ test('main retry updates a file-dialog card even before History has ever been li
   const transferred = []; f.controls.transfer = async file => { transferred.push(file); return { ok: true, kind: 'imported' }; };
   assert.equal(JSON.stringify(await f.invoke('historyRetryPreparation', record.id)), JSON.stringify({ cancelled: false, profile: 'fast', originalKept: true }));
   assert.equal((await f.invoke('importToMediaPool', selected.cardId, 'active')).ok, true);
-  assert.deepEqual(transferred, [output]); assert.equal(readFileSync(source, 'utf8'), 'original bytes');
+  assert.deepEqual(transferred, [source]); assert.equal(readFileSync(output, 'utf8'), 'prepared bytes'); assert.equal(readFileSync(source, 'utf8'), 'original bytes');
   assert.equal(f.controls.history.resolve(record.id).path, source); assert.equal(f.controls.history.get(record.id).preparationFailed, undefined);
 });
 
@@ -433,10 +433,10 @@ for (const reason of ['shared History file', 'protected path']) test(`retry pres
   const restarted = new DownloadHistory(f.store, f.managed); t.after(() => restarted.dispose());
   assert.equal(restarted.get(f.record.id).available, true); assert.equal(restarted.get(prepared.id).available, true);
   if (card) {
-    assert.equal(f.ledger.resolve(card.cardId).historyId, prepared.id); assert.equal(f.ledger.resolve(card.cardId).profile, 'fast');
+    assert.equal(f.ledger.resolve(card.cardId).historyId, f.record.id); assert.equal(f.ledger.resolve(card.cardId).profile, 'original');
     assert.equal(f.ledger.deleteCard(card.cardId).deleted, true);
-    assert.equal(f.history.get(prepared.id), null); assert.equal(f.history.get(f.record.id).available, true);
-    assert.equal(readFileSync(f.file, 'utf8'), 'original bytes');
+    assert.equal(f.history.get(f.record.id), null); assert.equal(f.history.get(prepared.id).available, true);
+    assert.equal(existsSync(f.file), false);
   }
 });
 test('an exception after the durable History save recovers success without removing its prepared file', async t => {
@@ -498,4 +498,62 @@ test('a refused direct retry cannot mistake another record for its own successfu
   try { await assert.rejects(api.retryPreparation(f.record.id), /locked by another writer/); } finally { lock.release(); }
   assert.equal(readFileSync(f.store, 'utf8'), before); assert.deepEqual(f.history.get(f.record.id).preparationFailed, { profile: 'fast' });
   assert.equal(readFileSync(f.file, 'utf8'), 'original bytes');
+});
+
+test('an in-use original keeps every existing ledger reference when its prepared file gets a new record', async t => {
+  const f = fixture(t); const passive = f.ledger.listHistory()[0].cardId;
+  const reused = f.ledger.reuseHistory(f.record.id);
+  const root = f.history.resolve(f.record.id).trustedRoot;
+  const alias = f.ledger.register({ path: f.file, historyId: f.record.id }, root);
+  const external = f.ledger.registerExternal(f.file);
+  const api = mainProcess.createHistoryPreparationHandlers({ history: f.history, prepareMedia: f.worker.prepare, cancelMediaPreparation: f.worker.cancel,
+    protectedPaths: () => f.ledger.protectedPaths(), replaced: (id, preparedId) => f.ledger.bindHistory(id, preparedId) });
+  assert.deepEqual(await api.retryPreparation(f.record.id), { cancelled: false, profile: 'fast', originalKept: true });
+  for (const id of [passive, reused.cardId, alias, external]) assert.equal(f.ledger.resolve(id).path, f.file);
+  for (const id of [reused.cardId, alias]) {
+    const card = f.ledger.resolve(id); assert.equal(card.historyId, f.record.id); assert.equal(card.profile, 'original'); assert.equal(card.ownedMedia.path, f.file);
+  }
+  assert.deepEqual(f.ledger.protectedPaths(), [f.file]);
+  const prepared = f.ledger.listHistory().find(record => record.profile === 'fast');
+  assert.notEqual(prepared.id, f.record.id); assert.equal(f.ledger.resolve(prepared.cardId).path, path.join(f.managed, 'retained.resolve.mp4'));
+  assert.equal(readFileSync(f.file, 'utf8'), 'original bytes'); assert.equal(f.history.get(f.record.id).preparationFailed, undefined);
+});
+
+test('periodic restored-retry refresh updates controls in place and preserves an open History menu', async () => {
+  const intervals = []; const h = createHarness({ setInterval: (callback, ms) => { intervals.push({ callback, ms }); return intervals.length; } });
+  let record = { ...metadata, id: 'polling', fileName: 'retained.webm', bytes: 14, createdAt: 1, lastUsedAt: 1, available: true, preparationFailed: { profile: 'fast' }, preparing: true };
+  let requests = 0, progress;
+  h.api.historyList = async () => { requests++; return [{ ...record }]; };
+  h.api.onHistoryPreparationProgress = callback => { progress = callback; return () => {}; };
+  await h.fireReady(); h.test.setSurface('library'); await h.flush();
+  const poll = intervals.find(interval => interval.ms === 3000)?.callback; assert.equal(typeof poll, 'function');
+  const list = h.elements.get('history-list'); const row = list.children[0]; const all = descend(row);
+  const more = all.find(el => el.classList?.contains('history-actions')); const menu = all.find(el => el.getAttribute?.('role') === 'menu');
+  const control = all.find(el => el.classList?.contains('history-retry-preparation')); const badge = all.find(el => el.classList?.contains('history-preparation-badge'));
+  const checkbox = all.find(el => el.classList?.contains('history-selection')); checkbox.checked = true; checkbox.click(); list.scrollTop = 123;
+  more.click(); const focused = menu.children.find(el => el.textContent === 'Reveal in Finder'); focused.focus();
+  progress({ id: record.id, percent: 42 }); const before = requests; poll(); await h.flush();
+  assert.equal(requests, before + 1); assert.equal(list.children[0] === row, true, 'the existing History row is retained');
+  assert.equal(menu.classList.contains('hidden'), false); assert.equal(more.getAttribute('aria-expanded'), 'true'); assert.equal(h.activeElement === focused, true, 'menu focus is retained');
+  assert.equal(list.scrollTop, 123); assert.equal(checkbox.checked, true); assert.equal(badge.textContent, 'Converting… 42%');
+  record = { ...record, preparing: false }; poll(); await h.flush();
+  assert.equal(list.children[0] === row, true, 'the existing History row is retained'); assert.equal(menu.classList.contains('hidden'), false); assert.equal(h.activeElement === focused, true, 'menu focus is retained');
+  assert.equal(badge.textContent, 'Not converted'); assert.equal(control.getAttribute('aria-label'), 'Retry conversion: retained.webm');
+  assert.equal(descend(control).find(el => el.tagName === 'USE').getAttribute('href'), '#i-retry');
+});
+
+for (const change of ['file', 'records']) test(`periodic retry refresh rebuilds History when ${change} changes`, async () => {
+  const intervals = []; const h = createHarness({ setInterval: (callback, ms) => { intervals.push({ callback, ms }); return intervals.length; } });
+  const record = { ...metadata, id: 'changing', fileName: 'retained.webm', bytes: 14, createdAt: 1, lastUsedAt: 1, available: true, preparationFailed: { profile: 'fast' }, preparing: true };
+  let records = [record]; h.api.historyList = async () => records.map(record => ({ ...record }));
+  await h.fireReady(); h.test.setSurface('library'); await h.flush();
+  const list = h.elements.get('history-list'), row = list.children[0];
+  const more = descend(row).find(el => el.classList?.contains('history-actions'));
+  const menu = descend(row).find(el => el.getAttribute?.('role') === 'menu'); more.click();
+  if (change === 'file') records = [{ ...record, fileName: 'prepared.resolve.mp4', profile: 'fast', preparing: false, preparationFailed: undefined }];
+  else records = [record, { ...record, id: 'added', fileName: 'other.mp4', preparing: false, preparationFailed: undefined }];
+  intervals.find(interval => interval.ms === 3000).callback(); await h.flush();
+  assert.equal(list.children[0] === row, false); assert.equal(menu.classList.contains('hidden'), true);
+  assert.equal(list.children.length, change === 'file' ? 1 : 2);
+  assert.equal(descend(list.children[0]).find(el => el.classList?.contains('f')).textContent, change === 'file' ? 'prepared.resolve.mp4' : 'retained.webm');
 });

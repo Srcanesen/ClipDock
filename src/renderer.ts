@@ -174,6 +174,7 @@ type HistoryProviderFilter = 'all' | Provider;
 type HistoryAvailabilityFilter = 'all' | 'available' | 'missing';
 const HISTORY_BATCH_SIZE = 20;
 let historyRecords: HistoryRecord[] = [];
+let renderedHistoryFiles: string | null = null;
 const selectedHistoryIds = new Set<string>();
 const historySelectionViews = new Map<string, { row: HTMLElement; checkbox: HTMLInputElement }>();
 let historySelectionAnchor: string | null = null;
@@ -567,7 +568,7 @@ function startHostPolling(): void {
   hostPollTimer = window.setInterval(() => {
     if (document.visibilityState !== 'visible') return;
     refresh();
-    if (currentSurface === 'library' && [...historyPreparations.values()].some(run => run.restored)) void refreshHistory();
+    if (currentSurface === 'library' && [...historyPreparations.values()].some(run => run.restored)) void refreshHistory(true);
   }, HOST_POLL_MS);
 }
 function stopHostPolling(): void {
@@ -2459,14 +2460,19 @@ function historyStatusCopy(total: number, matches: number, visible: number): str
   if (matches === 0) return 'No history entries match the current search or filters.';
   return `Showing ${visible} of ${matches} download${matches === 1 ? '' : 's'}.`;
 }
-async function refreshHistory(): Promise<void> {
+function historyFileSignature(records: HistoryRecord[]): string {
+  return JSON.stringify(records.map(record => [record.id, record.fileName, record.bytes, record.profile, record.available, record.cardId, record.subtitle?.fileName, record.subtitle?.bytes, record.subtitle?.available]));
+}
+async function refreshHistory(periodic = false): Promise<void> {
   const request = historyGuard.next();
-  historyStatusOverride = 'Loading history…';
-  historyDeleteResult = null;
-  document.getElementById('history-list')?.setAttribute?.('data-loading', 'true');
-  const empty = document.getElementById('history-empty-state');
-  if (empty) { empty.setAttribute('data-loading', 'true'); empty.hidden = true; empty.classList.add('hidden'); empty.setAttribute('aria-hidden', 'true'); }
-  renderHistoryStatus();
+  if (!periodic) {
+    historyStatusOverride = 'Loading history…';
+    historyDeleteResult = null;
+    document.getElementById('history-list')?.setAttribute?.('data-loading', 'true');
+    const empty = document.getElementById('history-empty-state');
+    if (empty) { empty.setAttribute('data-loading', 'true'); empty.hidden = true; empty.classList.add('hidden'); empty.setAttribute('aria-hidden', 'true'); }
+    renderHistoryStatus();
+  }
   try {
     const records = await window.clipdockAPI.historyList();
     if (historyGuard.isStale(request)) return;
@@ -2478,14 +2484,17 @@ async function refreshHistory(): Promise<void> {
     historyStatusOverride = null;
     document.getElementById('history-list')?.removeAttribute?.('data-loading');
     document.getElementById('history-empty-state')?.removeAttribute?.('data-loading');
-    renderHistory();
+    if (periodic && renderedHistoryFiles === historyFileSignature(records)) {
+      for (const id of historyPreparationViews.keys()) paintHistoryPreparation(id);
+      renderHistoryStatus();
+    } else renderHistory();
   } catch (err) {
     if (historyGuard.isStale(request)) return;
     historyStatusOverride = (err as Error).message;
-    historyDeleteResult = null;
+    if (!periodic) historyDeleteResult = null;
     document.getElementById('history-list')?.removeAttribute?.('data-loading');
     document.getElementById('history-empty-state')?.removeAttribute?.('data-loading');
-    renderHistory();
+    if (periodic) renderHistoryStatus(); else renderHistory();
   }
 }
 async function clearHistory(): Promise<void> {
@@ -2656,6 +2665,7 @@ function renderHistoryChips(): void {
 }
 async function renderHistory(): Promise<void> {
   const list = $('history-list');
+  renderedHistoryFiles = historyFileSignature(historyRecords);
   const showMore = document.getElementById('history-show-more') as HTMLButtonElement | null;
   const historyEmpty = document.getElementById('history-empty-state');
   const filters = historyFilters();

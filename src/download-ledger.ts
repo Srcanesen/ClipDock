@@ -94,8 +94,8 @@ export class DownloadLedger {
     if (!hit) return null;
     const failedId = typeof recordId === 'string' ? recordId : hit.record.id;
     const failed = this.failedPreparations.get(failedId);
-    if (failed && !hit.record.preparationFailed && hit.record.profile === failed.profile && hit.trustedRoot) {
-      // A completed preparation replaces every active alias, preserving opaque card ids.
+    if (failed && failedId === hit.record.id && !hit.record.preparationFailed && hit.record.profile === failed.profile && hit.trustedRoot) {
+      // A replaced source moves every active alias, preserving opaque card ids.
       // Relinking leaves the failure marker in place and does not move active cards.
       const media = captureFile(AnchoredDir.capture(hit.trustedRoot.verify(), hit.trustedRoot), hit.path);
       for (const [id, card] of this.cards) {
@@ -109,6 +109,7 @@ export class DownloadLedger {
       }
       this.failedPreparations.delete(failedId);
     }
+    if (failedId !== hit.record.id) this.failedPreparations.delete(failedId);
     const existingId = this.historyCards.get(hit.record.id);
     if (existingId) {
       const existing = this.resolve(existingId);
