@@ -18,7 +18,7 @@ export { PLUGIN_ID, DOWNLOAD_INTENTS, MEDIA_PROFILES, DIST_REQUIRED_FILES, REQUI
 
 
 export type HistoryPreparationProgress = { id: string; percent: number | null };
-export type HistoryPreparationResult = { cancelled: true } | { cancelled: false; profile: Exclude<MediaProfile, 'original'> };
+export type HistoryPreparationResult = { cancelled: true } | { cancelled: false; profile: Exclude<MediaProfile, 'original'>; originalKept?: true };
 /** History deletion also invalidates any session cards bound to the removed record. */
 export type HistoryDeleteResult = { deleted: boolean; removed: boolean; historyWriteFailed?: true; warning?: string; removedCardIds?: string[] };
 
@@ -61,7 +61,7 @@ export type SubtitleCue = { start: number; end: number; text: string };
 export type YoutubeMetadata = { id: string; title: string; duration: number | null; channel: string | null; thumbnailUrl: string | null; heights: number[]; formatSummary: string[]; chapters: YoutubeChapter[] };
 export type HistorySelection = { start: number; end: number; label: string } | null;
 export type HistoryAutomation = { provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; selection: HistorySelection; chapters: YoutubeChapter[] };
-export type HistoryRecord = { id: string; provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; preparationFailed?: { profile: Exclude<MediaProfile, 'original'> }; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; available: boolean; /** Optional companion subtitle persisted by main; safe metadata only, never a path. */ subtitle?: { fileName: string; bytes: number; available: boolean }; /** Main-enriched opaque cardId bound for native drag. Present only when the record's file resolves and a card is registered; the absolute path never crosses IPC. */ cardId?: string };
+export type HistoryRecord = { id: string; provider: 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; preparationFailed?: { profile: Exclude<MediaProfile, 'original'> }; preparing?: boolean; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; available: boolean; /** Optional companion subtitle persisted by main; safe metadata only, never a path. */ subtitle?: { fileName: string; bytes: number; available: boolean }; /** Main-enriched opaque cardId bound for native drag. Present only when the record's file resolves and a card is registered; the absolute path never crosses IPC. */ cardId?: string };
 export type YoutubeSearchItem = { id: string; title: string; channel: string | null; duration: number | null; url: string; thumbnailUrl: string | null; viewCount: number | null; publishedAt: number | null; isShort: boolean | null; channelVerified: boolean };
 export type ThumbnailDiagnostic = { failed: number; total: number; reason: string; node: string };
 export type YoutubeSearchPage = { query: string; page: number; pageSize: 10; results: YoutubeSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: ThumbnailDiagnostic };

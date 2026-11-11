@@ -454,18 +454,70 @@ export function createArtifactCompletionService(deps: ArtifactCompletionDependen
   return {completeDownload};
 }
 
+/** One cancellable FIFO shared by provider conversions and History retries. */
+export function serializeMediaPreparation(worker: ReturnType<typeof createMediaPrep>): ReturnType<typeof createMediaPrep> {
+  type Request = Parameters<typeof worker.prepare>[0];
+  type Result = Awaited<ReturnType<typeof worker.prepare>>;
+  type Entry = { request: Request; resolve: (result: Result) => void; reject: (error: unknown) => void; done: Promise<void>; finish: () => void };
+  const waiting: Entry[] = [];
+  let current: Entry | undefined;
+  let disposed = false;
+  let disposal: Promise<void> | undefined;
+  function pump(): void {
+    if (current || disposed) return;
+    const entry = waiting.shift(); if (!entry) return;
+    current = entry;
+    void (async () => {
+      try { entry.resolve(await worker.prepare(entry.request)); }
+      catch (error) { entry.reject(error); }
+      finally { current = undefined; entry.finish(); pump(); }
+    })();
+  }
+  function prepare(request: Request): Promise<Result> {
+    if (disposed) return Promise.reject(new ProviderJobRejectedError('disposed', 'Media preparation is shut down.'));
+    if (current?.request.jobId === request.jobId || waiting.some(entry => entry.request.jobId === request.jobId)) return Promise.reject(new ProviderJobRejectedError('busy', 'This media preparation job is already active.'));
+    return new Promise((resolve, reject) => {
+      let finish!: () => void;
+      const done = new Promise<void>(settled => { finish = settled; });
+      const entry = { request, resolve, reject, done, finish };
+      if (current) {
+        try { request.emit({ jobId: request.jobId, state: 'processing', percent: null, message: 'Waiting for media preparation…' }); }
+        catch (error) { reject(error); return; }
+      }
+      waiting.push(entry); pump();
+    });
+  }
+  function cancel(jobId: string): Promise<void> | null {
+    const index = waiting.findIndex(entry => entry.request.jobId === jobId);
+    if (index < 0) return current?.request.jobId === jobId ? worker.cancel(jobId) : null;
+    const [entry] = waiting.splice(index, 1);
+    entry.reject(new ProviderJobCancelledError('Media preparation cancelled.')); entry.finish();
+    return Promise.resolve();
+  }
+  function dispose(): Promise<void> {
+    if (disposal) return disposal;
+    disposed = true;
+    for (const entry of waiting.splice(0)) { entry.reject(new ProviderJobCancelledError('Media preparation cancelled.')); entry.finish(); }
+    const pending = current?.done;
+    disposal = Promise.resolve(worker.dispose()).then(async () => { await pending; });
+    return disposal;
+  }
+  return { prepare, cancel, dispose, isActive: () => !!current || waiting.length > 0 || worker.isActive() };
+}
+
 /** Retry a retained source using the same preparation worker and shutdown lifecycle as downloads. */
 export function createHistoryPreparationHandlers(deps: {
   history: DownloadHistory;
   prepareMedia: ReturnType<typeof createMediaPrep>['prepare'];
   cancelMediaPreparation: ReturnType<typeof createMediaPrep>['cancel'];
-  replaced: (id: string) => void;
+  protectedPaths?: () => Iterable<string>;
+  replaced: (id: string, preparedId?: string) => void;
 }) {
   const active = new Map<string, { jobId: string; cancelled: boolean; done: Promise<void> }>();
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | undefined;
   const validId = (id: unknown): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(id);
-  async function retryPreparation(id: unknown, emit: (event: { id: string; percent: number | null }) => void = () => undefined): Promise<{ cancelled: true } | { cancelled: false; profile: Exclude<MediaProfile, 'original'> }> {
+  async function retryPreparation(id: unknown, emit: (event: { id: string; percent: number | null }) => void = () => undefined): Promise<{ cancelled: true } | { cancelled: false; profile: Exclude<MediaProfile, 'original'>; originalKept?: true }> {
     if (!validId(id)) throw new Error('Invalid history record ID.');
     if (shuttingDown) throw new ProviderJobRejectedError('disposed', 'History conversion is shut down.');
     if (active.has(id)) throw new ProviderJobRejectedError('busy', 'Conversion is already running for this item.');
@@ -486,13 +538,21 @@ export function createHistoryPreparationHandlers(deps: {
       if (prepared.filePath !== hit.path) output = captureFile(AnchoredDir.capture(root.verify(), root), prepared.filePath);
       verifyFile(source);
       if (run.cancelled) throw new ProviderJobCancelledError('Conversion cancelled.');
-      const next = deps.history.replacePreparedArtifact(id, { filePath: prepared.filePath, profile: record.preparationFailed.profile });
+      let next: (HistoryRecord & { originalKept?: true }) | null;
+      try { next = deps.history.replacePreparedArtifact(id, { filePath: prepared.filePath, profile: record.preparationFailed.profile }, deps.protectedPaths?.() ?? []); }
+      catch (error) {
+        // A durable commit can precede a failing cache/public projection step.
+        const original = deps.history.get(id);
+        const committed = original && !original.preparationFailed ? deps.history.list().find(candidate => candidate.profile === record.preparationFailed!.profile && !candidate.preparationFailed && deps.history.resolve(candidate.id)?.path === prepared.filePath) : undefined;
+        if (!committed) throw error;
+        next = { ...committed, ...(committed.id !== id ? { originalKept: true as const } : {}) };
+      }
       if (!next) throw new Error('History item could not be updated.');
       // The saved record now owns the prepared output. Cleanup cannot roll back that commit.
       const converted = output; output = undefined;
-      try { deps.replaced(id); } catch { /* The next History listing retries the ledger binding. */ }
-      if (converted) { try { removeOwned(source); } catch { /* Preserve the source if safe cleanup is no longer possible. */ } }
-      return { cancelled: false, profile: record.preparationFailed.profile };
+      try { deps.replaced(id, next.id); } catch { /* The next History listing retries the ledger binding. */ }
+      if (converted && !next.originalKept) { try { removeOwned(source); } catch { /* Preserve the source if safe cleanup is no longer possible. */ } }
+      return { cancelled: false, profile: record.preparationFailed.profile, ...(next.originalKept ? { originalKept: true } : {}) };
     } catch (error) {
       if (output) removeOwned(output);
       if (error instanceof ProviderJobCancelledError) return { cancelled: true };
@@ -516,7 +576,7 @@ export function createHistoryPreparationHandlers(deps: {
     shutdownPromise = Promise.allSettled(cancellations).then(async () => { await Promise.all(runs.map(run => run.done)); });
     return shutdownPromise;
   }
-  return { retryPreparation, cancelPreparation, shutdown };
+  return { retryPreparation, cancelPreparation, shutdown, isPreparing: (id: string) => active.has(id) };
 }
 
 // ---- Provider download orchestration seam ---------------------------------

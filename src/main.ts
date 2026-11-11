@@ -22,7 +22,7 @@ import { pathToFileURL } from 'node:url';
 const WorkflowIntegration = require('./WorkflowIntegration.node');
 
 import { IPC_CHANNELS, PLUGIN_ID } from './shared';
-import { createHistoryPreparationHandlers, normalizeSearchOptions, isSafeMediaFile as isSafeMediaFileHelper, normalizePreviewBounds, registerMainTransferInvokeHandlers, SessionTransferCards, resolveMainProcessCard, createSensitiveIpcHandler as sensitiveHandler, discoverEnginePaths, applyDockIcon, runStartupSequence, youtubePreviewUrl, YOUTUBE_PREVIEW_REFERRER, type ArtifactCompletionDependencies, type MainIpcRegistrar, type PreviewBounds } from './main-process';
+import { createHistoryPreparationHandlers, serializeMediaPreparation, normalizeSearchOptions, isSafeMediaFile as isSafeMediaFileHelper, normalizePreviewBounds, registerMainTransferInvokeHandlers, SessionTransferCards, resolveMainProcessCard, createSensitiveIpcHandler as sensitiveHandler, discoverEnginePaths, applyDockIcon, runStartupSequence, youtubePreviewUrl, YOUTUBE_PREVIEW_REFERRER, type ArtifactCompletionDependencies, type MainIpcRegistrar, type PreviewBounds } from './main-process';
 import { createStatusProvider } from './status-provider';
 import { createTransfer, type TimelineAutomation } from './transfer';
 import { createSharedWorkflowIntegration } from './workflow-integration';
@@ -172,7 +172,7 @@ const engineHost = createEngineHost({
     pinterest: (engines, sessionDir, searchSnapshots) => new GalleryDlWorker(engines.galleryDlPath, undefined, { ffmpegPath: engines.ffmpegPath, sessionDir, searchSnapshots }),
     pexels: sessionDir => new PexelsClient(sessionDir),
     pixabay: sessionDir => new PixabayClient(sessionDir),
-    mediaPrep: engines => (mediaPreparation = createMediaPrep(engines)),
+    mediaPrep: engines => (mediaPreparation = serializeMediaPreparation(createMediaPrep(engines))),
   },
   registerSubtitle: (filePath, fileName) => ({cardId: ledger.registerSubtitle(filePath, engineHost.operationRoot()), fileName}),
   emit: (provider, event, update) => ({
@@ -193,7 +193,8 @@ const historyPreparation = createHistoryPreparationHandlers({
   history,
   prepareMedia: request => engineHost.operation(() => engineHost.prepareMedia(request)),
   cancelMediaPreparation: jobId => mediaPreparation.cancel(jobId),
-  replaced: id => { ledger.bindHistory(id); },
+  protectedPaths: () => ledger.protectedPaths(),
+  replaced: (id, preparedId) => { ledger.bindHistory(id, preparedId); },
 });
 
 // OS drag icon. macOS startDrag REQUIRES a non-empty icon; a 32x32 PNG data URL
@@ -453,7 +454,7 @@ function registerHistoryHandlers(): void {
   }));
   ipcMain.handle(IPC_CHANNELS.historyCancelPreparation, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => historyPreparation.cancelPreparation(id)));
   ipcMain.handle(IPC_CHANNELS.historyList, createSensitiveIpcHandler(requireTrustedSender, async () => {
-    return ledger.listHistory();
+    return ledger.listHistory().map(record => ({ ...record, preparing: historyPreparation.isPreparing(record.id) }));
   }, 'immediate'));
   ipcMain.handle(IPC_CHANNELS.queueDelete, createSensitiveIpcHandler(requireTrustedSender, async (_event, cardId: unknown) => ledger.deleteCard(cardId)));
   ipcMain.handle(IPC_CHANNELS.historyThumbnail, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => history.thumbnail(id), 'immediate'));

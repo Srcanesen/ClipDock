@@ -363,7 +363,139 @@ test('main retry updates a file-dialog card even before History has ever been li
   f.controls.dialog = async () => ({ canceled: false, filePaths: [source] });
   const selected = await f.invoke('selectFile'); assert.equal(selected.canceled, false);
   const transferred = []; f.controls.transfer = async file => { transferred.push(file); return { ok: true, kind: 'imported' }; };
-  assert.equal(JSON.stringify(await f.invoke('historyRetryPreparation', record.id)), JSON.stringify({ cancelled: false, profile: 'fast' }));
+  assert.equal(JSON.stringify(await f.invoke('historyRetryPreparation', record.id)), JSON.stringify({ cancelled: false, profile: 'fast', originalKept: true }));
   assert.equal((await f.invoke('importToMediaPool', selected.cardId, 'active')).ok, true);
-  assert.deepEqual(transferred, [output]); assert.equal(existsSync(source), false);
+  assert.deepEqual(transferred, [output]); assert.equal(readFileSync(source, 'utf8'), 'original bytes');
+  assert.equal(f.controls.history.resolve(record.id).path, source); assert.equal(f.controls.history.get(record.id).preparationFailed, undefined);
+});
+
+async function queuedMain(t) {
+  const { mainFixture } = await import('./helpers/files-main.mjs');
+  const starts = [], pending = new Map(); let active;
+  const { ProviderJobCancelledError } = require('../dist/provider-job.js');
+  const worker = {
+    isActive: () => !!active,
+    prepare: request => {
+      if (active) throw new Error('Another media preparation job is already active.');
+      active = request.jobId; starts.push(request);
+      request.emit({ jobId: request.jobId, state: 'processing', percent: 0, message: 'Preparing for Resolve…' });
+      return new Promise((resolve, reject) => pending.set(request.jobId, { request, resolve, reject }));
+    },
+    cancel: id => { const run = pending.get(id); if (!run) return null; pending.delete(id); active = undefined; run.reject(new ProviderJobCancelledError('Media preparation cancelled.')); return Promise.resolve(); },
+    dispose: () => active ? worker.cancel(active) : undefined,
+  };
+  const f = await mainFixture(t, { discovery: Promise.resolve({ ffmpegPath: '/fake/ffmpeg', ffprobePath: '/fake/ffprobe', ytdlpPath: '/fake/ytdlp', galleryDlPath: null }), modules: { './media-prep': { createMediaPrep: () => worker } } });
+  t.after(() => f.quit());
+  const file = path.join(f.root, 'retained.webm'); writeFileSync(file, 'original bytes');
+  const record = f.controls.history.add({ ...metadata, filePath: file, preparationFailed: { profile: 'fast' } });
+  const finish = id => { const run = pending.get(id); assert.ok(run); pending.delete(id); active = undefined; const output = path.join(path.dirname(run.request.inputPath), `${id}.resolve.mp4`); writeFileSync(output, 'prepared bytes'); run.resolve({ filePath: output, fileName: path.basename(output), action: 'transcode' }); };
+  const wait = async count => { for (let i = 0; i < 100 && starts.length < count; i++) await tick(); assert.equal(starts.length, count); };
+  const download = id => f.invoke('downloadYoutube', source, 'best', 'fast', id, { mediaMode: 'video', audioFormat: 'wav', subtitles: false, subtitleLanguage: 'en' });
+  return { ...f, file, record, starts, finish, wait, download };
+}
+for (const first of ['retry', 'download']) test(`main preparation FIFO serializes ${first} before the other conversion`, async t => {
+  const f = await queuedMain(t); let secondSettled = false;
+  const retry = () => f.invoke('historyRetryPreparation', f.record.id);
+  const one = first === 'retry' ? retry() : f.download('download-first'); void one.catch(() => {}); await f.wait(1);
+  const two = first === 'retry' ? f.download('download-second') : retry(); void two.then(() => { secondSettled = true; }, () => { secondSettled = true; });
+  await tick(); await tick(); assert.equal(secondSettled, false); assert.equal(f.starts.length, 1);
+  if (first === 'download') {
+    assert.equal((await f.invoke('historyList')).find(record => record.id === f.record.id).preparing, true);
+    assert.ok(f.events.some(event => event.channel === 'clipdock:history-preparation-progress' && event.update.id === f.record.id && event.update.percent === null));
+    await assert.rejects(retry(), /already running/);
+  }
+  f.finish(f.starts[0].jobId); await one; await f.wait(2);
+  f.finish(f.starts[1].jobId); await two;
+  assert.equal((await f.invoke('historyList')).find(record => record.id === f.record.id).preparing, false);
+  assert.equal(readFileSync(path.join(f.userData, 'download-history.json'), 'utf8').includes('"preparing"'), false);
+});
+test('a waiting retry can be cancelled and never starts after the download completes', async t => {
+  const f = await queuedMain(t); const before = readFileSync(path.join(f.userData, 'download-history.json'), 'utf8');
+  const download = f.download('download-first'); void download.catch(() => {}); await f.wait(1);
+  const retry = f.invoke('historyRetryPreparation', f.record.id); void retry.catch(() => {}); await tick(); await tick();
+  assert.equal(await f.invoke('historyCancelPreparation', f.record.id), true);
+  assert.equal(JSON.stringify(await retry), JSON.stringify({ cancelled: true }));
+  assert.equal(readFileSync(f.file, 'utf8'), 'original bytes'); assert.equal(readFileSync(path.join(f.userData, 'download-history.json'), 'utf8'), before);
+  f.finish(f.starts[0].jobId); await download; assert.equal(f.starts.length, 1);
+});
+for (const reason of ['shared History file', 'protected path']) test(`retry preserves a source blocked by ${reason} and adds a prepared History record`, async t => {
+  const f = fixture(t);
+  const card = reason === 'protected path' ? f.ledger.reuseHistory(f.record.id) : null;
+  if (reason === 'shared History file') f.history.add({ ...metadata, filePath: f.file });
+  const count = f.history.list().length;
+  const api = mainProcess.createHistoryPreparationHandlers({ history: f.history, prepareMedia: f.worker.prepare, cancelMediaPreparation: f.worker.cancel,
+    protectedPaths: () => reason === 'protected path' ? [f.file] : [], replaced: (id, preparedId) => f.ledger.bindHistory(id, preparedId) });
+  assert.deepEqual(await api.retryPreparation(f.record.id), { cancelled: false, profile: 'fast', originalKept: true });
+  assert.equal(f.history.list().length, count + 1); assert.equal(f.history.resolve(f.record.id).path, f.file);
+  assert.equal(f.history.get(f.record.id).preparationFailed, undefined); assert.equal(f.history.get(f.record.id).profile, 'original');
+  const prepared = f.history.list().find(record => record.profile === 'fast'); assert.notEqual(prepared.id, f.record.id);
+  assert.equal(readFileSync(f.history.resolve(prepared.id).path, 'utf8'), 'prepared bytes'); assert.equal(readFileSync(f.file, 'utf8'), 'original bytes');
+  const restarted = new DownloadHistory(f.store, f.managed); t.after(() => restarted.dispose());
+  assert.equal(restarted.get(f.record.id).available, true); assert.equal(restarted.get(prepared.id).available, true);
+  if (card) {
+    assert.equal(f.ledger.resolve(card.cardId).historyId, prepared.id); assert.equal(f.ledger.resolve(card.cardId).profile, 'fast');
+    assert.equal(f.ledger.deleteCard(card.cardId).deleted, true);
+    assert.equal(f.history.get(prepared.id), null); assert.equal(f.history.get(f.record.id).available, true);
+    assert.equal(readFileSync(f.file, 'utf8'), 'original bytes');
+  }
+});
+test('an exception after the durable History save recovers success without removing its prepared file', async t => {
+  const f = fixture(t); const save = f.history.save.bind(f.history);
+  t.mock.method(f.history, 'save', () => { save(); throw new Error('after durable save'); });
+  assert.deepEqual(await f.controller().retryPreparation(f.record.id), { cancelled: false, profile: 'fast' });
+  const prepared = f.history.resolve(f.record.id); assert.equal(prepared.record.profile, 'fast');
+  assert.equal(readFileSync(prepared.path, 'utf8'), 'prepared bytes'); assert.equal(existsSync(f.file), false);
+  const restarted = new DownloadHistory(f.store, f.managed); t.after(() => restarted.dispose());
+  assert.equal(restarted.resolve(f.record.id).path, prepared.path); assert.equal(restarted.get(f.record.id).available, true);
+});
+test('a reloaded renderer restores a running retry from History and can cancel it', async () => {
+  const h = createHarness(); let running = true; const cancelled = [];
+  h.api.historyList = async () => [{ ...metadata, id: 'restored', fileName: 'retained.webm', bytes: 14, createdAt: Date.now(), lastUsedAt: Date.now(), available: true, preparationFailed: { profile: 'fast' }, preparing: running }];
+  h.api.historyCancelPreparation = async id => { cancelled.push(id); running = false; return true; };
+  await h.fireReady(); h.test.setSurface('library'); await h.flush();
+  const all = () => descend(h.elements.get('history-list')); const button = () => all().find(el => el.classList?.contains('history-retry-preparation'));
+  assert.equal(button().getAttribute('aria-label'), 'Cancel: retained.webm');
+  assert.equal(all().find(el => el.classList?.contains('history-preparation-badge')).textContent, 'Converting…');
+  button().click(); await h.flush(); assert.deepEqual(cancelled, ['restored']);
+  assert.equal(button().getAttribute('aria-label'), 'Retry conversion: retained.webm'); assert.equal(h.elements.get('message').textContent, 'Conversion cancelled.');
+});
+
+test('renderer reports that a protected original was kept after conversion', async () => {
+  const h = createHarness(); let done = false;
+  const original = { ...metadata, id: 'kept', fileName: 'retained.webm', bytes: 14, createdAt: Date.now(), lastUsedAt: Date.now(), available: true };
+  h.api.historyList = async () => done ? [original, { ...original, id: 'prepared', profile: 'editing', fileName: 'retained.resolve.mov' }] : [{ ...original, preparationFailed: { profile: 'editing' } }];
+  h.api.historyRetryPreparation = async () => { done = true; return { cancelled: false, profile: 'editing', originalKept: true }; };
+  await h.fireReady(); h.test.setSurface('library'); await h.flush();
+  descend(h.elements.get('history-list')).find(el => el.classList?.contains('history-retry-preparation')).click(); await h.flush();
+  assert.equal(h.elements.get('message').textContent, 'Converted to Edit-ready. The original was kept because it is in use.');
+  assert.equal(descend(h.elements.get('history-list')).filter(el => el.classList?.contains('history-row')).length, 2);
+});
+test('a post-save public projection failure preserves the committed artifact and deletion identity', async t => {
+  const f = fixture(t); const project = f.history.public.bind(f.history); let failed = false;
+  t.mock.method(f.history, 'public', record => { if (record.profile === 'fast' && !failed) { failed = true; throw new Error('public projection failed'); } return project(record); });
+  assert.deepEqual(await f.controller().retryPreparation(f.record.id), { cancelled: false, profile: 'fast' });
+  assert.equal(failed, true); const output = f.history.resolve(f.record.id).path;
+  assert.equal(readFileSync(output, 'utf8'), 'prepared bytes'); assert.equal(existsSync(f.file), false);
+  assert.equal(f.history.delete(f.record.id, []).deleted, true); assert.equal(existsSync(output), false);
+});
+test('a post-save exception during a retained-source addition preserves both committed records and files', async t => {
+  const f = fixture(t); const save = f.history.save.bind(f.history);
+  t.mock.method(f.history, 'save', () => { save(); throw new Error('after durable save'); });
+  const api = mainProcess.createHistoryPreparationHandlers({ history: f.history, prepareMedia: f.worker.prepare, cancelMediaPreparation: f.worker.cancel,
+    protectedPaths: () => [f.file], replaced: (id, preparedId) => f.ledger.bindHistory(id, preparedId) });
+  assert.deepEqual(await api.retryPreparation(f.record.id), { cancelled: false, profile: 'fast', originalKept: true });
+  assert.equal(f.history.list().length, 2); assert.equal(f.history.resolve(f.record.id).path, f.file);
+  const prepared = f.history.list().find(record => record.profile === 'fast');
+  assert.equal(readFileSync(f.history.resolve(prepared.id).path, 'utf8'), 'prepared bytes'); assert.equal(readFileSync(f.file, 'utf8'), 'original bytes');
+});
+
+test('a refused direct retry cannot mistake another record for its own successful commit', async t => {
+  const f = fixture(t); f.history.add({ ...metadata, filePath: f.file, profile: 'fast' });
+  const before = readFileSync(f.store, 'utf8'); const { tryAcquireFileLock } = require('../dist/file-lock.js');
+  const lock = tryAcquireFileLock(`${f.store}.lock`); assert.ok(lock);
+  const api = mainProcess.createHistoryPreparationHandlers({ history: f.history,
+    prepareMedia: async () => ({ filePath: f.file, fileName: path.basename(f.file), action: 'direct' }), cancelMediaPreparation: f.worker.cancel, replaced() {} });
+  try { await assert.rejects(api.retryPreparation(f.record.id), /locked by another writer/); } finally { lock.release(); }
+  assert.equal(readFileSync(f.store, 'utf8'), before); assert.deepEqual(f.history.get(f.record.id).preparationFailed, { profile: 'fast' });
+  assert.equal(readFileSync(f.file, 'utf8'), 'original bytes');
 });

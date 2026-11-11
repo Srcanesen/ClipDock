@@ -89,24 +89,25 @@ export class DownloadLedger {
     this.failedPreparations.delete(recordId);
     return removedCardIds;
   }
-  bindHistory(recordId: unknown): string | null {
-    const hit = this.history.resolve(recordId);
+  bindHistory(recordId: unknown, preparedId?: string): string | null {
+    const hit = this.history.resolve(preparedId ?? recordId);
     if (!hit) return null;
-    const failed = this.failedPreparations.get(hit.record.id);
+    const failedId = typeof recordId === 'string' ? recordId : hit.record.id;
+    const failed = this.failedPreparations.get(failedId);
     if (failed && !hit.record.preparationFailed && hit.record.profile === failed.profile && hit.trustedRoot) {
       // A completed preparation replaces every active alias, preserving opaque card ids.
       // Relinking leaves the failure marker in place and does not move active cards.
       const media = captureFile(AnchoredDir.capture(hit.trustedRoot.verify(), hit.trustedRoot), hit.path);
       for (const [id, card] of this.cards) {
         if (card.passive) continue;
-        if (card.path === failed.path) this.cards.set(id, Object.freeze({ ...card, path: hit.path, profile: hit.record.profile, ownedMedia: card.trustedRoot ? media : undefined }));
-        else if (card.ownerPath === failed.path) this.cards.set(id, Object.freeze({ ...card, ownerPath: hit.path }));
+        if (card.path === failed.path) this.cards.set(id, Object.freeze({ ...card, path: hit.path, profile: hit.record.profile, historyId: card.historyId ? hit.record.id : undefined, ownedMedia: card.trustedRoot ? media : undefined }));
+        else if (card.ownerPath === failed.path) this.cards.set(id, Object.freeze({ ...card, ownerPath: hit.path, historyId: card.historyId ? hit.record.id : undefined }));
       }
       if (hit.path !== failed.path) {
         const subtitle = this.sessionSubtitles.get(failed.path);
         if (subtitle) { this.sessionSubtitles.set(hit.path, subtitle); this.sessionSubtitles.delete(failed.path); }
       }
-      this.failedPreparations.delete(hit.record.id);
+      this.failedPreparations.delete(failedId);
     }
     const existingId = this.historyCards.get(hit.record.id);
     if (existingId) {

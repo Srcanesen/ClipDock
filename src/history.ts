@@ -4,7 +4,7 @@ import { basename, dirname, extname, isAbsolute } from 'node:path';
 import { canonicalRoot, regularFile } from './path-boundary';
 import { ManagedRoot } from './managed-root';
 import { MEDIA_EXTENSIONS } from './media-extensions';
-import { AnchoredDir, captureEntry, captureFile, prepareDirectory, removeEntry, removeOwned, replaceOwned, writeExclusive, type OwnedFile } from './safe-fs';
+import { AnchoredDir, captureEntry, captureFile, prepareDirectory, removeEntry, removeOwned, replaceOwned, verifyFile, writeExclusive, type OwnedFile } from './safe-fs';
 import { randomUUID } from 'node:crypto';
 import { tryAcquireFileLock } from './file-lock';
 import { validatePinterestUrl, validateSocialUrl } from './ytdlp-url';
@@ -67,6 +67,7 @@ export function recordHistoryWarning(history: Pick<DownloadHistory, 'add'>, inpu
 export class DownloadHistory {
   private records: StoredRecord[] = [];
   private saveBlocked = false;
+  private revision = 0;
   private readonly preparations = new Set<string>();
   private assertNotPreparing(id: unknown): void {
     if (typeof id === 'string' && this.preparations.has(id)) throw new Error('Conversion is running for this item. Cancel it first.');
@@ -182,7 +183,7 @@ export class DownloadHistory {
   private save(): void {
     if (this.saveBlocked) throw new Error('Download history is corrupt and could not be quarantined.');
     const temp = writeExclusive(this.storeDirectory, `${basename(this.file)}.${randomUUID()}.tmp`, JSON.stringify({ schemaVersion: 1, records: this.records }, null, 2));
-    try { replaceOwned(temp, this.storeDirectory, basename(this.file)); }
+    try { replaceOwned(temp, this.storeDirectory, basename(this.file)); this.revision++; }
     finally { if (removeOwned(temp) === 'replaced') throw new Error('History temporary file was replaced; preserved.'); }
   }
 
@@ -192,6 +193,8 @@ export class DownloadHistory {
     const lock = tryAcquireFileLock(`${this.file}.lock`);
     if (!lock) throw new Error('Download history is locked by another writer. Retry after it finishes.');
     let before = this.records;
+    const revision = this.revision;
+    let identities = new Map(this.identities);
     try {
       if (existsSync(this.file) && statSync(this.file).isFile()) {
         this.load();
@@ -201,8 +204,13 @@ export class DownloadHistory {
       const temps = readdirSync(this.storeDirectory.verify()).filter(name => name.startsWith(prefix) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i.test(name.slice(prefix.length))).map(name => captureEntry(this.storeDirectory, name));
       for (const temp of temps) removeEntry(temp);
       before = JSON.parse(JSON.stringify(this.records)) as StoredRecord[];
+      identities = new Map(this.identities);
       return operation();
-    } catch (error) { this.records = before; throw error; }
+    } catch (error) {
+      if (this.revision !== revision) this.load();
+      else { this.records = before; this.identities.clear(); for (const [id, files] of identities) this.identities.set(id, files); }
+      throw error;
+    }
     finally { lock.release(); }
   }
   private safePath(r: StoredRecord, file: string): string | null {
@@ -224,13 +232,12 @@ export class DownloadHistory {
   list(): HistoryRecord[] { return this.records.map((r) => this.public(r)); }
   get(id: unknown): HistoryRecord | null { const r = typeof id === 'string' ? this.records.find((x) => x.id === id) : null; return r ? this.public(r) : null; }
   add(input: HistoryInput): HistoryRecord { return this.transaction(() => this.addRecord(input)); }
-  private addRecord(input: HistoryInput): HistoryRecord {
+  private addRecord(input: HistoryInput, root = this.root()): HistoryRecord {
     const filePath = regular(input.filePath); if (!filePath || !supportedHistoryMediaPath(filePath)) throw new Error('Downloaded file is no longer available.');
     const source = storedHistorySource(input.provider, input.source); if (!source) throw new Error('Invalid download source.');
     const selection = input.provider === 'social' ? null : finiteRange(input.selection);
     const chapters = input.provider === 'youtube' ? input.automation.chapters.slice(0, 100) : [];
     const now = Date.now();
-    const root = this.root();
     if (!root) throw new Error('Managed root failed the safety check.');
     const trustedRoot = inside(root, filePath) ? root : undefined;
     if (trustedRoot) this.recordRoot({trustedRoot: trustedRoot.verify()} as StoredRecord);
@@ -265,7 +272,7 @@ export class DownloadHistory {
     return this.public(r);
   }
 
-  replacePreparedArtifact(id: string, next: { filePath: string; profile: MediaProfile }): HistoryRecord | null {
+  replacePreparedArtifact(id: string, next: { filePath: string; profile: MediaProfile }, protectedPaths: Iterable<string> = []): (HistoryRecord & { originalKept?: true }) | null {
     return this.transaction(() => {
       const r = this.records.find(record => record.id === id);
       if (!r || (next.profile !== 'fast' && next.profile !== 'editing')) return null;
@@ -274,13 +281,28 @@ export class DownloadHistory {
       const filePath = root.resolve(next.filePath);
       if (!filePath || !supportedHistoryMediaPath(filePath)) return null;
       const media = captureFile(AnchoredDir.capture(root.verify(), root), filePath);
+      const safe = this.safePath(r, r.filePath);
+      const protectedSet = new Set([...protectedPaths].flatMap(path => regular(path) ?? []));
+      const owned = this.identities.get(r.id)?.media;
+      let removable = this.canRemoveMedia(r, safe, protectedSet);
+      try { removable = removable && !!owned && verifyFile(owned) === safe; } catch { removable = false; }
+      if (filePath !== r.filePath && !removable) {
+        delete r.preparationFailed; this.moveToFront(r);
+        const added = this.addRecord({ ...r, filePath, profile: next.profile, preparationFailed: undefined }, root);
+        return { ...added, originalKept: true };
+      }
       r.filePath = filePath; r.fileName = basename(filePath); r.bytes = statSync(filePath).size;
       r.profile = next.profile; delete r.preparationFailed;
-      this.save();
       this.identities.set(r.id, { media, subtitle: this.identities.get(r.id)?.subtitle ?? null });
       this.thumbnails.remove(r.id);
+      this.save();
       return this.public(r);
     });
+  }
+
+  private canRemoveMedia(r: StoredRecord, safe: string | null, protectedPaths: Set<string>): boolean {
+    const root = this.recordRoot(r);
+    return !!(r.managed && safe && root && inside(root, safe) && !protectedPaths.has(safe) && this.records.filter(record => record.filePath === safe).length === 1);
   }
 
   /** Session ownership outlives the history cap and failed metadata writes. Never grant it from location alone. */
@@ -311,8 +333,7 @@ export class DownloadHistory {
     const r = this.records[index]; const protectedSet = new Set([...protectedPaths].flatMap((p) => { const safe = regular(p); return safe ? [safe] : []; }));
     let deleted = false; let warning: string | undefined; const safe = this.safePath(r, r.filePath);
     const trustedRoot = this.recordRoot(r);
-    const mediaInside = safe && (trustedRoot && inside(trustedRoot, safe));
-    if (r.managed && safe && mediaInside && !protectedSet.has(safe) && this.records.filter((x) => x.filePath === safe).length === 1) {
+    if (this.canRemoveMedia(r, safe, protectedSet)) {
       const owned = this.identities.get(r.id)?.media;
       if (owned && owned.path === safe && removeOwned(owned) === 'removed') deleted = true;
       else warning = 'Media changed or was replaced; preserved.';
