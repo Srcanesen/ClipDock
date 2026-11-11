@@ -46,6 +46,8 @@ export type ProviderJobContext = {
   publish(path: string, commit?: () => void): void;
   /** During commit, release cleanup ownership once a card or saved record references this path. */
   retain(path: string): void;
+  /** Commit references before failure cleanup; skipped when the job is cancelled. */
+  onFailure(commit: () => void): void;
   /** Await a cancellable operation, including its termination on abort. */
   wait<T>(operation: Promise<T> & {cancel: () => Promise<void>}): Promise<T>;
   /** Start provider work, register any returned artifact before checking abort, and await cancellation. */
@@ -134,6 +136,7 @@ export class ProviderJobRunner {
     const aliases = new Map<string, string>();
     const key = (path: string): string => aliases.get(path) ?? path;
     const publications = new Map<string, {commit?: () => void; file?: OwnedFile}>();
+    const failureCommits: Array<() => void> = [];
     const publishedFiles = new Set<string>();
     const publishedPaths = new Set<string>();
     const publishedDirectories = new Set<string>();
@@ -222,6 +225,7 @@ export class ProviderJobRunner {
         if (!files.has(path) && !directories.has(path) && !publications.has(path)) throw new Error('Provider job cannot retain an unregistered path.');
         release(path);
       },
+      onFailure: commit => { check(); failureCommits.push(commit); },
       perform: (operation, cancel, register) => {
         check();
         return context.wait(Object.assign(operation().then(value => { register?.(value); return value; }), {
@@ -262,6 +266,11 @@ export class ProviderJobRunner {
         throw new ProviderJobCancelledError(reason.message, error.terminalMessage);
       }
       check();
+      if (!(error instanceof ProviderJobCancelledError)) {
+        committing = true;
+        try { for (const commit of failureCommits) commit(); }
+        finally { committing = false; }
+      }
       throw error;
     } finally {
       if (timer) clearTimeout(timer);

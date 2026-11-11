@@ -393,9 +393,26 @@ async function prepareRequestedProfile(
 export function createArtifactCompletionService(deps: ArtifactCompletionDependencies): ArtifactCompletionService {
   async function completeDownload(request: CompleteDownloadRequest): Promise<CompletedDownloadResult> {
     const {jobId, automation, history} = request;
-    const final: ResolvedArtifact = request.prepare
-      ? await prepareRequestedProfile(request.artifact, request.prepare, deps)
-      : {...request.artifact, profile: history.profile};
+    let final: ResolvedArtifact;
+    try {
+      final = request.prepare
+        ? await prepareRequestedProfile(request.artifact, request.prepare, deps)
+        : {...request.artifact, profile: history.profile};
+    } catch (error) {
+      if (!request.job || error instanceof ProviderJobCancelledError) throw error;
+      const job = request.job;
+      const failure = error instanceof Error ? error : new Error(String(error));
+      job.onFailure(() => {
+        // A replacement cannot become the retained original merely by using its path.
+        try { job.owned(request.artifact.filePath); } catch { return; }
+        const {record} = deps.recordHistory({...history, filePath: request.artifact.filePath, profile: 'original', subtitle: undefined});
+        if (record) {
+          job.retain(request.artifact.filePath);
+          failure.message += ' The original download was kept in History.';
+        }
+      });
+      throw failure;
+    }
     if (!deps.isSafeMediaFile(final.filePath)) throw new Error('Prepared file is no longer available.');
     await deps.refreshHistoryProject();
     // The runner fills this same result object during its synchronous commit,

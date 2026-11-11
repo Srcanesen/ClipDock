@@ -132,10 +132,17 @@ for (const provider of providers) {
     assert.deepEqual(f.events, [{jobId: 'job', state: 'cancelled', percent: null, message: 'Download cancelled.'}]);
   });
 
-  test(`${provider}: preparation failure removes download, partial output and subtitles`, async t => {
+  test(`${provider}: preparation failure keeps the original in History and removes partial output and subtitles`, async t => {
     const f = fixture(t, provider, 'failure');
-    await assert.rejects(f.start(), {message: 'Media preparation failed: fixture failure.'});
-    assertUnpublished(f);
+    await assert.rejects(f.start(), {message: 'Media preparation failed: fixture failure. The original download was kept in History.'});
+    assert.deepEqual(f.files(), [`${provider}/original.mp4`]);
+    assert.deepEqual(f.ledger.protectedPaths(), []);
+    const records = f.history.list();
+    assert.equal(records.length, 1);
+    assert.equal(records[0].profile, 'original');
+    assert.equal(f.history.resolve(records[0].id)?.path, f.original);
+    assert.equal(f.events.filter(event => event.state === 'completed').length, 0);
+    assert.equal(f.handlers.cancel('job'), false);
   });
 
   for (const boundary of ['download', 'preparation']) {

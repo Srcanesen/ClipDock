@@ -8,6 +8,10 @@ import {test} from 'node:test';
 import vm from 'node:vm';
 import {createMediaPrep, parseFfprobe} from '../dist/media-prep.js';
 import {DownloadHistory} from '../dist/history.js';
+import {DownloadLedger} from '../dist/download-ledger.js';
+import {ManagedRoot} from '../dist/managed-root.js';
+import {createProviderDownloadHandlers} from '../dist/main-process.js';
+import {ProviderJobCancelledError} from '../dist/provider-job.js';
 
 const require = createRequire(import.meta.url);
 const MINUTE = 60_000;
@@ -140,4 +144,97 @@ test('live history corruption is quarantined under the writer lock and failed qu
   assert.equal(fs.readFileSync(store, 'utf8'), '{broken again');
   assert.equal(fs.readFileSync(media, 'utf8'), 'downloaded');
   assert.equal(fs.existsSync(`${store}.lock`), false);
+});
+
+function preparationDownload(t, historyFails = false) {
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), 'clipdock-retained-source-')));
+  const root = ManagedRoot.prepare(path.join(directory, 'managed'));
+  const input = path.join(root.providerPath('youtube'), 'clip.mkv'); fs.writeFileSync(input, 'downloaded');
+  const store = path.join(directory, 'history.json');
+  const history = new DownloadHistory(store, root);
+  if (historyFails) fs.mkdirSync(store);
+  const ledger = new DownloadLedger(history, () => false);
+  const {prep, ffmpeg} = preparation(t);
+  const events = [];
+  const handlers = createProviderDownloadHandlers({
+    ffprobeAvailable: true, cancelMediaPreparation: id => prep.cancel(id),
+    registerSubtitle: () => {throw new Error('Unexpected subtitle');},
+    completion: {
+      isSafeMediaFile: file => root.resolve(file) !== null,
+      refreshHistoryProject: async () => {}, recordHistory: input => ledger.record(input),
+      registerCard: input => ledger.register(input, root), prepareMedia: request => prep.prepare(request),
+    },
+    youtube: {
+      worker: {
+        metadata: async () => ({id: 'dQw4w9WgXcQ', title: 'Clip', duration: 10, chapters: []}),
+        download: async () => ({filePath: input, fileName: 'clip.mkv'}), cancel: () => null,
+      },
+      emit: (_event, update) => events.push(update),
+    },
+    social: {}, pinterest: {}, pexels: {}, pixabay: {},
+  });
+  t.after(async () => {await handlers.shutdown(); await prep.dispose(); await history.dispose(); fs.rmSync(directory, {recursive: true, force: true});});
+  const start = () => handlers.youtube({sender: {}}, historyInput(input).source, 'best', 'fast', 'retained', {mediaMode: 'video', audioFormat: 'm4a', subtitles: false, subtitleLanguage: 'en'});
+  return {root, input, history, ledger, ffmpeg, handlers, events, start};
+}
+
+test('a preparation stall keeps the original in History, reports failure, and leaves it listable and deletable', async t => {
+  t.mock.timers.enable({apis: ['setTimeout']});
+  const f = preparationDownload(t);
+  const rejection = assert.rejects(f.start(), {message: 'Media preparation failed: Media tool timed out. The original download was kept in History.'});
+  await until(() => f.ffmpeg.length === 1);
+  assert.equal(fs.existsSync(f.ffmpeg[0].output), true);
+  t.mock.timers.tick(6 * MINUTE);
+  await rejection;
+  assert.equal(fs.readFileSync(f.input, 'utf8'), 'downloaded');
+  assert.equal(fs.existsSync(f.ffmpeg[0].output), false);
+  assert.deepEqual(fs.readdirSync(path.dirname(f.input)), ['clip.mkv']);
+  const records = f.ledger.listHistory();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].profile, 'original');
+  assert.equal(records[0].available, true);
+  assert.equal(f.ledger.resolve(records[0].cardId).path, f.input);
+  assert.equal(f.history.resolve(records[0].id).path, f.input);
+  assert.equal(f.events.filter(event => event.state === 'completed').length, 0);
+  assert.equal(f.handlers.cancel('retained'), false);
+  assert.equal(f.ledger.deleteHistory(records[0].id).deleted, true);
+  assert.equal(fs.existsSync(f.input), false);
+  assert.deepEqual(f.ledger.listHistory(), []);
+  assert.deepEqual(f.ledger.protectedPaths(), []);
+});
+
+test('a preparation stall deletes the original when History cannot record it and does not claim retention', async t => {
+  t.mock.timers.enable({apis: ['setTimeout']});
+  const f = preparationDownload(t, true);
+  const rejection = assert.rejects(f.start(), {message: 'Media preparation failed: Media tool timed out.'});
+  await until(() => f.ffmpeg.length === 1);
+  t.mock.timers.tick(6 * MINUTE);
+  await rejection;
+  assert.equal(fs.existsSync(f.input), false);
+  assert.equal(fs.existsSync(f.ffmpeg[0].output), false);
+  assert.deepEqual(fs.readdirSync(path.dirname(f.input)), []);
+  assert.deepEqual(f.ledger.listHistory(), []);
+  assert.deepEqual(f.ledger.protectedPaths(), []);
+  assert.equal(f.events.filter(event => event.state === 'completed').length, 0);
+});
+
+test('user cancellation during preparation still deletes the original without recording it in History', async t => {
+  t.mock.timers.enable({apis: ['setTimeout']});
+  const f = preparationDownload(t);
+  const rejection = assert.rejects(f.start(), error => {
+    assert.ok(error instanceof ProviderJobCancelledError);
+    assert.equal(error.message, 'Download cancelled.');
+    return true;
+  });
+  await until(() => f.ffmpeg.length === 1);
+  assert.equal(f.handlers.cancel('retained'), true);
+  await rejection;
+  assert.equal(fs.existsSync(f.input), false);
+  assert.equal(fs.existsSync(f.ffmpeg[0].output), false);
+  assert.deepEqual(fs.readdirSync(path.dirname(f.input)), []);
+  assert.deepEqual(f.ledger.listHistory(), []);
+  assert.deepEqual(f.ledger.protectedPaths(), []);
+  assert.deepEqual(f.ffmpeg[0].child.signals, ['SIGTERM']);
+  assert.equal(f.events.at(-1).state, 'cancelled');
+  assert.equal(f.events.at(-1).message, 'Media preparation cancelled.');
 });
