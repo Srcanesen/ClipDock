@@ -22,7 +22,7 @@ import { pathToFileURL } from 'node:url';
 const WorkflowIntegration = require('./WorkflowIntegration.node');
 
 import { IPC_CHANNELS, PLUGIN_ID } from './shared';
-import { createHistoryPreparationHandlers, serializeMediaPreparation, normalizeSearchOptions, isSafeMediaFile as isSafeMediaFileHelper, normalizePreviewBounds, registerMainTransferInvokeHandlers, SessionTransferCards, resolveMainProcessCard, createSensitiveIpcHandler as sensitiveHandler, discoverEnginePaths, applyDockIcon, runStartupSequence, youtubePreviewUrl, YOUTUBE_PREVIEW_REFERRER, type ArtifactCompletionDependencies, type MainIpcRegistrar, type PreviewBounds } from './main-process';
+import { recoverPendingArtifacts, createHistoryPreparationHandlers, serializeMediaPreparation, normalizeSearchOptions, isSafeMediaFile as isSafeMediaFileHelper, normalizePreviewBounds, registerMainTransferInvokeHandlers, SessionTransferCards, resolveMainProcessCard, createSensitiveIpcHandler as sensitiveHandler, discoverEnginePaths, applyDockIcon, runStartupSequence, youtubePreviewUrl, YOUTUBE_PREVIEW_REFERRER, type ArtifactCompletionDependencies, type MainIpcRegistrar, type PreviewBounds } from './main-process';
 import { createStatusProvider } from './status-provider';
 import { createTransfer, type TimelineAutomation } from './transfer';
 import { createSharedWorkflowIntegration } from './workflow-integration';
@@ -36,6 +36,7 @@ import type { StockClient } from './stock';
 import { MacKeychainPexelsCredentialStore, PexelsCredentialStore, PEXELS_CREDENTIAL, PIXABAY_CREDENTIAL, type CredentialSource, type PexelsCredentialPersistence } from './pexels-credential';
 import { cleanupWorkspaceAsync, inspectWorkspaceAsync } from './workspace';
 import { DownloadHistory, historySourceUrl } from './history';
+import { PendingArtifacts } from './pending-artifacts';
 import { MEDIA_EXTENSIONS } from './media-extensions';
 import { loadDownloadFolder, claimDownloadFolder, saveDownloadFolder, defaultDownloadFolder } from './settings';
 
@@ -103,6 +104,7 @@ const transfer = createTransfer(workflowIntegration, PLUGIN_ID, {
 // It is loaded before the root-bound services below so every worker starts on
 // the selected folder; changing it later re-points those services (see
 // engineHost.changeFolder) without moving or deleting any existing files.
+const pendingArtifacts = new PendingArtifacts(path.join(app.getPath('userData'), 'pending-artifacts.json'));
 const settingsFile = path.join(app.getPath('userData'), 'clipdock-settings.json');
 const folderPreference = loadDownloadFolder(settingsFile, app.getPath('downloads'));
 let userSelectedFolder = folderPreference.userSelected;
@@ -139,6 +141,7 @@ async function refreshHistoryProject(): Promise<void> {
 // store, project refresh, file validation, and media-prep runner are common to
 // every provider; only the provider event channel differs per handler.
 const completionDeps: Omit<ArtifactCompletionDependencies, 'emitCompleted'> = {
+  pendingArtifacts, artifactRoot: () => engineHost.operationRoot(),
   // Provider artifacts must remain under the root their active job used.
   isSafeMediaFile: (filePath) => engineHost.operationRoot().resolve(filePath) !== null,
   refreshHistoryProject,
@@ -187,10 +190,10 @@ const engineHost = createEngineHost({
 });
 
 // History can consult the root while loading legacy records; capture it first.
-const history = new DownloadHistory(path.join(app.getPath('userData'), 'download-history.json'), activeRoot, () => currentProjectName, { tools: () => engineHost.ready() });
+const history = new DownloadHistory(path.join(app.getPath('userData'), 'download-history.json'), activeRoot, () => currentProjectName, { tools: () => engineHost.ready() }, defaultDownloadFolder(app.getPath('downloads')));
 const ledger = new DownloadLedger(history, mediaInUse, () => engineHost.mediaPathsInUse());
 const historyPreparation = createHistoryPreparationHandlers({
-  history,
+  history, pendingArtifacts,
   prepareMedia: request => engineHost.prepareMedia(request),
   cancelMediaPreparation: jobId => mediaPreparation.cancel(jobId),
   protectedPaths: () => ledger.protectedPaths(),
@@ -577,6 +580,7 @@ app.whenReady().then(() => {
   // One panel process per persistent store also prevents cross-process workspace cleanup during a live download.
   const instanceApp = app as typeof app & { requestSingleInstanceLock(): boolean };
   if (!instanceApp.requestSingleInstanceLock()) { app.quit(); return; }
+  recoverPendingArtifacts(history, pendingArtifacts);
   applyDockIcon(app.dock, path.join(__dirname, 'icons', 'dock-icon.png'));
   runStartupSequence({
     registerHandlers: () => {

@@ -11,6 +11,7 @@ import { validatePinterestUrl, validateSocialUrl } from './ytdlp-url';
 import { HistoryThumbnails, type HistoryThumbnailOptions } from './history-thumbnails';
 import type { HistoryDeleteResult } from './shared';
 import type { MediaProfile } from './media-prep';
+import { admitDownloadRoot } from './settings';
 
 export type HistoryProvider = 'youtube' | 'pexels' | 'pixabay' | 'social' | 'pinterest';
 export type HistorySelection = { start: number; end: number; label: string } | null;
@@ -94,7 +95,8 @@ export class DownloadHistory {
   private readonly sessionRoots = new Map<string, ManagedRoot | null>();
   /** Legacy records lacking trustedRoot are bound once, to the root active at startup; undefined when it was unavailable. */
   private readonly legacyRoots = new Map<string, string | undefined>();
-  constructor(private readonly file: string, managedRoot: ManagedRoot | string | (() => ManagedRoot | null), private readonly projectName: () => string | null = () => null, thumbnailOptions: HistoryThumbnailOptions = { tools: async () => ({ ffmpegPath: null, ffprobePath: null }) }) {
+  private readonly externalProvenance = new Map<string, string>();
+  constructor(private readonly file: string, managedRoot: ManagedRoot | string | (() => ManagedRoot | null), private readonly projectName: () => string | null = () => null, thumbnailOptions: HistoryThumbnailOptions = { tools: async () => ({ ffmpegPath: null, ffprobePath: null }) }, private readonly defaultFolder?: string) {
     this.storeDirectory = prepareDirectory(dirname(file));
     if (typeof managedRoot === 'function') this.managedRoot = managedRoot;
     else { const captured = this.captureRoot(managedRoot); this.managedRoot = () => captured; }
@@ -127,7 +129,7 @@ export class DownloadHistory {
     const captured = this.captureRoot(root);
     if (!captured) throw new Error('Managed root failed the safety check.');
     const path = captured.verify();
-    if (!this.root()) for (const record of this.records) if (record.trustedRoot === path) this.identities.delete(record.id);
+    if (!this.root()) for (const record of this.records) if (record.trustedRoot === path || this.externalProvenance.get(record.id) === path) this.identities.delete(record.id);
     this.managedRoot = () => captured;
   }
   private captureRoot(root: ManagedRoot | string): ManagedRoot | null {
@@ -153,7 +155,7 @@ export class DownloadHistory {
           this.sessionRoots.set(r.trustedRoot, current);
         }
       } catch { /* Validate the record's own captured root below. */ }
-      if (!this.sessionRoots.has(r.trustedRoot)) this.sessionRoots.set(r.trustedRoot, this.captureRoot(r.trustedRoot));
+      if (!this.sessionRoots.has(r.trustedRoot)) this.sessionRoots.set(r.trustedRoot, admitDownloadRoot(r.trustedRoot, this.root(), this.defaultFolder));
       const root = this.sessionRoots.get(r.trustedRoot); root?.verify(); return root ?? null;
     } catch { return null; }
   }
@@ -178,7 +180,16 @@ export class DownloadHistory {
         const trustedRoot = typeof r.trustedRoot === 'string' ? r.trustedRoot : this.legacyRoots.get(r.id);
         return [{ id: r.id, provider: r.provider, source, project: typeof r.project === 'string' ? r.project.slice(0, 200) : null, filePath: r.filePath, managed: r.managed === true, trustedRoot: r.managed === true ? trustedRoot : undefined, fileName: r.fileName.slice(0, 300), bytes: Number.isSafeInteger(r.bytes) && Number(r.bytes) >= 0 ? Number(r.bytes) : 0, assetId: typeof r.assetId === 'string' ? r.assetId.slice(0, 100) : null, title: typeof r.title === 'string' ? r.title.slice(0, 300) : r.fileName.slice(0, 300), creator: typeof r.creator === 'string' ? r.creator.slice(0, 200) : null, profile: typeof r.profile === 'string' ? r.profile.slice(0, 40) : 'original', ...(preparationFailure(r.preparationFailed) ? { preparationFailed: preparationFailure(r.preparationFailed) } : {}), quality: typeof r.quality === 'string' ? r.quality.slice(0, 80) : null, mediaMode: typeof r.mediaMode === 'string' ? r.mediaMode.slice(0, 20) : 'video', selection, automation: { provider: r.provider, source, selection, chapters }, ...(resolveUse ? { resolveUse } : {}), createdAt, lastUsedAt: Number.isFinite(r.lastUsedAt) ? Number(r.lastUsedAt) : createdAt, subtitlePath }];
       }).slice(0, MAX_RECORDS);
-      for (const record of this.records) { if (record.managed) this.recordRoot(record); this.captureRecord(record); }
+      this.externalProvenance.clear();
+      for (const record of this.records) {
+        if (record.managed && record.trustedRoot && !this.recordRoot(record)) {
+          // This session cannot manage the file, but a later restart may admit
+          // a temporarily unavailable root. Unrelated saves keep its provenance.
+          this.externalProvenance.set(record.id, record.trustedRoot);
+          record.managed = false; record.trustedRoot = undefined;
+        }
+        this.captureRecord(record);
+      }
     } catch {
       this.records = [];
       if (existsSync(this.file)) { try { renameSync(this.file, `${this.file}.corrupt-${Date.now()}`); } catch { this.saveBlocked = true; } }
@@ -186,7 +197,8 @@ export class DownloadHistory {
   }
   private save(): void {
     if (this.saveBlocked) throw new Error('Download history is corrupt and could not be quarantined.');
-    const temp = writeExclusive(this.storeDirectory, `${basename(this.file)}.${randomUUID()}.tmp`, JSON.stringify({ schemaVersion: 1, records: this.records }, null, 2));
+    const records = this.records.map(record => this.externalProvenance.has(record.id) ? { ...record, managed: true, trustedRoot: this.externalProvenance.get(record.id) } : record);
+    const temp = writeExclusive(this.storeDirectory, `${basename(this.file)}.${randomUUID()}.tmp`, JSON.stringify({ schemaVersion: 1, records }, null, 2));
     try { replaceOwned(temp, this.storeDirectory, basename(this.file)); this.revision++; }
     finally { if (removeOwned(temp) === 'replaced') throw new Error('History temporary file was replaced; preserved.'); }
   }
@@ -220,6 +232,7 @@ export class DownloadHistory {
   private safePath(r: StoredRecord, file: string): string | null {
     const safe = regular(file);
     if (!safe) return null;
+    if (this.externalProvenance.has(r.id) && safe !== file) return null;
     if (r.managed && this.recordRoot(r)?.resolve(file) !== file) return null;
     return safe;
   }
@@ -262,6 +275,19 @@ export class DownloadHistory {
   list(): HistoryRecord[] { return this.records.map((r) => this.public(r)); }
   get(id: unknown): HistoryRecord | null { const r = typeof id === 'string' ? this.records.find((x) => x.id === id) : null; return r ? this.public(r) : null; }
   add(input: HistoryInput): HistoryRecord { return this.transaction(() => this.addRecord(input)); }
+  /** Main-only recovery uses the same admission and atomic History commit. */
+  admitRoot(path: string): ManagedRoot | null { return this.recordRoot({ trustedRoot: path } as StoredRecord); }
+  hasPath(path: string): boolean { return this.records.some(record => record.filePath === path); }
+  recoveryArtifact(id: string): { path: string; trustedRoot: ManagedRoot | null } | null {
+    const record = this.records.find(record => record.id === id);
+    return record ? { path: record.filePath, trustedRoot: record.managed ? this.recordRoot(record) : null } : null;
+  }
+  addRecovered(input: HistoryInput, root: ManagedRoot): void {
+    this.transaction(() => {
+      if (this.admitRoot(root.verify()) !== root) throw new Error('Recovery root failed admission.');
+      if (!this.hasPath(input.filePath)) this.addRecord(input, root);
+    });
+  }
   private addRecord(input: HistoryInput, root = this.root()): HistoryRecord {
     const filePath = regular(input.filePath); if (!filePath || !supportedHistoryMediaPath(filePath)) throw new Error('Downloaded file is no longer available.');
     const source = storedHistorySource(input.provider, input.source); if (!source) throw new Error('Invalid download source.');
@@ -280,7 +306,7 @@ export class DownloadHistory {
     if (!r) return null;
     const root = r.managed ? this.recordRoot(r) : undefined;
     if (r.managed && !root) return null;
-    const path = root ? (root.resolve(r.filePath) === r.filePath ? r.filePath : null) : regular(r.filePath);
+    const path = root ? (root.resolve(r.filePath) === r.filePath ? r.filePath : null) : this.safePath(r, r.filePath);
     return path ? { path, trustedRoot: root ?? undefined, record: this.public(r) } : null;
   }
   /** Main-only companion resolver: returns a validated subtitle path or null. Rejects missing, symlinked, and unsupported files; never crosses IPC. */
@@ -295,7 +321,7 @@ export class DownloadHistory {
     if (!r || !safe || !supportedHistoryMediaPath(safe)) return null;
     const retained = r.managed && r.filePath === safe && !!this.safePath(r, safe);
     r.filePath = safe; r.fileName = basename(safe); r.bytes = statSync(safe).size; r.managed = retained;
-    if (!retained) r.trustedRoot = undefined;
+    if (!retained) { r.trustedRoot = undefined; this.externalProvenance.delete(r.id); }
     r.lastUsedAt = Date.now(); this.moveToFront(r); this.save();
     this.captureRecord(r, true);
     this.thumbnails.remove(r.id);

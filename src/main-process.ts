@@ -20,6 +20,44 @@ import type {TimelineAutomation, Transfer, TransferResult} from './transfer';
 import type {DownloadEvent, DownloadOptions, Quality, YtdlpWorker} from './ytdlp';
 import {PINTEREST_OPAQUE_VIDEO_ERROR, type GalleryDlWorker, type PinterestDownloadEvent} from './gallerydl';
 import type {StockAsset, StockClient, StockEvent} from './stock';
+import type { PendingArtifacts } from './pending-artifacts';
+
+/** Journal failures must never turn successful media work into a failure. */
+function journalAttempt(operation: () => void): void {
+  try { operation(); } catch (error) { console.warn('ClipDock pending artifacts could not be updated.', error); }
+}
+
+/** Synchronous startup replay runs before History IPC or the panel is available. */
+export function recoverPendingArtifacts(history: DownloadHistory, pending: PendingArtifacts): void {
+  for (const entry of pending.list()) {
+    try {
+      if (entry.kind === 'download') {
+        const root = history.admitRoot(entry.trustedRoot);
+        if (root && root.contains(entry.path) && root.resolve(entry.path) === entry.path && !history.hasPath(entry.path)) {
+          const directory = AnchoredDir.capture(root.verify(), root);
+          const media = captureFile(directory, entry.path);
+          const companion = entry.record.subtitle?.filePath;
+          let subtitle: HistoryInput['subtitle'];
+          if (companion && root.contains(companion) && root.resolve(companion) === companion) {
+            verifyFile(captureFile(directory, companion)); subtitle = { filePath: companion };
+          }
+          verifyFile(media);
+          const unconverted = entry.path === entry.record.filePath && entry.requestedProfile;
+          history.addRecovered({ ...entry.record, filePath: entry.path, subtitle, ...(unconverted ? { profile: 'original', preparationFailed: { profile: unconverted } } : entry.requestedProfile ? { profile: entry.requestedProfile, preparationFailed: undefined } : {}) }, root);
+        }
+      } else {
+        const hit = history.recoveryArtifact(entry.historyId);
+        const root = hit?.trustedRoot;
+        const path = hit?.path === entry.outputPath ? entry.sourcePath : hit?.path === entry.sourcePath ? entry.outputPath : undefined;
+        if (root && path && path !== hit?.path && root.contains(path) && root.resolve(path) === path) {
+          const media = captureFile(AnchoredDir.capture(root.verify(), root), path);
+          history.deleteUnrecorded(path, root, [], { media, subtitle: null });
+        }
+      }
+      pending.remove(entry.id);
+    } catch (error) { console.warn(`ClipDock pending artifact recovery failed (${entry.id}).`, error); }
+  }
+}
 
 /** Own the entire admitted operation, including provider preflight and host waits. */
 export class ManagedOperations {
@@ -350,6 +388,8 @@ export interface CompletionPrepareRequest {
 }
 
 export interface ArtifactCompletionDependencies {
+  pendingArtifacts?: PendingArtifacts;
+  artifactRoot?: () => ManagedRoot;
   /** Re-validate the final artifact exactly like the card registry does. */
   isSafeMediaFile(filePath: string): boolean;
   /** Refresh the Resolve project name before the history record is created. */
@@ -420,6 +460,7 @@ export function createArtifactCompletionService(deps: ArtifactCompletionDependen
         try { job.owned(request.artifact.filePath); } catch { return; }
         const {record} = deps.recordHistory({...history, filePath: request.artifact.filePath, profile: 'original', preparationFailed: request.prepare ? { profile: request.prepare.profile } : undefined, subtitle: undefined});
         if (record) {
+          journalAttempt(() => deps.pendingArtifacts?.remove(`download-${jobId}`));
           job.retain(request.artifact.filePath);
           failure.message += ' The original download was kept in History.';
         }
@@ -441,6 +482,7 @@ export function createArtifactCompletionService(deps: ArtifactCompletionDependen
     const commit = () => {
       if (!request.job) bindSubtitle();
       const historyResult = deps.recordHistory({...history, filePath: final.filePath, profile: final.profile});
+      if (historyResult.record) journalAttempt(() => deps.pendingArtifacts?.remove(`download-${jobId}`));
       if (historyResult.record) retainReferences();
       let warning = final.warning;
       if (historyResult.warning) warning = warningWith(warning, historyResult.warning);
@@ -516,6 +558,7 @@ export function serializeMediaPreparation(worker: ReturnType<typeof createMediaP
 /** Retry a retained source using the same preparation worker and shutdown lifecycle as downloads. */
 export function createHistoryPreparationHandlers(deps: {
   history: DownloadHistory;
+  pendingArtifacts?: PendingArtifacts;
   prepareMedia: (request: Parameters<ReturnType<typeof createMediaPrep>['prepare']>[0] & { subtitlePath?: string }) => ReturnType<ReturnType<typeof createMediaPrep>['prepare']>;
   cancelMediaPreparation: ReturnType<typeof createMediaPrep>['cancel'];
   protectedPaths?: () => Iterable<string>;
@@ -544,6 +587,7 @@ export function createHistoryPreparationHandlers(deps: {
     try {
       const prepared = await deps.prepareMedia({ jobId: run.jobId, inputPath: hit.path, allowedRoot: root, source, preserveSource: true, profile: record.preparationFailed.profile, subtitlePath: deps.history.resolveSubtitle(id)?.path, emit: event => emit({ id, percent: event.percent }) });
       if (prepared.filePath !== hit.path) output = captureFile(AnchoredDir.capture(root.verify(), root), prepared.filePath);
+      if (output) journalAttempt(() => deps.pendingArtifacts?.put({ id: run.jobId, kind: 'retry', historyId: id, sourcePath: hit.path, outputPath: output!.path }));
       verifyFile(source);
       if (run.cancelled) throw new ProviderJobCancelledError('Conversion cancelled.');
       let next: (HistoryRecord & { originalKept?: true }) | null;
@@ -560,12 +604,13 @@ export function createHistoryPreparationHandlers(deps: {
       const converted = output; output = undefined;
       try { deps.replaced(id, next.id); } catch { /* The next History listing retries the ledger binding. */ }
       if (converted && !next.originalKept) { try { removeOwned(source); } catch { /* Preserve the source if safe cleanup is no longer possible. */ } }
+      journalAttempt(() => deps.pendingArtifacts?.remove(run.jobId));
       return { cancelled: false, profile: record.preparationFailed.profile, ...(next.originalKept ? { originalKept: true } : {}) };
     } catch (error) {
       if (output) removeOwned(output);
       if (error instanceof ProviderJobCancelledError) return { cancelled: true };
       throw error;
-    } finally { active.delete(id); release(); finish(); }
+    } finally { journalAttempt(() => deps.pendingArtifacts?.remove(run.jobId)); active.delete(id); release(); finish(); }
   }
   async function cancelPreparation(id: unknown): Promise<boolean> {
     if (!validId(id)) throw new Error('Invalid history record ID.');
@@ -662,6 +707,15 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
     job.register(artifact.filePath);
     if (artifact.subtitlePath) job.register(artifact.subtitlePath);
   };
+  const registerDownload = (job: ProviderJobContext, jobId: string, artifact: {filePath: string; subtitlePath?: string}, record: Omit<HistoryInput, 'filePath'>, profile: MediaProfile) => {
+    registerArtifact(job, artifact);
+    journalAttempt(() => {
+      if (!deps.completion.pendingArtifacts) return;
+      const root = deps.completion.artifactRoot!();
+      if (root.resolve(artifact.filePath) !== artifact.filePath) throw new Error('Pending download failed the root check.');
+      deps.completion.pendingArtifacts.put({ id: `download-${jobId}`, kind: 'download', path: artifact.filePath, trustedRoot: root.verify(), record: { ...record, filePath: artifact.filePath, profile: 'original', subtitle: artifact.subtitlePath ? { filePath: artifact.subtitlePath } : undefined }, ...(profile !== 'original' ? { requestedProfile: profile } : {}) });
+    });
+  };
   async function runJob(
     jobId: string,
     adapter: {emit: ProviderEventEmitter},
@@ -678,7 +732,13 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
       prepareMedia: request => job.perform(
         () => deps.completion.prepareMedia({...request, source: job.owned(request.inputPath)}),
         () => deps.cancelMediaPreparation(request.jobId),
-        prepared => registerArtifact(job, prepared)),
+        prepared => {
+          registerArtifact(job, prepared);
+          journalAttempt(() => {
+            const entry = deps.completion.pendingArtifacts?.list().find(entry => entry.id === `download-${jobId}`);
+            if (entry?.kind === 'download') deps.completion.pendingArtifacts!.put({ ...entry, path: prepared.filePath, requestedProfile: undefined, record: { ...entry.record, profile: request.profile } });
+          });
+        }),
       refreshHistoryProject: () => {
         job.check();
         // Host refresh creates no files. Observe its eventual rejection while
@@ -694,6 +754,7 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
       ...admission,
       terminal: outcome => {
         if (outcome.state !== 'completed') {
+          journalAttempt(() => deps.completion.pendingArtifacts?.remove(`download-${jobId}`));
           if (outcome.state === 'failed' && !(outcome.error instanceof ProviderJobFailureError && outcome.error.notify)) return;
           emit({jobId, state: outcome.state, percent: null, message: outcome.state === 'cancelled' ? outcome.error.terminalMessage : outcome.error.message});
           return;
@@ -729,13 +790,20 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
           : null;
       })();
       if (rawSelection && !selection) throw new Error('Invalid In/Out range.');
+      const source = `https://www.youtube.com/watch?v=${metadata.id}`;
+      const automation: TimelineAutomation = {provider: 'youtube', source, selection, chapters: metadata.chapters};
+      const history: Omit<HistoryInput, 'filePath'> = {
+        provider: 'youtube', source, assetId: metadata.id, title: metadata.title,
+        creator: metadata.channel, profile: downloadOptions.mediaMode === 'audio' ? 'original' : profile,
+        quality: String(quality), mediaMode: downloadOptions.mediaMode, selection, automation,
+      };
       const downloaded = await job.perform(() => deps.youtube.worker.download(
         url,
         quality as Quality,
         jobId,
         emit as (update: DownloadEvent) => void,
         {...downloadOptions, selection, preferH264: profile === 'fast'} as DownloadOptions,
-      ), () => deps.youtube.worker.cancel(jobId), artifact => registerArtifact(job, artifact));
+      ), () => deps.youtube.worker.cancel(jobId), artifact => registerDownload(job, jobId, artifact, history, downloadOptions.mediaMode === 'audio' ? 'original' : profile));
       if (!deps.completion.isSafeMediaFile(downloaded.filePath)) throw new Error('Downloaded file is no longer available.');
       const subtitlePath = downloaded.subtitlePath && downloaded.subtitleFileName && deps.completion.isSafeMediaFile(downloaded.subtitlePath)
         ? downloaded.subtitlePath
@@ -743,8 +811,6 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
       const bindSubtitle = subtitlePath && downloaded.subtitleFileName
         ? () => deps.registerSubtitle(subtitlePath, downloaded.subtitleFileName!)
         : undefined;
-      const source = `https://www.youtube.com/watch?v=${metadata.id}`;
-      const automation: TimelineAutomation = {provider: 'youtube', source, selection, chapters: metadata.chapters};
       return await artifactCompletion.completeDownload({
         jobId, job, bindSubtitle,
         automation,
@@ -752,12 +818,7 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
         prepare: downloadOptions.mediaMode === 'video' && profile !== 'original'
           ? {jobId, inputPath: downloaded.filePath, allowedRoot: dirname(downloaded.filePath), profile, emit}
           : undefined,
-        history: {
-          provider: 'youtube', source, filePath: downloaded.filePath, assetId: metadata.id, title: metadata.title,
-          creator: metadata.channel, profile: downloadOptions.mediaMode === 'audio' ? 'original' : profile,
-          quality: String(quality), mediaMode: downloadOptions.mediaMode, selection, automation,
-          subtitle: subtitlePath ? {filePath: subtitlePath} : undefined,
-        },
+        history: { ...history, filePath: downloaded.filePath, subtitle: subtitlePath ? { filePath: subtitlePath } : undefined },
       });
     }, false, false, {
       invalidMessage: 'Invalid download request.', busyMessage: 'Another YouTube job with this ID is already active.',
@@ -774,11 +835,16 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
         () => deps.social.worker.metadataSocial(valid.url, {jobId, emit: emit as (update: DownloadEvent) => void}),
         () => deps.social.worker.cancel(jobId));
       if (metadata.source !== valid.url || metadata.platform !== valid.platform) throw new Error('Social metadata did not match the requested source.');
+      const automation: TimelineAutomation = {provider: 'social', source: metadata.source, selection: null, chapters: []};
+      const history: Omit<HistoryInput, 'filePath'> = {
+        provider: 'social', source: metadata.source, assetId: `${metadata.platform}:${metadata.id}`,
+        title: metadata.title, creator: metadata.channel, profile: 'original', quality: String(quality), mediaMode: 'video',
+        selection: null, automation,
+      };
       const downloaded = await job.perform(
         () => deps.social.worker.downloadSocial(valid.url, quality as Quality, jobId, emit as (update: DownloadEvent) => void),
-        () => deps.social.worker.cancel(jobId), artifact => registerArtifact(job, artifact));
+        () => deps.social.worker.cancel(jobId), artifact => registerDownload(job, jobId, artifact, history, profile));
       if (!deps.completion.isSafeMediaFile(downloaded.filePath)) throw new Error('Downloaded file is no longer available.');
-      const automation: TimelineAutomation = {provider: 'social', source: metadata.source, selection: null, chapters: []};
       return artifactCompletion.completeDownload({
         jobId, job,
         automation,
@@ -786,11 +852,7 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
         prepare: profile !== 'original'
           ? {jobId, inputPath: downloaded.filePath, allowedRoot: dirname(downloaded.filePath), profile, emit}
           : undefined,
-        history: {
-          provider: 'social', source: metadata.source, filePath: downloaded.filePath, assetId: `${metadata.platform}:${metadata.id}`,
-          title: metadata.title, creator: metadata.channel, profile: 'original', quality: String(quality), mediaMode: 'video',
-          selection: null, automation,
-        },
+        history: { ...history, filePath: downloaded.filePath },
       });
     }, true, true, {invalidMessage: 'Invalid social download request.', prerequisites: () => { if (profile !== 'original') requireFfprobe(deps.ffprobeAvailable); }});
   }
@@ -812,12 +874,17 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
       if (item.kind === 'image' && profile !== 'original') throw new Error('Pinterest images are Original-only.');
       if (item.kind === 'video' && profile !== 'original') requireFfprobe(deps.ffprobeAvailable);
 
-      const downloaded = await job.perform(
-        () => deps.pinterest.worker.download(valid.url, item.index, item.kind, jobId, emit as (update: PinterestDownloadEvent) => void),
-        () => deps.pinterest.worker.cancel(jobId), artifact => registerArtifact(job, artifact));
-      if (downloaded.kind !== item.kind) throw new Error('Pinterest media type changed while downloading. Reload the Pin, then retry.');
       const automation: TimelineAutomation = {provider: 'pinterest', source: valid.url, selection: null, chapters: []};
       const requestedProfile: MediaProfile = item.kind === 'image' ? 'original' : profile;
+      const history: Omit<HistoryInput, 'filePath'> = {
+        provider: 'pinterest', source: valid.url, assetId: `${metadata.pinId}:${item.index}`,
+        title: item.title, creator: item.creator ?? metadata.creator, profile: requestedProfile, quality: 'original',
+        mediaMode: item.kind, selection: null, automation,
+      };
+      const downloaded = await job.perform(
+        () => deps.pinterest.worker.download(valid.url, item.index, item.kind, jobId, emit as (update: PinterestDownloadEvent) => void),
+        () => deps.pinterest.worker.cancel(jobId), artifact => registerDownload(job, jobId, artifact, history, requestedProfile));
+      if (downloaded.kind !== item.kind) throw new Error('Pinterest media type changed while downloading. Reload the Pin, then retry.');
       return artifactCompletion.completeDownload({
         jobId, job,
         automation,
@@ -825,11 +892,7 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
         prepare: item.kind === 'video' && requestedProfile !== 'original'
           ? {jobId, inputPath: downloaded.filePath, allowedRoot: dirname(downloaded.filePath), profile: requestedProfile, emit}
           : undefined,
-        history: {
-          provider: 'pinterest', source: valid.url, filePath: downloaded.filePath, assetId: `${metadata.pinId}:${item.index}`,
-          title: item.title, creator: item.creator ?? metadata.creator, profile: requestedProfile, quality: 'original',
-          mediaMode: item.kind, selection: null, automation,
-        },
+        history: { ...history, filePath: downloaded.filePath },
       });
     }, true, false, {invalidMessage: 'Invalid Pinterest download request.'});
   }
@@ -846,11 +909,16 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
       if (!selected || (authoritative.kind === 'photo' && profile !== 'original')) throw new Error(`Invalid ${label} media selection.`);
       if (authoritative.kind === 'video' && profile !== 'original') requireFfprobe(deps.ffprobeAvailable);
 
+      const automation: TimelineAutomation = {provider, source: authoritative.sourceUrl, selection: null, chapters: []};
+      const history: Omit<HistoryInput, 'filePath'> = {
+        provider, source: authoritative.sourceUrl, assetId: `${authoritative.kind}:${authoritative.id}`,
+        title: authoritative.title, creator: authoritative.creator, profile, quality: selected.label,
+        mediaMode: authoritative.kind, selection: null, automation,
+      };
       const downloaded = await job.perform(
         () => adapter.worker.download(jobId, selected, emit as (update: StockEvent) => void),
-        () => adapter.worker.cancel(jobId), artifact => registerArtifact(job, artifact));
+        () => adapter.worker.cancel(jobId), artifact => registerDownload(job, jobId, artifact, history, authoritative.kind === 'photo' ? 'original' : profile));
       if (!deps.completion.isSafeMediaFile(downloaded.filePath)) throw new Error('Downloaded file is no longer available.');
-      const automation: TimelineAutomation = {provider, source: authoritative.sourceUrl, selection: null, chapters: []};
       return artifactCompletion.completeDownload({
         jobId, job,
         automation,
@@ -858,11 +926,7 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
         prepare: authoritative.kind === 'video' && profile !== 'original'
           ? {jobId, inputPath: downloaded.filePath, allowedRoot: dirname(downloaded.filePath), profile, emit}
           : undefined,
-        history: {
-          provider, source: authoritative.sourceUrl, filePath: downloaded.filePath, assetId: `${authoritative.kind}:${authoritative.id}`,
-          title: authoritative.title, creator: authoritative.creator, profile, quality: selected.label,
-          mediaMode: authoritative.kind, selection: null, automation,
-        },
+        history: { ...history, filePath: downloaded.filePath },
       });
     }, true, false, {invalidMessage: `Invalid ${label} download request.`});
   };

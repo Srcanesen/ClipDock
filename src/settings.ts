@@ -51,6 +51,16 @@ export function ownedDownloadFolder(value: unknown): string | null {
   }
 }
 
+/** Admit persisted provenance only from a current, default, or marked folder. */
+export function admitDownloadRoot(value: string, active: ManagedRoot | null, defaultFolder?: string): ManagedRoot | null {
+  try {
+    if (canonicalRoot(value) !== value) return null;
+    if (active?.verify() === value) return active;
+    if (!(defaultFolder && canonicalRoot(defaultFolder) === value) && !ownedDownloadFolder(value)) return null;
+    return ManagedRoot.capture(value);
+  } catch { return null; }
+}
+
 /** Claim a custom directory, or reselect the implicitly managed default folder. */
 export function claimDownloadFolder(root: ManagedRoot, defaultFolder?: string): void {
   const folder = root.verify();
