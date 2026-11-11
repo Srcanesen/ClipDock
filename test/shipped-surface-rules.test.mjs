@@ -39,7 +39,7 @@ function fixture(t) {
   const html = `<meta http-equiv="Content-Security-Policy" content="img-src 'self' data: https://i.ytimg.com https://images.pexels.com https://i.pinimg.com https://cdn.pixabay.com;"><link rel="stylesheet" href="css/styles.css"><script src="renderer.js"></script>${REQUIRED_HTML_IDS_FLAT.map((id) => `<div id="${id}"></div>`).join('')}\n`;
   write('static/index.html', html); write('dist/index.html', html);
   write('dist/css/styles.css', 'body { color: black; }\n');
-  write('dist/package.json', '{"main":"main.js"}\n');
+  write('dist/package.json', '{"main":"main.js","version":"1"}\n');
   write('dist/manifest.xml', `<Id>${PLUGIN_ID}</Id><Name>Fixture</Name><Version>1</Version><Description>Fixture</Description><FilePath>main.js</FilePath>\n`);
   write('dist/contracts.js', `const PLUGIN_ID = '${PLUGIN_ID}';\n`);
   write('dist/preload.js', `const { contextBridge, ipcRenderer } = require('electron/renderer');
