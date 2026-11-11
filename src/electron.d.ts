@@ -71,6 +71,7 @@ declare module 'electron' {
   }
 
   export const app: {
+    dock?: { setIcon(image: string): void };
     whenReady(): Promise<void>;
     getPath(name: 'downloads' | 'userData'): string;
     on(event: 'before-quit', listener: (event: {preventDefault(): void}) => void): void;

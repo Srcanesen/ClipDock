@@ -296,6 +296,10 @@ export interface StartupSequence {
   startBackgroundServices(): void;
 }
 
+export function applyDockIcon(dock: { setIcon(image: string): void } | undefined, iconPath: string): void {
+  if (dock) dock.setIcon(iconPath);
+}
+
 export function runStartupSequence(sequence: StartupSequence): void {
   sequence.registerHandlers();
   sequence.createWindow();

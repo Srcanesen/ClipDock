@@ -22,7 +22,7 @@ import { pathToFileURL } from 'node:url';
 const WorkflowIntegration = require('./WorkflowIntegration.node');
 
 import { IPC_CHANNELS, PLUGIN_ID } from './shared';
-import { normalizeSearchOptions, isSafeMediaFile as isSafeMediaFileHelper, normalizePreviewBounds, registerMainTransferInvokeHandlers, SessionTransferCards, resolveMainProcessCard, createSensitiveIpcHandler as sensitiveHandler, discoverEnginePaths, runStartupSequence, youtubePreviewUrl, YOUTUBE_PREVIEW_REFERRER, type ArtifactCompletionDependencies, type MainIpcRegistrar, type PreviewBounds } from './main-process';
+import { normalizeSearchOptions, isSafeMediaFile as isSafeMediaFileHelper, normalizePreviewBounds, registerMainTransferInvokeHandlers, SessionTransferCards, resolveMainProcessCard, createSensitiveIpcHandler as sensitiveHandler, discoverEnginePaths, applyDockIcon, runStartupSequence, youtubePreviewUrl, YOUTUBE_PREVIEW_REFERRER, type ArtifactCompletionDependencies, type MainIpcRegistrar, type PreviewBounds } from './main-process';
 import { createStatusProvider } from './status-provider';
 import { createTransfer, type TimelineAutomation } from './transfer';
 import { createSharedWorkflowIntegration } from './workflow-integration';
@@ -563,6 +563,7 @@ app.whenReady().then(() => {
   // One panel process per persistent store also prevents cross-process workspace cleanup during a live download.
   const instanceApp = app as typeof app & { requestSingleInstanceLock(): boolean };
   if (!instanceApp.requestSingleInstanceLock()) { app.quit(); return; }
+  applyDockIcon(app.dock, path.join(__dirname, 'icons', 'dock-icon.png'));
   runStartupSequence({
     registerHandlers: () => {
       registerExternalOpenHandlers();

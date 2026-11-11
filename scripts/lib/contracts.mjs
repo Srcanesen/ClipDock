@@ -85,6 +85,7 @@ export const TARGET_BINS = ['active', 'clipdock'];
 export const TIMELINE_PLACEMENTS = ['end', 'playhead'];
 
 export const DIST_REQUIRED_FILES = [
+  'icons/dock-icon.png',
   'preload.js',
   'renderer.js',
   'status.js',

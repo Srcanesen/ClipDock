@@ -86,7 +86,7 @@ function nativePreview(root) {
 
 export const SHIPPED_SURFACE_RULES = [
   {
-    id: 'completed-build', files: ['dist/', 'src/', 'static/', 'scripts/lib/'],
+    id: 'completed-build', files: ['dist/', 'src/', 'static/', 'scripts/lib/', 'dist/icons/dock-icon.png'],
     reason: 'Only a complete artifact matching the current sources can ship.',
     check(root) { validateCompletedBuild(root, path.join(root, 'dist')); },
   },
