@@ -263,6 +263,10 @@ export function createMainTransferHandlers(deps: MainTransferHandlerDependencies
   const runTransfer = deps.runTransfer ?? ((_card: MainProcessCard, operation: () => Promise<TransferResult>) => operation());
   const isInvalidTargetBin = deps.invalidTargetBin ?? invalidTargetBin;
   const isInvalidTimelinePlacement = deps.invalidTimelinePlacement ?? invalidTimelinePlacement;
+  function noteResolveUse(cardId: unknown, via: 'import' | 'timeline' | 'drag'): void {
+    try { deps.noteResolveUse?.(cardId, via); }
+    catch (error) { console.warn('ClipDock Resolve use could not be recorded.', error); }
+  }
 
   async function importToMediaPool(event: unknown, cardId: unknown, targetBin: unknown): Promise<MainTransferResult> {
     deps.requireSender(event);
@@ -270,7 +274,7 @@ export function createMainTransferHandlers(deps: MainTransferHandlerDependencies
     if (!card) return {ok: false, kind: 'invalid-card', message: 'No valid media card selected.'};
     if (isInvalidTargetBin(targetBin)) return {ok: false, kind: 'bin-error', message: 'Invalid destination bin.'};
     const result = await runTransfer(card, () => deps.transfer.importToMediaPool(card.path, targetBin as TargetBin));
-    if (result.ok) deps.noteResolveUse?.(cardId, 'import');
+    if (result.ok) noteResolveUse(cardId, 'import');
     return result;
   }
 
@@ -281,7 +285,7 @@ export function createMainTransferHandlers(deps: MainTransferHandlerDependencies
     if (isInvalidTargetBin(targetBin)) return {ok: false, kind: 'bin-error', message: 'Invalid destination bin.'};
     if (isInvalidTimelinePlacement(placement)) return {ok: false, kind: 'playhead-unsupported', message: 'Invalid timeline position.'};
     const result = await runTransfer(card, () => deps.transfer.addToTimeline(card.path, targetBin as TargetBin, placement as TimelinePlacement, card.automation));
-    if (result.ok) deps.noteResolveUse?.(cardId, 'timeline');
+    if (result.ok) noteResolveUse(cardId, 'timeline');
     return result;
   }
 
@@ -312,7 +316,7 @@ export function createMainTransferHandlers(deps: MainTransferHandlerDependencies
       paths.push(card.path);
     }
     if (!valid) return;
-    for (const cardId of normalized) deps.noteResolveUse?.(cardId, 'drag');
+    for (const cardId of normalized) noteResolveUse(cardId, 'drag');
     for (const filePath of paths) deps.noteNativeDrag?.(filePath);
     // Preserve the existing single-file callback shape while allowing the
     // Electron caller to select the files[] overload for a multi-card drag.

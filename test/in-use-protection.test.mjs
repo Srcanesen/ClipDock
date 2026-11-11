@@ -207,6 +207,39 @@ test('successful import/timeline IPC marks History; failed handoffs do not', asy
   await handlers.importToMediaPool({}, 'card', 'active'); assert.equal(noted, 0);
 });
 
+for (const via of ['import', 'timeline']) {
+  test(`${via} success survives a throwing Resolve-use callback without repeating the handoff`, async t => {
+    const method = via === 'import' ? 'importToMediaPool' : 'addToTimeline';
+    const result = { ok: true, kind: via === 'import' ? 'imported' : 'timeline-appended', message: 'accepted' };
+    const failure = new Error('History store is locked');
+    const transfers = [], recorded = [], warnings = []; let handoffs = 0;
+    t.mock.method(console, 'warn', (_message, error) => warnings.push(error));
+    const handlers = createMainTransferHandlers({ requireSender() {}, resolveCard: () => ({ path: 'clip.mp4' }),
+      transfer: { [method]: async (...args) => { transfers.push(args); return result; } },
+      runTransfer: async (_card, operation) => { handoffs++; return operation(); },
+      noteResolveUse: (id, kind) => { recorded.push([id, kind]); throw failure; } });
+    assert.equal(await handlers[method]({}, 'card', 'clipdock', 'end'), result);
+    assert.equal(handoffs, 1);
+    assert.deepEqual(transfers, [via === 'import' ? ['clip.mp4', 'clipdock'] : ['clip.mp4', 'clipdock', 'end', undefined]]);
+    assert.deepEqual(recorded, [['card', via]]);
+    assert.deepEqual(warnings, [failure]);
+  });
+}
+
+test('native drag still exposes and starts every file when Resolve-use recording throws', t => {
+  const failure = new Error('History save failed');
+  const recorded = [], exposed = [], started = [], warnings = [];
+  t.mock.method(console, 'warn', (_message, error) => warnings.push(error));
+  const handlers = createMainTransferHandlers({ requireSender() {}, resolveCard: id => ({ path: `${id}.mp4` }), transfer: {},
+    noteResolveUse: (id, via) => { recorded.push([id, via]); throw failure; },
+    noteNativeDrag: file => exposed.push(file) });
+  handlers.nativeDragStart({}, ['first', 'second'], files => started.push(files));
+  assert.deepEqual(recorded, [['first', 'drag'], ['second', 'drag']]);
+  assert.deepEqual(exposed, ['first.mp4', 'second.mp4']);
+  assert.deepEqual(started, [['first.mp4', 'second.mp4']]);
+  assert.deepEqual(warnings, [failure, failure]);
+});
+
 test('native History drag reproduction promotes its passive card and protects media plus subtitle for the session', async t => {
   const f = fixture(t), media = f.file('drag.mp4'), subtitle = f.file('drag.srt');
   const record = f.history.add({ ...historyInput(media), subtitle: { filePath: subtitle } });
