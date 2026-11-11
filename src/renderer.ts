@@ -2588,7 +2588,8 @@ function openHistoryDeleteDialog(): void {
   const filesCopy = available.length ? ` Up to ${available.length} available file${available.length === 1 ? '' : 's'}${size} may be deleted from disk.` : '';
   const missingCopy = missing ? ` ${missing} missing entr${missing === 1 ? 'y will' : 'ies will'} only be removed from History.` : '';
   const sentCount = records.filter(record => record.sentToResolve).length;
-  const sentCopy = sentCount ? ` ${sentCount} of these were sent to DaVinci Resolve. Deleting their files takes those clips offline there.` : '';
+  const sentCopy = sentCount === 1 ? ' 1 of these was sent to DaVinci Resolve. Deleting its file takes that clip offline there.'
+    : sentCount ? ` ${sentCount} of these were sent to DaVinci Resolve. Deleting their files takes those clips offline there.` : '';
   setOptionalText('history-delete-summary', `Remove ${records.length} History entr${records.length === 1 ? 'y' : 'ies'}?${filesCopy}${missingCopy}${sentCopy}`);
   const titles = $('history-delete-titles'); titles.replaceChildren();
   for (const record of records.slice(0, 5)) { const item = document.createElement('li'); item.textContent = record.title; titles.append(item); }

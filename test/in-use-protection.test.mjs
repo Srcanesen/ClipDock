@@ -147,6 +147,8 @@ test('Resolve use persists with its first timestamp, upgrades drag, and exposes 
   const reloaded = new DownloadHistory(f.store, f.root); t.after(() => reloaded.dispose());
   assert.equal(reloaded.get(record.id).sentToResolve, true);
   assert.equal('resolveUse' in reloaded.get(record.id), false);
+  reloaded.noteResolveUse(media, 'drag');
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.store)).records[0].resolveUse, { at: first.at, via: 'timeline' });
 });
 
 test('loader drops invalid Resolve use and accepts legacy History', t => {
@@ -207,7 +209,11 @@ test('single History and queue confirmations append the exact offline warning; b
   assert.equal(confirms[1], 'Only a safe ClipDock-managed file will be deleted from your computer. This action cannot be undone. Continue?' + offline);
   const all = h.elements.get('history-select-all'); all.checked = true; all.listeners.change();
   h.elements.get('history-delete-selected-btn').click();
-  assert.ok(h.elements.get('history-delete-summary').textContent.endsWith(' 1 of these were sent to DaVinci Resolve. Deleting their files takes those clips offline there.'));
+  assert.ok(h.elements.get('history-delete-summary').textContent.endsWith(' 1 of these was sent to DaVinci Resolve. Deleting its file takes that clip offline there.'));
+  const plural = await historyHarness([rowRecord('sent-a', { sentToResolve: true }), rowRecord('sent-b', { sentToResolve: true }), rowRecord('plain')]);
+  const selectAll = plural.elements.get('history-select-all'); selectAll.checked = true; selectAll.listeners.change();
+  plural.elements.get('history-delete-selected-btn').click();
+  assert.ok(plural.elements.get('history-delete-summary').textContent.endsWith(' 2 of these were sent to DaVinci Resolve. Deleting their files takes those clips offline there.'));
 });
 
 test('bulk deletion applies in-use refusal per record and continues with unrelated records', async t => {

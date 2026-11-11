@@ -29,7 +29,7 @@ test('a file stays while a Resolve handoff is reading media',async t=>{
   const record=f.controls.history.add(historyInput(file));const card=(await f.invoke('historyList'))[0].cardId;
   const entered=deferred(),release=deferred();f.controls.transfer=()=>{entered.resolve();return release.promise;};
   const transfer=f.invoke('importToMediaPool',card,'active');await entered.promise;
-  await assert.rejects(f.invoke('historyDelete',record.id),/Wait for active/);
+  await assert.rejects(f.invoke('historyDelete',record.id),{message:'This file is being used by a transfer or conversion. Wait for it to finish.'});
   assert.equal(fs.existsSync(file),true);
   release.resolve({ok:true,kind:'imported'});assert.equal((await transfer).ok,true);
   assert.equal((await f.invoke('historyDelete',record.id)).deleted,true);

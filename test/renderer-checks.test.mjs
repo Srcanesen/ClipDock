@@ -443,7 +443,7 @@ test('FIFO queue, immutable snapshots, handoff, cancellation and deletion', asyn
 
     const deletable = rows()[0]; const deleteQueueId = deletable.dataset.queueId; const deleteCardId = 'card-transfer'; const deleteButton = clickNamed(deletable, 'Delete file');
     deleteButton?.click(); deleteButton?.click();
-    expect('Delete file confirms the irreversible ClipDock-managed-only warning and sends one cardId', [queueDeleteCalls, confirmCalls, confirmMessage], [[deleteCardId], 1, 'Only a safe ClipDock-managed file will be deleted from your computer. This action cannot be undone. Continue?']); deleteResolve?.(); await flush();
+    expect('Delete file confirms the irreversible ClipDock-managed-only warning and sends one cardId', [queueDeleteCalls, confirmCalls, confirmMessage], [[deleteCardId], 1, 'Only a safe ClipDock-managed file will be deleted from your computer. This action cannot be undone. Continue? This file was sent to DaVinci Resolve. Deleting it takes the clip offline there.']); deleteResolve?.(); await flush();
     expect('failed Delete file keeps the row and reports an actionable status', [rows().some((row) => row.dataset.queueId === deleteQueueId), elements.get('youtube-queue-status').textContent], [true, deleteOutcome.message]);
     deleteOutcome = { deleted: true, message: 'File deleted.' }; const retryDelete = rows().find((row) => row.dataset.queueId === deleteQueueId); clickNamed(retryDelete, 'Delete file')?.click(); deleteResolve?.(); await flush();
     expect('successful Delete file removes the row only after truthful deleted result', [queueDeleteCalls, rows().some((row) => row.dataset.queueId === deleteQueueId), elements.get('youtube-queue-status').textContent], [[deleteCardId, deleteCardId], false, 'File deleted.']);
