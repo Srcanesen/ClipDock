@@ -677,7 +677,7 @@ body[data-phase="no-project"] .ins-foot:has(#download-youtube-btn:not([data-inte
 .history-icon::before { content: ""; width: 16px; height: 16px; background: currentColor; -webkit-mask: var(--i-folder) center / 16px no-repeat; mask: var(--i-folder) center / 16px no-repeat; }
 .history-icon.delete::before { -webkit-mask-image: var(--i-trash); mask-image: var(--i-trash); }
 .history-icon.delete:hover { color: var(--safelight-text); }
-.history-menu { position: fixed; z-index: 40; min-width: 210px; max-width: none; justify-content: stretch; grid-template-columns: minmax(0, 1fr); background: var(--carrier); border: 1px solid var(--edge); border-radius: var(--r-m); padding: 4px; box-shadow: 0 16px 32px -12px rgba(0, 0, 0, .7); display: grid; }
+.history-menu { position: fixed; max-height: calc(100vh - 16px); max-width: calc(100vw - 16px); min-width: min(210px, calc(100vw - 16px)); overflow: auto; z-index: 40; justify-content: stretch; grid-template-columns: minmax(0, 1fr); background: var(--carrier); border: 1px solid var(--edge); border-radius: var(--r-m); padding: 4px; box-shadow: 0 16px 32px -12px rgba(0, 0, 0, .7); display: grid; }
 .history-menu button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px; border-radius: var(--r-s); color: var(--paper); font-size: 13px; }
 .history-menu button:hover, .history-menu button:focus-visible { background: var(--carrier-2); outline: none; }
 .history-menu button:disabled { opacity: .45; }

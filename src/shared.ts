@@ -158,7 +158,7 @@ export interface ClipdockApi {
   historyRetryPreparation(id: string): Promise<HistoryPreparationResult>;
   historyCancelPreparation(id: string): Promise<boolean>;
   onHistoryPreparationProgress(callback: (event: HistoryPreparationProgress) => void): () => void;
-  historyList(): Promise<HistoryRecord[]>;
+  historyList(cardId?: string): Promise<HistoryRecord[]>;
   historyThumbnail(id: string): Promise<string | null>;
   historyClear(): Promise<number>;
   historyReuse(id: string): Promise<DownloadArtifact | null>;

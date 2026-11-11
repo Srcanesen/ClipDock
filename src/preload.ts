@@ -107,7 +107,7 @@ const api: ClipdockApi = {
     ipcRenderer.on('clipdock:history-preparation-progress', listener);
     return () => ipcRenderer.removeListener('clipdock:history-preparation-progress', listener);
   },
-  historyList: () => ipcRenderer.invoke('clipdock:history-list') as Promise<HistoryRecord[]>,
+  historyList: (cardId?: string) => ipcRenderer.invoke('clipdock:history-list', cardId) as Promise<HistoryRecord[]>,
   historyThumbnail: (id: string) => ipcRenderer.invoke('clipdock:history-thumbnail', id) as Promise<string | null>,
   historyClear: () => ipcRenderer.invoke('clipdock:history-clear') as Promise<number>,
   historyReuse: (id: string) => ipcRenderer.invoke('clipdock:history-reuse', id) as Promise<{ cardId: string; fileName: string } | null>,

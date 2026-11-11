@@ -57,6 +57,7 @@ if (!isMainThread && workerData?.clipdockEngineDiscovery) {
 
 export interface MainProcessCard {
   path: string;
+  subtitlePath?: string;
   automation?: TimelineAutomation;
   /** Main-only registration-time managed boundary; omitted for user-selected files. */
   trustedRoot?: ManagedRoot;
@@ -68,6 +69,7 @@ export interface MainTransferHandlerDependencies {
   transfer: Pick<Transfer, 'importToMediaPool' | 'addToTimeline'>;
   runTransfer?: (card: MainProcessCard, operation: () => Promise<TransferResult>) => Promise<TransferResult>;
   noteNativeDrag?: (filePath: string) => void;
+  noteResolveUse?: (cardId: unknown, via: 'import' | 'timeline' | 'drag') => void;
   /** Main keeps these predicates close to its IPC registration for auditability. */
   invalidTargetBin?: (value: unknown) => boolean;
   invalidTimelinePlacement?: (value: unknown) => boolean;
@@ -229,7 +231,9 @@ export function createMainTransferHandlers(deps: MainTransferHandlerDependencies
     const card = deps.resolveCard(cardId);
     if (!card) return {ok: false, kind: 'invalid-card', message: 'No valid media card selected.'};
     if (isInvalidTargetBin(targetBin)) return {ok: false, kind: 'bin-error', message: 'Invalid destination bin.'};
-    return runTransfer(card, () => deps.transfer.importToMediaPool(card.path, targetBin as TargetBin));
+    const result = await runTransfer(card, () => deps.transfer.importToMediaPool(card.path, targetBin as TargetBin));
+    if (result.ok) deps.noteResolveUse?.(cardId, 'import');
+    return result;
   }
 
   async function addToTimeline(event: unknown, cardId: unknown, targetBin: unknown, placement: unknown): Promise<MainTransferResult> {
@@ -238,7 +242,9 @@ export function createMainTransferHandlers(deps: MainTransferHandlerDependencies
     if (!card) return {ok: false, kind: 'invalid-card', message: 'No valid media card selected.'};
     if (isInvalidTargetBin(targetBin)) return {ok: false, kind: 'bin-error', message: 'Invalid destination bin.'};
     if (isInvalidTimelinePlacement(placement)) return {ok: false, kind: 'playhead-unsupported', message: 'Invalid timeline position.'};
-    return runTransfer(card, () => deps.transfer.addToTimeline(card.path, targetBin as TargetBin, placement as TimelinePlacement, card.automation));
+    const result = await runTransfer(card, () => deps.transfer.addToTimeline(card.path, targetBin as TargetBin, placement as TimelinePlacement, card.automation));
+    if (result.ok) deps.noteResolveUse?.(cardId, 'timeline');
+    return result;
   }
 
   function normalizeNativeDragCardIds(value: unknown): string[] | null {
@@ -268,6 +274,7 @@ export function createMainTransferHandlers(deps: MainTransferHandlerDependencies
       paths.push(card.path);
     }
     if (!valid) return;
+    for (const cardId of normalized) deps.noteResolveUse?.(cardId, 'drag');
     for (const filePath of paths) deps.noteNativeDrag?.(filePath);
     // Preserve the existing single-file callback shape while allowing the
     // Electron caller to select the files[] overload for a multi-card drag.
@@ -333,6 +340,7 @@ export type CompletedDownloadResult = {cardId: string; fileName: string; subtitl
 
 /** Provider-validated optional preparation; the service runs requested-profile preparation. */
 export interface CompletionPrepareRequest {
+  subtitlePath?: string;
   jobId: string;
   inputPath: string;
   allowedRoot: string;
@@ -401,7 +409,7 @@ export function createArtifactCompletionService(deps: ArtifactCompletionDependen
     let final: ResolvedArtifact;
     try {
       final = request.prepare
-        ? await prepareRequestedProfile(request.artifact, request.prepare, deps)
+        ? await prepareRequestedProfile(request.artifact, { ...request.prepare, subtitlePath: history.subtitle?.filePath }, deps)
         : {...request.artifact, profile: history.profile};
     } catch (error) {
       if (!request.job || error instanceof ProviderJobCancelledError) throw error;
@@ -508,7 +516,7 @@ export function serializeMediaPreparation(worker: ReturnType<typeof createMediaP
 /** Retry a retained source using the same preparation worker and shutdown lifecycle as downloads. */
 export function createHistoryPreparationHandlers(deps: {
   history: DownloadHistory;
-  prepareMedia: ReturnType<typeof createMediaPrep>['prepare'];
+  prepareMedia: (request: Parameters<ReturnType<typeof createMediaPrep>['prepare']>[0] & { subtitlePath?: string }) => ReturnType<ReturnType<typeof createMediaPrep>['prepare']>;
   cancelMediaPreparation: ReturnType<typeof createMediaPrep>['cancel'];
   protectedPaths?: () => Iterable<string>;
   replaced: (id: string, preparedId?: string) => void;
@@ -534,7 +542,7 @@ export function createHistoryPreparationHandlers(deps: {
     active.set(id, run);
     let output: OwnedFile | undefined;
     try {
-      const prepared = await deps.prepareMedia({ jobId: run.jobId, inputPath: hit.path, allowedRoot: root, source, preserveSource: true, profile: record.preparationFailed.profile, emit: event => emit({ id, percent: event.percent }) });
+      const prepared = await deps.prepareMedia({ jobId: run.jobId, inputPath: hit.path, allowedRoot: root, source, preserveSource: true, profile: record.preparationFailed.profile, subtitlePath: deps.history.resolveSubtitle(id)?.path, emit: event => emit({ id, percent: event.percent }) });
       if (prepared.filePath !== hit.path) output = captureFile(AnchoredDir.capture(root.verify(), root), prepared.filePath);
       verifyFile(source);
       if (run.cancelled) throw new ProviderJobCancelledError('Conversion cancelled.');

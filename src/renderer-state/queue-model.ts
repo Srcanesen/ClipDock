@@ -51,6 +51,7 @@ export interface QueueItem {
   cardId?: string;
   fileName?: string;
   fileDeleted?: boolean;
+  sentToResolve?: boolean;
   subtitle?: MediaCard;
   warning?: string;
   transferError?: string;
@@ -199,7 +200,7 @@ export class DownloadQueue {
     if (!item || (again ? item.status !== 'completed' : !['failed', 'cancelled'].includes(item.status))) return { added: 0 };
     const duplicate = this.duplicate(item, !again);
     if (duplicate) return { added: 0, duplicate: duplicate.queueId };
-    const repeated: QueueItem = { ...item, queueId: this.adapter.newId(), jobId: this.adapter.newId(), status: 'queued', percent: null, speedBytesPerSecond: null, etaSeconds: null, message: 'Queued.', cardId: undefined, fileName: undefined, fileDeleted: undefined, subtitle: undefined, warning: undefined, transferError: undefined, actionError: undefined, stopping: false, deleting: false, handingOff: false };
+    const repeated: QueueItem = { ...item, queueId: this.adapter.newId(), jobId: this.adapter.newId(), status: 'queued', percent: null, speedBytesPerSecond: null, etaSeconds: null, message: 'Queued.', cardId: undefined, fileName: undefined, fileDeleted: undefined, sentToResolve: undefined, subtitle: undefined, warning: undefined, transferError: undefined, actionError: undefined, stopping: false, deleting: false, handingOff: false };
     this.queue.push(repeated); this.sessionItems.push(repeated);
     this.changed(); this.pump();
     return { added: 1 };
@@ -215,6 +216,10 @@ export class DownloadQueue {
     } catch (error) { if (running()) item.actionError = item.message = (error as Error).message; }
     finally { item.stopping = false; this.changed(); }
   }
+  noteDragged(cardIds: readonly string[]): void {
+    const ids = new Set(cardIds);
+    for (const item of this.sessionItems) if (item.cardId && ids.has(item.cardId)) item.sentToResolve = true;
+  }
   async transfer(id: string, action: 'import' | TimelinePlacement, reason?: string | null): Promise<void> {
     const item = this.queue.find((item) => item.queueId === id);
     if (!item || item.fileDeleted || !item.cardId || item.handingOff || item.deleting) return;
@@ -226,6 +231,7 @@ export class DownloadQueue {
   private async handoff(item: QueueItem, action: 'import' | TimelinePlacement, automatic: boolean): Promise<void> {
     try {
       const result = await this.adapter.transfer(item.cardId!, item.targetBin, action);
+      if (result.ok) item.sentToResolve = true;
       item.transferError = result.ok ? undefined : result.message;
       item.message = automatic && !result.ok ? `Download complete. ${result.message}` : result.message;
     } catch (error) {

@@ -127,7 +127,7 @@ let currentProjectName: string | null = null;
 let currentProjectReadAt: number | null = null;
 let mediaPreparation: ReturnType<typeof createMediaPrep>;
 const busy = () => engineHost.isBusy();
-/** Deleting one file waits only for work that reads existing media (Resolve handoffs, media preparation); downloads and searches write elsewhere. */
+/** Global operations wait for readers; individual deletion uses their scoped paths. */
 const mediaInUse = () => engineHost.mediaInUse();
 async function refreshHistoryProject(): Promise<void> {
   if (currentProjectReadAt !== null && Date.now() - currentProjectReadAt < 6_000) return;
@@ -188,10 +188,10 @@ const engineHost = createEngineHost({
 
 // History can consult the root while loading legacy records; capture it first.
 const history = new DownloadHistory(path.join(app.getPath('userData'), 'download-history.json'), activeRoot, () => currentProjectName, { tools: () => engineHost.ready() });
-const ledger = new DownloadLedger(history, mediaInUse);
+const ledger = new DownloadLedger(history, mediaInUse, () => engineHost.mediaPathsInUse());
 const historyPreparation = createHistoryPreparationHandlers({
   history,
-  prepareMedia: request => engineHost.operation(() => engineHost.prepareMedia(request)),
+  prepareMedia: request => engineHost.prepareMedia(request),
   cancelMediaPreparation: jobId => mediaPreparation.cancel(jobId),
   protectedPaths: () => ledger.protectedPaths(),
   replaced: (id, preparedId) => { ledger.bindHistory(id, preparedId); },
@@ -239,9 +239,10 @@ function registerTransferEventHandlers(): void {
       requireSender: (event) => requireClipdockSender(event as IpcMainInvokeEvent),
       resolveCard,
       noteNativeDrag: (filePath) => sessionTransferCards.noteExposed(filePath),
+      noteResolveUse: (cardId, via) => ledger.noteResolveUse(cardId, via),
       transfer,
       runTransfer: async (card, operation) => {
-        return engineHost.handoff(() => transferBoundary.run(card, operation));
+        return engineHost.handoff(() => transferBoundary.run(card, operation), card.subtitlePath ? [card.path, card.subtitlePath] : [card.path]);
       },
       invalidTargetBin,
       invalidTimelinePlacement,
@@ -439,22 +440,22 @@ function registerStockHandlers(): void {
 }
 
 function registerWorkspaceHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.workspaceStatus, createSensitiveIpcHandler(requireTrustedSender, async () => inspectWorkspaceAsync(activeRoot(), ledger.protectedPaths()), 'immediate'));
+  ipcMain.handle(IPC_CHANNELS.workspaceStatus, createSensitiveIpcHandler(requireTrustedSender, async () => inspectWorkspaceAsync(activeRoot(), ledger.cleanupProtectedPaths()), 'immediate'));
   ipcMain.handle(IPC_CHANNELS.openWorkspace, createSensitiveIpcHandler(requireTrustedSender, async () => { sessionTransferCards.noteAllExposed(); return (await shell.openPath(activeRoot().verify())) === ''; }));
   ipcMain.handle(IPC_CHANNELS.cleanupWorkspace, createSensitiveIpcHandler(requireTrustedSender, async () => {
     if (busy()) throw new Error('Wait for active downloads or media preparation to finish.');
-    return engineHost.withFolderChange(() => cleanupWorkspaceAsync(activeRoot(), ledger.protectedPaths()));
+    return engineHost.withFolderChange(() => cleanupWorkspaceAsync(activeRoot(), ledger.cleanupProtectedPaths()));
   }));
 }
 
 function registerHistoryHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.historyRetryPreparation, createSensitiveIpcHandler(requireTrustedSender, async (event, id: unknown) => {
     ledger.bindHistory(id);
-    return historyPreparation.retryPreparation(id, update => sendProviderEvent(event, IPC_CHANNELS.historyPreparationProgress, update));
+    return engineHost.operation(() => historyPreparation.retryPreparation(id, update => sendProviderEvent(event, IPC_CHANNELS.historyPreparationProgress, update)));
   }));
   ipcMain.handle(IPC_CHANNELS.historyCancelPreparation, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => historyPreparation.cancelPreparation(id)));
-  ipcMain.handle(IPC_CHANNELS.historyList, createSensitiveIpcHandler(requireTrustedSender, async () => {
-    return ledger.listHistory().map(record => ({ ...record, preparing: historyPreparation.isPreparing(record.id) }));
+  ipcMain.handle(IPC_CHANNELS.historyList, createSensitiveIpcHandler(requireTrustedSender, async (_event, cardId?: unknown) => {
+    return ledger.listHistory(cardId).map(record => ({ ...record, preparing: historyPreparation.isPreparing(record.id) }));
   }, 'immediate'));
   ipcMain.handle(IPC_CHANNELS.queueDelete, createSensitiveIpcHandler(requireTrustedSender, async (_event, cardId: unknown) => ledger.deleteCard(cardId)));
   ipcMain.handle(IPC_CHANNELS.historyThumbnail, createSensitiveIpcHandler(requireTrustedSender, async (_event, id: unknown) => history.thumbnail(id), 'immediate'));

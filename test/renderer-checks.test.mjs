@@ -567,7 +567,7 @@ test('social metadata, provider queue and recovery', async (t) => {
     const secondJob = downloadCalls[1].jobId; pendingDownloads.get(secondJob).resolve({ cardId: 'social-card', fileName: 'social.mp4' }); await flush();
     const completed = Array.from(rows()).find((row) => row.className.includes('state-completed') && row !== firstRow); findButton(completed, 'Add to timeline').click(); await flush();
     expect('social completed timeline handoff reuses card, bin, and placement', timelineCalls.at(-1), ['social-card', 'active', 'end']);
-    findButton(completed, 'Delete file').click(); deleteResolve(); await flush();
+    findButton(completed, 'Delete file').click(); await flush(); deleteResolve(); await flush();
     expect('social Delete file uses cardId and removes only after success', [deleteCalls, rows().includes(completed)], [['social-card'], false]);
     const cancelled = Array.from(rows()).find((row) => row.dataset.queueId === firstQueueId); findButton(cancelled, 'Retry').click(); await flush(); const retryJob = downloadCalls.at(-1).jobId;
     expect('social Retry keeps the provider route and canonical source', [downloadCalls.length, downloadCalls.at(-1).url, downloadCalls.at(-1).quality], [3, 'https://www.instagram.com/reel/ABC_def-123', '720p']); pendingDownloads.get(retryJob).reject(new Error('Retry failed.')); await flush();

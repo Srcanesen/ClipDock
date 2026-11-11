@@ -13,7 +13,7 @@ export class DownloadLedger {
   private readonly subtitleCards = new Map<string, string>();
   private readonly sessionSubtitles = new Map<string, string>();
   private readonly failedPreparations = new Map<string, { path: string; profile: string }>();
-  constructor(private readonly history: DownloadHistory, private readonly mediaInUse: () => boolean) {}
+  constructor(private readonly history: DownloadHistory, private readonly mediaInUse: () => boolean, private readonly mediaPathsInUse?: () => ReadonlySet<string>) {}
 
   private rememberPreparation(record: HistoryRecord | null, path: string): void {
     if (record?.preparationFailed) this.failedPreparations.set(record.id, { path, profile: record.preparationFailed.profile });
@@ -116,11 +116,25 @@ export class DownloadLedger {
       if (existing?.path === hit.path && existing.trustedRoot === hit.trustedRoot && existing.profile === hit.record.profile) return existingId;
       this.unbindDrag(hit.record.id);
     }
-    const id = this.insert({ path: hit.path, automation: hit.record.automation, historyId: hit.record.id, trustedRoot: hit.trustedRoot, passive: true });
+    const id = this.insert({ path: hit.path, automation: hit.record.automation, historyId: hit.record.id, trustedRoot: hit.trustedRoot, subtitlePath: this.history.resolveSubtitle(hit.record.id)?.path, passive: true });
     this.historyCards.set(hit.record.id, id);
     return id;
   }
-  listHistory(): Array<HistoryRecord & { cardId?: string }> {
+  cleanupProtectedPaths(): string[] { return [...this.protectedPaths(), ...this.history.resolveUsedPaths()]; }
+  noteResolveUse(cardId: unknown, via: 'import' | 'timeline' | 'drag'): void {
+    const card = this.resolve(cardId);
+    if (!card || typeof cardId !== 'string') return;
+    if (via === 'drag' && card.passive) {
+      this.cards.set(cardId, Object.freeze({ ...card, passive: false, subtitlePath: card.historyId ? this.history.resolveSubtitle(card.historyId)?.path : undefined }));
+      if (card.historyId) this.historyCards.delete(card.historyId);
+    }
+    this.history.noteResolveUse(card.ownerPath ?? card.path, via);
+  }
+  listHistory(cardId?: unknown): Array<HistoryRecord & { cardId?: string }> {
+    if (cardId !== undefined) {
+      const card = this.resolve(cardId);
+      return card ? this.history.list().filter(record => this.history.resolve(record.id)?.path === (card.ownerPath ?? card.path)).map(record => ({ ...record, cardId: cardId as string })) : [];
+    }
     const records = this.history.list();
     const retained = new Set(records.map(record => record.id));
     for (const id of this.historyCards.keys()) if (!retained.has(id)) this.unbindDrag(id);
@@ -134,12 +148,12 @@ export class DownloadLedger {
   }
   deleteHistory(id: unknown): HistoryDeleteResult {
     if (typeof id !== 'string') return { deleted: false, removed: false, removedCardIds: [] };
-    const result = this.history.delete(id, this.protectedPaths(this.historyCards.get(id)), this.mediaInUse());
+    const result = this.history.delete(id, this.protectedPaths(this.historyCards.get(id)), (this.mediaPathsInUse?.() ?? this.mediaInUse()));
     const removedCardIds = result.removed ? this.unbind(id) : [];
     return { ...result, removedCardIds };
   }
   clearHistory(): number {
-    const count = this.history.clear();
+    const count = this.history.clear(this.mediaInUse());
     this.failedPreparations.clear();
     for (const id of this.historyCards.keys()) this.unbindDrag(id);
     for (const [id, card] of this.cards) if (card.historyId) {
@@ -155,8 +169,8 @@ export class DownloadLedger {
       const recorded = !card.ownerPath && card.historyId && this.history.get(card.historyId);
       const protectedPaths = this.protectedPaths(cardId, card.historyId ? this.historyCards.get(card.historyId) : undefined);
       const result = recorded && card.historyId
-        ? this.history.delete(card.historyId, protectedPaths, this.mediaInUse(), true)
-        : this.history.deleteUnrecorded(card.path, card.trustedRoot, protectedPaths, { media: card.ownedMedia ?? null, subtitle: card.ownedSubtitle ?? null }, this.mediaInUse(), card.subtitlePath);
+        ? this.history.delete(card.historyId, protectedPaths, (this.mediaPathsInUse?.() ?? this.mediaInUse()), true)
+        : this.history.deleteUnrecorded(card.path, card.trustedRoot, protectedPaths, { media: card.ownedMedia ?? null, subtitle: card.ownedSubtitle ?? null }, (this.mediaPathsInUse?.() ?? this.mediaInUse()), card.subtitlePath);
       if (!result.deleted) return { deleted: false, message: result.warning ?? 'File was not deleted safely. It remains in the queue; retry after other references or active work are gone.' };
       this.cards.delete(cardId);
       if (card.historyId && !card.ownerPath) this.unbind(card.historyId);

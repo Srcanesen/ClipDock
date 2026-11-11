@@ -17,10 +17,11 @@ export type HistorySelection = { start: number; end: number; label: string } | n
 export type HistoryAutomation = { provider: HistoryProvider; source: string; selection: HistorySelection; chapters: Array<{ start: number; end: number; title: string }> };
 /** Public, path-free subtitle companion metadata. */
 export type HistorySubtitle = { fileName: string; bytes: number; available: boolean };
-type StoredRecord = { id: string; provider: HistoryProvider; source: string; project: string | null; filePath: string; managed: boolean; /** Main-only registration-time boundary; absent for old/external records. */ trustedRoot?: string; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; preparationFailed?: { profile: MediaProfile }; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; subtitlePath: string | null };
+type ResolveUse = { at: number; via: 'import' | 'timeline' | 'drag' };
+type StoredRecord = { resolveUse?: ResolveUse; id: string; provider: HistoryProvider; source: string; project: string | null; filePath: string; managed: boolean; /** Main-only registration-time boundary; absent for old/external records. */ trustedRoot?: string; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; preparationFailed?: { profile: MediaProfile }; quality: string | null; mediaMode: string; selection: HistorySelection; automation: HistoryAutomation; createdAt: number; lastUsedAt: number; subtitlePath: string | null };
 type Store = { schemaVersion: 1; records: StoredRecord[] };
-export type HistoryRecord = Omit<StoredRecord, 'filePath' | 'managed' | 'trustedRoot' | 'subtitlePath'> & { available: boolean; subtitle: HistorySubtitle | null };
-export type HistoryInput = Omit<StoredRecord, 'id' | 'project' | 'managed' | 'trustedRoot' | 'fileName' | 'bytes' | 'createdAt' | 'lastUsedAt' | 'subtitlePath'> & { /** Main-only companion input; the path is validated but never exposed publicly. */ subtitle?: { filePath: string } | null };
+export type HistoryRecord = Omit<StoredRecord, 'filePath' | 'managed' | 'trustedRoot' | 'subtitlePath' | 'resolveUse'> & { sentToResolve: boolean; available: boolean; subtitle: HistorySubtitle | null };
+export type HistoryInput = Omit<StoredRecord, 'id' | 'project' | 'managed' | 'trustedRoot' | 'fileName' | 'bytes' | 'createdAt' | 'lastUsedAt' | 'subtitlePath' | 'resolveUse'> & { /** Main-only companion input; the path is validated but never exposed publicly. */ subtitle?: { filePath: string } | null };
 const MAX_RECORDS = 200;
 const preparationFailure = (value: unknown): { profile: MediaProfile } | undefined => {
   const profile = (value as { profile?: unknown } | null)?.profile;
@@ -111,9 +112,10 @@ export class DownloadHistory {
       try { const root = hit.trustedRoot ?? ManagedRoot.capture(dirname(hit.path)); return captureFile(AnchoredDir.capture(root.verify(), root), hit.path); } catch { return null; }
     }, () => this.records.some(record => record.id === id));
   }
-  clear(): number {
+  clear(busy = false): number {
     return this.transaction(() => {
       for (const id of this.preparations) this.assertNotPreparing(id);
+      if (busy) throw new Error('Wait for active downloads or media preparation to finish.');
       const count = this.records.length;
       this.records = []; this.save(); this.cleanupThumbnails();
       return count;
@@ -228,7 +230,33 @@ export class DownloadHistory {
     try { return { fileName: basename(r.subtitlePath), bytes: resolved ? statSync(resolved).size : 0, available: !!resolved }; }
     catch { return { fileName: basename(r.subtitlePath), bytes: 0, available: false }; }
   }
-  private public(r: StoredRecord): HistoryRecord { return { id: r.id, provider: r.provider, source: r.source, project: r.project, fileName: r.fileName, bytes: r.bytes, assetId: r.assetId, title: r.title, creator: r.creator, profile: r.profile, ...(r.preparationFailed ? { preparationFailed: { ...r.preparationFailed } } : {}), quality: r.quality, mediaMode: r.mediaMode, selection: r.selection, automation: r.automation, createdAt: r.createdAt, lastUsedAt: r.lastUsedAt, available: !!this.safePath(r, r.filePath), subtitle: this.subtitle(r) }; }
+  private public(r: StoredRecord): HistoryRecord { return { sentToResolve: !!r.resolveUse, id: r.id, provider: r.provider, source: r.source, project: r.project, fileName: r.fileName, bytes: r.bytes, assetId: r.assetId, title: r.title, creator: r.creator, profile: r.profile, ...(r.preparationFailed ? { preparationFailed: { ...r.preparationFailed } } : {}), quality: r.quality, mediaMode: r.mediaMode, selection: r.selection, automation: r.automation, createdAt: r.createdAt, lastUsedAt: r.lastUsedAt, available: !!this.safePath(r, r.filePath), subtitle: this.subtitle(r) }; }
+  noteResolveUse(filePath: string, via: ResolveUse['via']): void {
+    this.transaction(() => {
+      const safe = regular(filePath);
+      if (!safe) return;
+      let changed = false;
+      for (const record of this.records) if (regular(record.filePath) === safe) {
+        const previous = record.resolveUse;
+        const nextVia = previous && previous.via !== 'drag' ? previous.via : via;
+        if (previous?.via === nextVia) continue;
+        record.resolveUse = { at: previous?.at ?? Date.now(), via: nextVia }; changed = true;
+      }
+      if (changed) this.save();
+    });
+  }
+  resolveUsedPaths(): string[] {
+    return this.records.filter(record => record.resolveUse).flatMap(record => record.subtitlePath ? [record.filePath, record.subtitlePath] : [record.filePath]);
+  }
+  private assertPathsNotInUse(paths: Array<string | null | undefined>, inUse: boolean | Iterable<string>): void {
+    // Retain the legacy boolean adapter for callers outside the scoped ledger.
+    if (typeof inUse === 'boolean') {
+      if (inUse) throw new Error('Wait for active downloads or media preparation to finish.');
+      return;
+    }
+    const used = new Set([...inUse].flatMap(path => regular(path) ?? []));
+    if (paths.some(path => path && used.has(regular(path) ?? ''))) throw new Error('This file is being used by a transfer or conversion. Wait for it to finish.');
+  }
   list(): HistoryRecord[] { return this.records.map((r) => this.public(r)); }
   get(id: unknown): HistoryRecord | null { const r = typeof id === 'string' ? this.records.find((x) => x.id === id) : null; return r ? this.public(r) : null; }
   add(input: HistoryInput): HistoryRecord { return this.transaction(() => this.addRecord(input)); }
@@ -306,9 +334,9 @@ export class DownloadHistory {
   }
 
   /** Session ownership outlives the history cap and failed metadata writes. Never grant it from location alone. */
-  deleteUnrecorded(filePath: string, trustedRoot: ManagedRoot | undefined, protectedPaths: Iterable<string>, files: { media: OwnedFile | null; subtitle: OwnedFile | null }, busy = false, subtitlePath?: string): HistoryDeleteResult {
+  deleteUnrecorded(filePath: string, trustedRoot: ManagedRoot | undefined, protectedPaths: Iterable<string>, files: { media: OwnedFile | null; subtitle: OwnedFile | null }, busy: boolean | Iterable<string> = false, subtitlePath?: string): HistoryDeleteResult {
     return this.transaction(() => {
-      if (busy) throw new Error('Wait for active downloads or media preparation to finish.');
+      this.assertPathsNotInUse([filePath, subtitlePath], busy);
       const safe = regular(filePath);
       const { media, subtitle } = files;
       const protectedSet = new Set([...protectedPaths].flatMap((p) => { const resolved = regular(p); return resolved ? [resolved] : []; }));
@@ -323,12 +351,14 @@ export class DownloadHistory {
       return warning ? { deleted: true, removed: false, warning } : { deleted: true, removed: false };
     });
   }
-  delete(id: unknown, protectedPaths: Iterable<string>, busy = false, preserveOnFailure = false): HistoryDeleteResult {
+  delete(id: unknown, protectedPaths: Iterable<string>, busy: boolean | Iterable<string> = false, preserveOnFailure = false): HistoryDeleteResult {
     return this.transaction(() => this.deleteRecord(id, protectedPaths, busy, preserveOnFailure));
   }
-  private deleteRecord(id: unknown, protectedPaths: Iterable<string>, busy: boolean, preserveOnFailure: boolean): HistoryDeleteResult {
+  private deleteRecord(id: unknown, protectedPaths: Iterable<string>, busy: boolean | Iterable<string>, preserveOnFailure: boolean): HistoryDeleteResult {
+    if (typeof busy === 'boolean') this.assertNotPreparing(id);
+    const target = this.records.find(record => record.id === id);
+    this.assertPathsNotInUse([target?.filePath, target?.subtitlePath], busy);
     this.assertNotPreparing(id);
-    if (busy) throw new Error('Wait for active downloads or media preparation to finish.');
     const index = typeof id === 'string' ? this.records.findIndex((r) => r.id === id) : -1; if (index < 0) return { deleted: false, removed: false };
     const r = this.records[index]; const protectedSet = new Set([...protectedPaths].flatMap((p) => { const safe = regular(p); return safe ? [safe] : []; }));
     let deleted = false; let warning: string | undefined; const safe = this.safePath(r, r.filePath);

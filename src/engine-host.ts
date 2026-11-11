@@ -43,6 +43,26 @@ export function createEngineHost(deps: EngineHostDependencies) {
   const operationRoot = new AsyncLocalStorage<ManagedRoot>();
   const operations = new ManagedOperations();
   const handoffs = new Set<Promise<unknown>>();
+  const handoffPaths = new Map<Promise<unknown>, string[]>();
+  const preparations = new Map<object, Set<string>>();
+  const preparationScope = new AsyncLocalStorage<Set<object>>();
+  async function mediaOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const scope = new Set<object>();
+    try { return await operations.run(() => preparationScope.run(scope, operation)); }
+    finally { for (const request of scope) preparations.delete(request); }
+  }
+  async function prepareMedia(request: Parameters<MediaPrep['prepare']>[0] & { subtitlePath?: string }): ReturnType<MediaPrep['prepare']> {
+    const key = {}, paths = new Set([request.inputPath]);
+    if (request.source) paths.add(request.source.path);
+    if (request.subtitlePath) paths.add(request.subtitlePath);
+    const scope = preparationScope.getStore();
+    scope?.add(key); preparations.set(key, paths);
+    try {
+      const result = await workers.mediaPrep.prepare(request);
+      paths.add(result.filePath);
+      return result;
+    } finally { if (!scope) preparations.delete(key); }
+  }
   const credentials = new Set<Promise<unknown>>();
   const lifecycle: LifecycleWorker[] = [];
   let displayedFallback = deps.folder;
@@ -191,7 +211,7 @@ export function createEngineHost(deps: EngineHostDependencies) {
   // Cancels address the shared job owner, preserving cross-provider cancellation by id.
   const cancel = (jobId: unknown): boolean => typeof jobId === 'string' && (downloads?.cancel(jobId) ?? false);
   function download<N extends ProviderName>(name: N) {
-    return (...args: Parameters<ProviderDownloadHandlers[N]>) => operations.run(async () => {
+    return (...args: Parameters<ProviderDownloadHandlers[N]>) => mediaOperation(async () => {
       await ready();
       const root = activeRoot();
       if (folderError) throw new Error(folderError);
@@ -256,17 +276,21 @@ export function createEngineHost(deps: EngineHostDependencies) {
     error: () => folderError ?? startupError?.message,
     displayedFolder: () => { try { return activeRoot().verify(); } catch { return displayedFallback; } },
     isBusy,
-    mediaInUse: () => handoffs.size > 0 || Boolean(workers?.mediaPrep.isActive()),
+    mediaInUse: () => handoffs.size > 0 || preparations.size > 0 || Boolean(workers?.mediaPrep.isActive()),
     operationRoot: () => operationRoot.getStore() ?? activeRoot(),
-    prepareMedia: (...args: Parameters<MediaPrep['prepare']>) => workers.mediaPrep.prepare(...args),
+    mediaPathsInUse: (): ReadonlySet<string> => new Set([
+      ...[...handoffPaths.values()].flat(),
+      ...[...preparations.values()].flatMap(paths => [...paths]),
+    ]),
+    prepareMedia,
     withFolderChange: <T>(operation: () => Promise<T>) => operations.changeFolder(operation),
-    operation: <T>(operation: () => Promise<T>) => operations.run(operation),
+    operation: mediaOperation,
     credential,
-    async handoff<T>(operation: () => T | Promise<T>): Promise<T> {
+    async handoff<T>(operation: () => T | Promise<T>, paths: Iterable<string> = []): Promise<T> {
       assertActive();
       const pending = operations.run(() => Promise.resolve().then(operation));
-      handoffs.add(pending);
-      try { return await pending; } finally { handoffs.delete(pending); }
+      handoffs.add(pending); handoffPaths.set(pending, [...paths]);
+      try { return await pending; } finally { handoffs.delete(pending); handoffPaths.delete(pending); }
     },
     dispose(): Promise<void> {
       if (shutdown) return shutdown;

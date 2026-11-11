@@ -45,7 +45,7 @@ interface PreviewPinterestMetadata { pinId: string; source: string; title: strin
 interface PreviewPinterestSearchItem { id: string; title: string; creator: string | null; kind: 'image' | 'video' | 'carousel'; width: number | null; height: number | null; url: string; thumbnailUrl: string | null; }
 interface PreviewPinterestSearchPage { query: string; page: number; pageSize: 10; results: PreviewPinterestSearchItem[]; hasPrevious: boolean; hasNext: boolean; totalResults: number; pageCount: number; thumbnailDiagnostic?: { failed: number; total: number; reason: string; node: string }; }
 interface PreviewPinterestEvent { jobId: string; state: string; percent: number | null; message: string; cardId?: string; fileName?: string; warning?: string; }
-interface PreviewHistoryRecord { id: string; provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; preparationFailed?: { profile: 'fast' | 'editing' }; preparing?: boolean; quality: string | null; mediaMode: string; selection: null; automation: { provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; selection: null; chapters: [] }; createdAt: number; lastUsedAt: number; available: boolean; cardId?: string; }
+interface PreviewHistoryRecord { sentToResolve?: boolean; id: string; provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; project: string | null; fileName: string; bytes: number; assetId: string | null; title: string; creator: string | null; profile: string; preparationFailed?: { profile: 'fast' | 'editing' }; preparing?: boolean; quality: string | null; mediaMode: string; selection: null; automation: { provider: 'youtube' | 'pexels' | 'social' | 'pinterest'; source: string; selection: null; chapters: [] }; createdAt: number; lastUsedAt: number; available: boolean; cardId?: string; }
 
 interface PreviewApi {
   onYoutubeSearchPage(callback: (event: { generation: number; page: Omit<PreviewYoutubeSearchPage, 'totalResults' | 'pageCount'> & { totalResults: null; pageCount: null } }) => void): () => void;
@@ -109,7 +109,7 @@ interface PreviewApi {
   historyRetryPreparation(id: string): Promise<{ cancelled: true } | { cancelled: false; profile: 'fast' | 'editing' }>;
   historyCancelPreparation(id: string): Promise<boolean>;
   onHistoryPreparationProgress(callback: (event: { id: string; percent: number | null }) => void): () => void;
-  historyList(): Promise<PreviewHistoryRecord[]>;
+  historyList(cardId?: string): Promise<PreviewHistoryRecord[]>;
   historyThumbnail(id: string): Promise<string | null>;
   historyClear(): Promise<number>;
   historyReuse(id: string): Promise<null>;
@@ -169,6 +169,7 @@ const BRIDGE_ERROR: StatusSnapshot = {
 const FIXTURES: Record<string, StatusSnapshot> = {
   ready: READY,
   'history-retry': READY,
+  'history-sent': READY,
   'no-project': NO_PROJECT,
   'no-timeline': NO_TIMELINE,
   'bridge-error': BRIDGE_ERROR,
@@ -308,7 +309,9 @@ if (previewParam !== null) {
   let readyDownloadReject: ((error: Error) => void) | null = null;
   let historyRecords: PreviewHistoryRecord[] = previewParam === 'history-retry'
     ? [{ ...PREVIEW_HISTORY[0], id: 'preview-history-retry', title: 'Retained download', fileName: 'Retained download.webm', preparationFailed: { profile: 'editing' } }]
-    : [...PREVIEW_HISTORY];
+    : previewParam === 'history-sent'
+      ? Array.from({ length: 30 }, (_, index) => ({ ...PREVIEW_HISTORY[0], id: `preview-sent-${index}`, title: `History clip ${index + 1}`, cardId: `preview-history-card-${index}`, sentToResolve: index === 0 }))
+      : [...PREVIEW_HISTORY];
   let preparationListener: ((event: { id: string; percent: number | null }) => void) | null = null;
   const preparationRuns = new Map<string, { cancel: () => void }>();
   const metadata: PreviewYoutubeMetadata = { id: 'dQw4w9WgXcQ', title: 'Preview video', duration: 213, channel: 'ClipDock Preview', thumbnailUrl: SYNTHETIC_THUMBNAIL_DATA_URL, heights: [360, 720, 1080, 1440, 2160], formatSummary: ['360p', '720p', '1080p', '1440p', '2160p'] };
@@ -503,7 +506,7 @@ if (previewParam !== null) {
     cancelPixabayRequests: async () => true,
     onPixabayEvent: (callback) => { pixabayListener = callback; return () => { if (pixabayListener === callback) pixabayListener = null; }; },
     openPixabayExternal: async () => true,
-    workspaceStatus: async () => ({ fileCount: 3, totalBytes: 48_000_000, cleanupFileCount: 2, cleanupBytes: 32_000_000 }), openWorkspace: async () => true, cleanupWorkspace: async () => ({ deletedFileCount: 2, deletedBytes: 32_000_000, fileCount: 1, totalBytes: 16_000_000 }), queueDelete: async () => previewParam === 'missing-file' ? { deleted: false, message: 'The file is no longer available. It remains in the queue.' } : { deleted: true, message: 'File deleted.' }, historyList: async () => historyRecords.map(record => ({ ...record, preparing: preparationRuns.has(record.id) })), historyThumbnail: async id => historyRecords.some(record => record.id === id) ? id === 'preview-history-2' ? PREVIEW_HISTORY_PHOTO : SYNTHETIC_THUMBNAIL_DATA_URL : null, historyClear: async () => { const count = historyRecords.length; historyRecords = []; return count; }, historyReuse: async () => null, historyReveal: async () => false, historySource: async () => false, historyCopy: async () => false, historyRelink: async () => null, historyDelete: async id => {
+    workspaceStatus: async () => ({ fileCount: 3, totalBytes: 48_000_000, cleanupFileCount: 2, cleanupBytes: 32_000_000 }), openWorkspace: async () => true, cleanupWorkspace: async () => ({ deletedFileCount: 2, deletedBytes: 32_000_000, fileCount: 1, totalBytes: 16_000_000 }), queueDelete: async () => previewParam === 'missing-file' ? { deleted: false, message: 'The file is no longer available. It remains in the queue.' } : { deleted: true, message: 'File deleted.' }, historyList: async cardId => historyRecords.filter(record => !cardId || record.cardId === cardId).map(record => ({ ...record, preparing: preparationRuns.has(record.id) })), historyThumbnail: async id => historyRecords.some(record => record.id === id) ? id === 'preview-history-2' ? PREVIEW_HISTORY_PHOTO : SYNTHETIC_THUMBNAIL_DATA_URL : null, historyClear: async () => { const count = historyRecords.length; historyRecords = []; return count; }, historyReuse: async () => null, historyReveal: async () => false, historySource: async () => false, historyCopy: async () => false, historyRelink: async () => null, historyDelete: async id => {
       if (preparationRuns.has(id)) throw new Error('Conversion is running for this item. Cancel it first.');
       if (id === 'preview-history-3') throw new Error('Preview fixture: file is busy.');
       const record = historyRecords.find(record => record.id === id);
@@ -588,7 +591,7 @@ if (previewParam !== null) {
       (document.getElementById('download-youtube-btn') as HTMLButtonElement | null)?.click();
       return;
     }
-    if (previewParam === 'history-retry') { (document.getElementById('surface-nav-library') as HTMLButtonElement | null)?.click(); return; }
+    if (previewParam === 'history-retry' || previewParam === 'history-sent') { (document.getElementById('surface-nav-library') as HTMLButtonElement | null)?.click(); return; }
     if (previewParam === 'pixabay') {
       (document.getElementById('provider-pexels') as HTMLButtonElement | null)?.click();
       (document.getElementById('stock-source-pixabay') as HTMLButtonElement | null)?.click();
