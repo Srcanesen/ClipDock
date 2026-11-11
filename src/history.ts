@@ -342,7 +342,7 @@ export class DownloadHistory {
       const owned = this.identities.get(r.id)?.media;
       let removable = this.canRemoveMedia(r, safe, protectedSet);
       try { removable = removable && !!owned && verifyFile(owned) === safe; } catch { removable = false; }
-      if (filePath !== r.filePath && !removable) {
+      if (r.resolveUse || (filePath !== r.filePath && !removable)) {
         delete r.preparationFailed; this.moveToFront(r);
         const added = this.addRecord({ ...r, filePath, profile: next.profile, preparationFailed: undefined }, root);
         return { ...added, originalKept: true };

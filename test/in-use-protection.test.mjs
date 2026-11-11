@@ -9,7 +9,7 @@ import { DownloadHistory } from '../dist/history.js';
 import { DownloadLedger } from '../dist/download-ledger.js';
 import { ManagedRoot } from '../dist/managed-root.js';
 import { createEngineHost } from '../dist/engine-host.js';
-import { createMainTransferHandlers, serializeMediaPreparation } from '../dist/main-process.js';
+import { createHistoryPreparationHandlers, createMainTransferHandlers, serializeMediaPreparation } from '../dist/main-process.js';
 import { cleanupWorkspaceAsync, inspectWorkspaceAsync } from '../dist/workspace.js';
 import { createHarness } from './helpers/renderer-harness.mjs';
 import { mainFixture, download, historyInput } from './helpers/files-main.mjs';
@@ -150,6 +150,39 @@ test('Resolve use persists with its first timestamp, upgrades drag, and exposes 
   reloaded.noteResolveUse(media, 'drag');
   assert.deepEqual(JSON.parse(fs.readFileSync(f.store)).records[0].resolveUse, { at: first.at, via: 'timeline' });
 });
+
+for (const direct of [false, true]) {
+  test(`retry keeps a Resolve-used source without active cards and adds an unsent ${direct ? 'direct' : 'converted'} record`, async t => {
+    const f = fixture(t), source = f.file('sent-source.mkv');
+    const original = f.history.add({ ...historyInput(source), preparationFailed: { profile: 'fast' } });
+    f.history.noteResolveUse(source, 'timeline');
+    const resolveUse = JSON.parse(fs.readFileSync(f.store, 'utf8')).records[0].resolveUse;
+    const passive = f.ledger.listHistory()[0].cardId;
+    assert.deepEqual(f.ledger.protectedPaths(), []);
+    const output = direct ? source : f.file('converted.mp4'); let preparedCard;
+    const api = createHistoryPreparationHandlers({ history: f.history,
+      prepareMedia: async () => ({ filePath: output, fileName: path.basename(output) }),
+      cancelMediaPreparation: () => null, protectedPaths: () => f.ledger.protectedPaths(),
+      replaced: (id, preparedId) => { preparedCard = f.ledger.bindHistory(id, preparedId); } });
+    assert.deepEqual(await api.retryPreparation(original.id), { cancelled: false, profile: 'fast', originalKept: true });
+    assert.equal(fs.readFileSync(source, 'utf8'), 'media');
+    assert.equal(f.history.resolve(original.id).path, source);
+    assert.equal(f.history.get(original.id).profile, 'original');
+    const converted = f.history.list().find(record => record.id !== original.id);
+    assert.equal(converted.profile, 'fast'); assert.equal(converted.sentToResolve, false);
+    assert.equal(f.history.resolve(converted.id).path, output);
+    assert.equal(f.ledger.resolve(passive).path, source);
+    assert.equal(f.ledger.resolve(preparedCard).passive, true);
+    assert.deepEqual(f.ledger.protectedPaths(), []);
+    const restarted = new DownloadHistory(f.store, f.root); t.after(() => restarted.dispose());
+    assert.equal(restarted.get(original.id).sentToResolve, true);
+    assert.equal(restarted.get(converted.id).sentToResolve, false);
+    const stored = JSON.parse(fs.readFileSync(f.store, 'utf8')).records;
+    assert.deepEqual(stored.find(record => record.id === original.id).resolveUse, resolveUse);
+    assert.equal(Object.hasOwn(stored.find(record => record.id === converted.id), 'resolveUse'), false);
+    await api.shutdown();
+  });
+}
 
 test('loader drops invalid Resolve use and accepts legacy History', t => {
   const f = fixture(t), record = f.history.add(historyInput(f.file('sent.mp4')));

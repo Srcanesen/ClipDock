@@ -753,8 +753,8 @@ export function createProviderDownloadHandlers(deps: ProviderDownloadDependencie
     })), {
       ...admission,
       terminal: outcome => {
+        journalAttempt(() => deps.completion.pendingArtifacts?.remove(`download-${jobId}`));
         if (outcome.state !== 'completed') {
-          journalAttempt(() => deps.completion.pendingArtifacts?.remove(`download-${jobId}`));
           if (outcome.state === 'failed' && !(outcome.error instanceof ProviderJobFailureError && outcome.error.notify)) return;
           emit({jobId, state: outcome.state, percent: null, message: outcome.state === 'cancelled' ? outcome.error.terminalMessage : outcome.error.message});
           return;

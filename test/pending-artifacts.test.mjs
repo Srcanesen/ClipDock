@@ -327,12 +327,19 @@ test('journal write errors are logged and do not fail a download', async t => {
   assert.equal(logs.length, 1); assert.equal(f.history.list().length, 1); assert.equal(fs.readFileSync(f.source, 'utf8'), 'source');
 });
 
-test('successful download retains its journal if History could not commit', async t => {
-  const f = fixture(t); const d = downloads(f, { record: () => ({ record: null, warning: 'history unavailable' }) });
-  assert.equal((await d.start('original')).cardId, 'card');
-  assert.equal(new PendingArtifacts(f.file).list().length, 1);
+test('successful download settles its journal when History cannot commit and recovery does not adopt it later', async t => {
+  const f = fixture(t); let journaled = false;
+  const d = downloads(f, { record: () => {
+    assert.equal(new PendingArtifacts(f.file).list()[0].path, f.source); journaled = true;
+    return { record: null, warning: 'history unavailable' };
+  } });
+  const result = await d.start('original');
+  assert.equal(result.cardId, 'card'); assert.equal(result.warning, 'history unavailable');
+  assert.equal(journaled, true);
+  assert.deepEqual(new PendingArtifacts(f.file).list(), []);
+  assert.equal(fs.readFileSync(f.source, 'utf8'), 'source');
   recoverPendingArtifacts(f.history, f.pending);
-  assert.equal(f.history.list().length, 1); assert.deepEqual(f.pending.list(), []);
+  assert.deepEqual(f.history.list(), []);
 });
 
 for (const mode of ['finished', 'failed', 'cancelled']) {
