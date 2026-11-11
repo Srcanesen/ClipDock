@@ -51,7 +51,7 @@ export function recoverPendingArtifacts(history: DownloadHistory, pending: Pendi
         const path = hit?.path === entry.outputPath ? entry.sourcePath : hit?.path === entry.sourcePath ? entry.outputPath : undefined;
         if (root && path && path !== hit?.path && root.contains(path) && root.resolve(path) === path) {
           const media = captureFile(AnchoredDir.capture(root.verify(), root), path);
-          history.deleteUnrecorded(path, root, [], { media, subtitle: null });
+          history.deleteUnrecorded(path, root, history.resolveUsedPaths(), { media, subtitle: null });
         }
       }
       pending.remove(entry.id);

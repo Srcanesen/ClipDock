@@ -226,6 +226,26 @@ test('retry recovery preserves a source shared by another record and an output r
   assert.deepEqual(f.pending.list(), []);
 });
 
+for (const artifact of ['media', 'subtitle']) {
+  test(`retry recovery preserves persisted Resolve-used ${artifact}`, t => {
+    const f = fixture(t); fs.writeFileSync(f.output, 'prepared');
+    const subtitle = path.join(f.root.verify(), 'source.srt'); fs.writeFileSync(subtitle, 'captions');
+    const used = f.history.add({ ...historyInput(f.source), subtitle: { filePath: subtitle } });
+    f.history.noteResolveUse(f.source, 'import');
+    const prepared = f.history.add(historyInput(f.output));
+    f.pending.put({ id: 'postcommit', kind: 'retry', historyId: prepared.id, sourcePath: artifact === 'media' ? f.source : subtitle, outputPath: f.output });
+    const restarted = new DownloadHistory(path.join(f.dir, 'history.json'), f.root); t.after(() => restarted.dispose());
+    assert.equal(restarted.get(used.id).sentToResolve, true);
+    recoverPendingArtifacts(restarted, new PendingArtifacts(f.file));
+    assert.equal(fs.readFileSync(f.source, 'utf8'), 'source');
+    assert.equal(fs.readFileSync(subtitle, 'utf8'), 'captions');
+    assert.equal(fs.readFileSync(f.output, 'utf8'), 'prepared');
+    assert.equal(restarted.list().length, 2);
+    assert.equal(restarted.get(used.id).sentToResolve, true);
+    assert.deepEqual(new PendingArtifacts(f.file).list(), []);
+  });
+}
+
 test('one recovery failure is logged and does not prevent later entries', t => {
   const f = fixture(t); f.pending.put(f.entry); f.pending.put({ ...f.entry, id: 'later' });
   const original = f.history.addRecovered.bind(f.history); let calls = 0;
