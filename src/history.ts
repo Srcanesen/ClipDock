@@ -179,10 +179,9 @@ export class DownloadHistory {
     let before = this.records;
     try {
       if (existsSync(this.file) && statSync(this.file).isFile()) {
-        const raw = JSON.parse(readFileSync(this.file, 'utf8')) as Store;
-        if (raw?.schemaVersion !== 1 || !Array.isArray(raw.records)) throw new Error('Unsupported history store.');
         this.load();
       }
+      if (this.saveBlocked) throw new Error('Download history is corrupt and could not be quarantined.');
       const prefix = `${basename(this.file)}.`;
       const temps = readdirSync(this.storeDirectory.verify()).filter(name => name.startsWith(prefix) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i.test(name.slice(prefix.length))).map(name => captureEntry(this.storeDirectory, name));
       for (const temp of temps) removeEntry(temp);

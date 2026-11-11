@@ -67,7 +67,8 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
   const prepFile = (name, content = 'source') => { const requested = path.join(phase3Root, name); mkdirSync(requested, { recursive: true }); const dir = realpathSync(requested); const file = path.join(dir, `${name}.mkv`); writeFileSync(file, content); return { dir, file }; };
   const ffmpegRun = (chunks = ['out_time_', 'us=5000000\r\nprogress=continue\nout_time_ms=10000000\nprogress=end']) => (proc, args) => {
     writeFileSync(args.at(-1), 'prepared');
-    chunks.forEach((chunk) => proc.stdout.emit('data', Buffer.from(chunk)));
+    // ffmpeg progress uses the continuously drained, bounded stderr capture.
+    chunks.forEach((chunk) => proc.stderr.emit('data', Buffer.from(chunk)));
     proc.emit('close', 0);
   };
   const prepWorker = (runs, calls, extra = {}) => {
@@ -99,7 +100,7 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
     const result = await worker.prepare({ jobId: 'prep-remux', inputPath: file, allowedRoot: dir, profile: 'fast', emit: () => undefined });
     const output = path.join(dir, 'prep-remux.resolve.mp4');
     expect('media-prep remux decision and cleanup', [result.action, result.filePath, existsSync(file), existsSync(output)], ['remux', output, false, true]);
-    expect('media-prep remux exact argv', calls[1].args, ['-hide_banner', '-nostdin', '-n', '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', calls[1].args.at(-1)]);
+    expect('media-prep remux exact argv', calls[1].args, ['-hide_banner', '-nostdin', '-n', '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', '+faststart', '-progress', 'pipe:2', '-nostats', calls[1].args.at(-1)]);
     assert.equal(path.dirname(path.dirname(calls[1].args.at(-1))), dir);
   }
 
@@ -127,7 +128,7 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
     const result = await worker.prepare({ jobId: 'prep-fast', inputPath: file, allowedRoot: dir, profile: 'fast', emit: (event) => events.push(event) });
     const output = path.join(dir, 'prep-fast-transcode.resolve.mp4');
     expect('media-prep full fast decision', result.action, 'transcode');
-    expect('media-prep fast exact argv for VFR average rate', calls[1].args, ['-hide_banner', '-nostdin', '-n', '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', '29.97003', '-fps_mode', 'cfr', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', calls[1].args.at(-1)]);
+    expect('media-prep fast exact argv for VFR average rate', calls[1].args, ['-hide_banner', '-nostdin', '-n', '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', '29.97003', '-fps_mode', 'cfr', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-progress', 'pipe:2', '-nostats', calls[1].args.at(-1)]);
     assert.equal(path.dirname(path.dirname(calls[1].args.at(-1))), dir);
     expect('media-prep fast has no scale/vf', calls[1].args.some((arg) => arg === '-vf' || arg.startsWith('scale=')), false);
     expect('media-prep chunked progress clamps and ends at 100', events.filter((event) => event.percent !== null).map((event) => event.percent), [0, 50, 99.9, 100]);
@@ -138,7 +139,7 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
     const { dir, file } = prepFile('prep-fast-cfr'); const calls = [];
     const worker = prepWorker([closeWith(probeJson({ codec: 'hevc', pix: 'yuv420p10le' })), ffmpegRun(), closeWith(probeJson())], calls);
     await worker.prepare({ jobId: 'prep-fast-cfr', inputPath: file, allowedRoot: dir, profile: 'fast', emit: () => undefined });
-    expect('media-prep fast CFR exact argv', calls[1].args, ['-hide_banner', '-nostdin', '-n', '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', '30', '-fps_mode', 'cfr', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', calls[1].args.at(-1)]);
+    expect('media-prep fast CFR exact argv', calls[1].args, ['-hide_banner', '-nostdin', '-n', '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', '30', '-fps_mode', 'cfr', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-progress', 'pipe:2', '-nostats', calls[1].args.at(-1)]);
     assert.equal(path.dirname(path.dirname(calls[1].args.at(-1))), dir);
   }
 
@@ -149,7 +150,7 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
     const result = await worker.prepare({ jobId: 'prep-editing', inputPath: file, allowedRoot: dir, profile: 'editing', emit: () => undefined });
     const output = path.join(dir, 'prep-editing.resolve.mov');
     expect('media-prep editing decision/output', [result.action, result.filePath], ['transcode', output]);
-    expect('media-prep editing exact argv', calls[1].args, ['-hide_banner', '-nostdin', '-n', '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'prores_ks', '-profile:v', '1', '-pix_fmt', 'yuv422p10le', '-r', '30', '-fps_mode', 'cfr', '-c:a', 'pcm_s16le', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', calls[1].args.at(-1)]);
+    expect('media-prep editing exact argv', calls[1].args, ['-hide_banner', '-nostdin', '-n', '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'prores_ks', '-profile:v', '1', '-pix_fmt', 'yuv422p10le', '-r', '30', '-fps_mode', 'cfr', '-c:a', 'pcm_s16le', '-movflags', '+faststart', '-progress', 'pipe:2', '-nostats', calls[1].args.at(-1)]);
     assert.equal(path.dirname(path.dirname(calls[1].args.at(-1))), dir);
     expect('media-prep editing has no scale/vf', calls[1].args.some((arg) => arg === '-vf' || arg.startsWith('scale=')), false);
   }

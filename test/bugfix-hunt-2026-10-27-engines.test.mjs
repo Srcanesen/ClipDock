@@ -96,11 +96,11 @@ test('ffmpeg conversion that keeps reporting progress past 30 minutes completes'
   const pending = prep.prepare({jobId: 'slow', inputPath: input, allowedRoot: dir, profile: 'fast', emit: () => {}});
   await until(() => ffmpeg.length > 0);
   for (let elapsed = 0; elapsed < 40 * MINUTE; elapsed += 500) {
-    ffmpeg[0].child.stdout.emit('data', Buffer.from('out_time_us=5000000\nprogress=continue\n'));
+    ffmpeg[0].child.stderr.emit('data', Buffer.from('out_time_us=5000000\nprogress=continue\n'));
     t.mock.timers.tick(500);
   }
   writeFileSync(ffmpeg[0].output, 'prepared');
-  ffmpeg[0].child.stdout.emit('data', Buffer.from('progress=end\n'));
+  ffmpeg[0].child.stderr.emit('data', Buffer.from('progress=end\n'));
   ffmpeg[0].child.emit('close', 0);
   const result = await pending;
   assert.equal(result.action, 'remux');
@@ -134,7 +134,7 @@ async function finishingPhase(t, totalSize) {
   const pending = prep.prepare({jobId: 'faststart', inputPath: input, allowedRoot: dir, profile: 'fast', emit: () => {}});
   void pending.catch(() => {}).finally(() => { settled = true; });
   await until(() => ffmpeg.length > 0);
-  ffmpeg[0].child.stdout.emit('data', Buffer.from(`total_size=${totalSize}\nout_time_us=10000000\nprogress=continue\n`));
+  ffmpeg[0].child.stderr.emit('data', Buffer.from(`total_size=${totalSize}\nout_time_us=10000000\nprogress=continue\n`));
   return {pending, ffmpeg, input, settled: () => settled};
 }
 
@@ -144,7 +144,7 @@ test('a large output survives a silent +faststart rewrite longer than the stall 
   t.mock.timers.tick(60 * MINUTE); await turn();
   assert.equal(settled(), false);
   writeFileSync(ffmpeg[0].output, 'prepared');
-  ffmpeg[0].child.stdout.emit('data', Buffer.from('progress=end\n'));
+  ffmpeg[0].child.stderr.emit('data', Buffer.from('progress=end\n'));
   ffmpeg[0].child.emit('close', 0);
   const result = await pending;
   assert.equal(readFileSync(result.filePath, 'utf8'), 'prepared');

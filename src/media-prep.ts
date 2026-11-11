@@ -13,7 +13,7 @@ export type MediaPrepEvent = { jobId: string; state: 'processing' | 'cancelled';
 export type MediaPrepResult = { filePath: string; fileName: string; action: 'direct' | 'remux' | 'audio-remux' | 'transcode' };
 
 type Spawn = (binary: string, args: string[], options: { shell: false }) => ChildProcess;
-type Options = { ffmpegPath?: string | null; ffprobePath?: string | null; platform?: NodeJS.Platform; spawn?: Spawn; processSpawn?: Spawn; killGraceMs?: number; env?: NodeJS.ProcessEnv; probeTimeoutMs?: number; conversionTimeoutMs?: number };
+type Options = { ffmpegPath?: string | null; ffprobePath?: string | null; platform?: NodeJS.Platform; spawn?: Spawn; processSpawn?: Spawn; killGraceMs?: number; env?: NodeJS.ProcessEnv; probeTimeoutMs?: number };
 type Stream = { codec_name?: unknown; codec_type?: unknown; pix_fmt?: unknown; width?: unknown; height?: unknown; avg_frame_rate?: unknown; r_frame_rate?: unknown; duration?: unknown; tags?: unknown; side_data_list?: unknown };
 type Probe = { video: { codec: string; pixFmt: string; width: number; height: number; fps: number | null; cfr: boolean; duration: number | null; rotation: number | null }; audio: { codec: string } | null; duration: number | null; container: 'mp4' | 'mov' | 'other' };
 
@@ -68,7 +68,11 @@ export function parseFfprobe(text: string): Probe {
   const side = Array.isArray(video.side_data_list) ? video.side_data_list.find((item) => item && typeof item === 'object' && signed((item as Record<string, unknown>).rotation) !== null) as Record<string, unknown> | undefined : undefined;
   const videoTags = video.tags && typeof video.tags === 'object' ? video.tags as Record<string, unknown> : {};
   const rotation = signed(side?.rotation ?? videoTags.rotate);
-  const duration = finite(video.duration) ?? finite(format.duration);
+  const formatDuration = finite(format.duration);
+  // Matroska's container duration is a timestamp endpoint; stream durations
+  // already describe elapsed time and must not have their start subtracted.
+  const duration = finite(video.duration) ?? (formatDuration !== null && names.some(name => name === 'matroska' || name === 'webm')
+    ? Math.max(0, formatDuration - (signed(format.start_time) ?? 0)) : formatDuration);
   return {
     video: { codec: typeof video.codec_name === 'string' ? video.codec_name : '', pixFmt: typeof video.pix_fmt === 'string' ? video.pix_fmt : '', width: finite(video.width) ?? 0, height: finite(video.height) ?? 0, fps: avg, cfr, duration, rotation },
     audio: audio ? { codec: typeof audio.codec_name === 'string' ? audio.codec_name : '' } : null,
@@ -96,7 +100,7 @@ function decision(probe: Probe, profile: MediaProfile): MediaPrepResult['action'
 function ffmpegArgs(action: MediaPrepResult['action'], profile: MediaProfile, input: string, output: string, video: Probe['video']): string[] {
   const fps = video.fps;
   const head = ['-hide_banner', '-nostdin', '-n', '-i', input, '-map', '0:v:0', '-map', '0:a:0?'];
-  const tail = ['-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', output];
+  const tail = ['-movflags', '+faststart', '-progress', 'pipe:2', '-nostats', output];
   if (action === 'remux') return [...head, '-c', 'copy', ...tail];
   if (action === 'audio-remux') return [...head, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', ...tail];
   if (profile === 'editing') return [...head, '-c:v', 'prores_ks', '-profile:v', '1', '-pix_fmt', 'yuv422p10le', ...(fps ? ['-r', formatRate(fps)] : []), '-fps_mode', 'cfr', '-c:a', 'pcm_s16le', ...tail];
@@ -132,19 +136,33 @@ export function createMediaPrep(options: Options = {}) {
 
   async function run(context: ProviderJobContext, binary: string, args: string[], progress?: (chunk: string) => void, stallMs?: () => number): Promise<{ stdout: string; stderr: string; overflow: boolean }> {
     context.check();
-    const bounded = spawnBounded(binary, args, spawn, {
-      maxStdout: progress ? 16 * 1024 * 1024 : MAX_PROBE, maxStderr: MAX_STDERR,
-      onLine: progress ? line => progress(`${line}\n`) : undefined,
-      // Conversion: an 8-hour backstop (16 MB of -progress output lasts about 11 hours);
-      // stalls are caught by the silence window instead.
-      timeoutMs: progress ? options.conversionTimeoutMs ?? 8 * 60 * 60 * 1000 : options.probeTimeoutMs ?? 30000, idleTimeoutMs: stallMs,
+    let stderrTail = '', stderrTruncated = false;
+    const onProgress = (chunk: Buffer | string) => {
+      const text = chunk.toString();
+      progress?.(text);
+      // Keep late diagnostics without retaining the lifetime progress transcript.
+      const combined = stderrTail + text;
+      stderrTruncated ||= combined.length > MAX_STDERR;
+      stderrTail = combined.slice(-MAX_STDERR);
+    };
+    const bounded = spawnBounded(binary, args, progress ? (binary, args, spawnOptions) => {
+      const child = spawn(binary, args, spawnOptions);
+      // Process progress before the helper re-arms its input-sized silence window.
+      // Its stderr capture is bounded, but it keeps draining after that limit.
+      child.stderr?.on('data', onProgress);
+      return child;
+    } : spawn, {
+      maxStdout: MAX_PROBE, maxStderr: MAX_STDERR,
+      timeoutMs: progress ? undefined : options.probeTimeoutMs ?? 30000, idleTimeoutMs: stallMs,
       killGraceMs, platform, processSpawn,
     });
-    const result = await context.wait(bounded);
+    const result = await context.wait(bounded).finally(() => bounded.child.stderr?.removeListener('data', onProgress));
+    const stderr = progress ? stderrTail.split(/\r?\n/).slice(stderrTruncated ? 1 : 0)
+      .filter(line => !/^(?:frame|fps|stream_\d+_\d+_q|bitrate|total_size|out_time(?:_us|_ms)?|dup_frames|drop_frames|speed|progress)=/.test(line)).join('\n').trim() : result.stderr;
     if (result.timedOut) throw new Error('Media tool timed out.');
     if (result.stdoutTruncated && !progress) throw new Error('ffprobe output exceeded the 2 MB limit.');
-    if (result.stdoutTruncated || result.code !== 0) throw new Error(result.stderr || 'Media tool failed.');
-    return {stdout: result.stdout, stderr: result.stderr, overflow: result.stdoutTruncated};
+    if (result.stdoutTruncated || result.code !== 0) throw new Error(stderr || 'Media tool failed.');
+    return {stdout: result.stdout, stderr, overflow: result.stdoutTruncated};
   }
   async function probe(context: ProviderJobContext, file: string): Promise<Probe> {
     const result = await run(context, ffprobe!, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file]);
