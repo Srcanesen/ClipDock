@@ -4,6 +4,33 @@ All notable changes to ClipDock are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and ClipDock follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-11-11
+
+### Added
+
+- **ClipDock icon in the macOS Dock.** The panel shows its own icon in the Dock instead of the default Electron icon.
+
+### Fixed
+
+- **Long downloads and conversions are no longer cut off.** A download or conversion that is still making progress runs until it finishes; ClipDock stops it only when progress stalls.
+- **The download is kept when conversion fails.** The original file is recorded in History, and the error message says so, instead of being deleted. If it cannot be recorded in History, it is removed as before.
+- **Media with a shifted start time prepares correctly.** A valid Matroska file whose timestamps do not start at zero no longer fails the duration check.
+- **A damaged history file no longer blocks History.** ClipDock sets the damaged file aside and History and queue actions keep working without a restart.
+- **Connection status recovers after a hung check.** A status check that never answers no longer blocks every later refresh.
+- **Failed Pinterest lookups are reported as errors** instead of an empty "no results" page.
+- **Subtitle trimming stays in step.** Reloading subtitles clears the old line selection, and lines from a previously selected language no longer replace the current one.
+- **Next and Previous page use the search on screen**, not text typed into the box but not yet searched.
+- **Selecting a chapter or subtitle line keeps keyboard focus** on the checkbox.
+- **Engine detection no longer hangs** on a download tool that does not answer its version check.
+- **The cleanup result stays visible** long enough to read.
+- **Installation is more robust.** An interrupted install no longer blocks later builds and installs, and an administrator install leaves files that Resolve can read.
+
+### Changed
+
+- The Resolve manifest version now matches the package version, and the build check fails if they differ.
+- Security fixes target the latest released series (see `SECURITY.md`).
+- For contributors: `npm run preview` refuses a stale or incomplete build, and its sample states queue the downloads they advertise.
+
 ## [0.3.1] - 2026-10-30
 
 ### Fixed

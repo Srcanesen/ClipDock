@@ -213,6 +213,5 @@ test('artifact validation rejects manifest/package version disagreement and the 
   fs.writeFileSync(manifest, fs.readFileSync(manifest, 'utf8').replace(/<Version>[^<]+<\/Version>/, '<Version>0.0.0</Version>'));
   assert.throws(() => validatePluginArtifact(path.join(root, 'dist')), /Manifest.*[Vv]ersion.*package/);
   const expected = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
-  assert.equal(expected, '0.3.1');
   assert.equal(fs.readFileSync(path.join(root, 'static/manifest.xml'), 'utf8').match(/<Version>([^<]+)<\/Version>/)?.[1], expected);
 });
