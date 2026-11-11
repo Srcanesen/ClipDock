@@ -32,7 +32,7 @@ Domain terms used in code, tests and reviews. Use these names for modules and in
 
 ## Ownership
 
-**Managed root**: the download folder ClipDock owns. It is captured once as a verified canonical identity; consumers receive that value and never re-canonicalize a stored string.
+**Managed root**: a download folder ClipDock owns, captured as a verified canonical identity and admitted again from its stored path on load only when it is the active root, the default download folder, or a folder carrying ClipDock's ownership marker.
 
 **Anchored directory**: a directory within a managed root whose identity and intervening directories remain bound to that root. A replacement at the same pathname is a different directory.
 

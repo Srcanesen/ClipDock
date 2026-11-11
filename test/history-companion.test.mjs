@@ -13,6 +13,8 @@ import path from 'node:path';
 import {test} from 'node:test';
 
 import {DownloadHistory, historySourceUrl, safeHistorySource} from '../dist/history.js';
+import {ManagedRoot} from '../dist/managed-root.js';
+import {claimDownloadFolder} from '../dist/settings.js';
 
 test('Pinterest history source is canonical and rejects non-Pin persistence', () => {
   assert.equal(safeHistorySource('pinterest', 'https://pinterest.com/pin/123456789/?utm=x'), 'https://www.pinterest.com/pin/123456789/');
@@ -119,6 +121,7 @@ test('managed provenance is persisted at creation, survives root changes, and st
   const root = tempRoot('clipdock-history-root-');
   const nextRoot = tempRoot('clipdock-history-next-');
   try {
+    claimDownloadFolder(ManagedRoot.capture(root));
     const media = path.join(root, 'youtube', 'clip.mp4');
     mkdirSync(path.dirname(media), {recursive: true});
     writeFileSync(media, 'media');
