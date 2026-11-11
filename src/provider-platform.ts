@@ -31,9 +31,11 @@ export function probeVersion(candidate: string, versionArgs: string[]): { code: 
     const result = spawnSync(candidate, versionArgs, {
       shell: false,
       timeout: VERSION_PROBE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
       encoding: 'utf8',
       maxBuffer: VERSION_PROBE_MAX_BYTES,
     });
+    if (result.error) return null;
     return { code: result.status, text: `${result.stdout ?? ''}${result.stderr ?? ''}` };
   } catch { return null; }
 }
@@ -242,6 +244,10 @@ export type SpawnBoundedOptions = {
   /** Stall window: stop when neither stream has produced output for this long.
    * A function is re-evaluated after each output, so the window can follow it. */
   idleTimeoutMs?: number | (() => number);
+  /** Download files can grow while the tool prints nothing. */
+  progressBytes?: () => number;
+  /** When supplied, only these complete lines renew the output stall window. */
+  progressLine?: (line: string) => boolean;
   killGraceMs?: number;
   platform?: NodeJS.Platform;
   processSpawn?: Spawn;
@@ -267,7 +273,7 @@ export function spawnBounded(
   const outDecoder = new StringDecoder('utf8'), errDecoder = new StringDecoder('utf8');
   let stdout = '', stderr = '', pending = '', pendingStderr = '', stdoutBytes = 0, stderrBytes = 0;
   let timedOut = false, overflow = false, stopping = false, settled = false;
-  let timeoutTimer: NodeJS.Timeout | undefined, idleTimer: NodeJS.Timeout | undefined, killTimer: NodeJS.Timeout | undefined, reapTimer: NodeJS.Timeout | undefined;
+  let timeoutTimer: NodeJS.Timeout | undefined, idleTimer: NodeJS.Timeout | undefined, progressTimer: NodeJS.Timeout | undefined, killTimer: NodeJS.Timeout | undefined, reapTimer: NodeJS.Timeout | undefined;
   let finish: (code: number | null, error?: Error) => void;
   function signalTree(signal: 'SIGTERM' | 'SIGKILL'): void {
     if (platform === 'win32' && child.pid) {
@@ -289,6 +295,7 @@ export function spawnBounded(
     stopping = true;
     if (timeoutTimer) clearTimeout(timeoutTimer);
     if (idleTimer) clearTimeout(idleTimer);
+    if (progressTimer) clearTimeout(progressTimer);
     // Install escalation before TERM: injected children may close synchronously.
     killTimer = setTimeout(() => {
       signalTree('SIGKILL');
@@ -301,25 +308,33 @@ export function spawnBounded(
   }
   function armIdle(): void {
     const idleMs = typeof opts.idleTimeoutMs === 'function' ? opts.idleTimeoutMs() : opts.idleTimeoutMs;
-    if (!idleMs || idleMs <= 0 || stopping) return;
+    if (!idleMs || idleMs <= 0 || stopping || settled) return;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => { timedOut = true; stop(); }, idleMs);
   }
+  let previousBytes = 0;
+  function watchProgress(): void {
+    if (!opts.progressBytes || stopping || settled) return;
+    const bytes = opts.progressBytes();
+    if (bytes > previousBytes) armIdle();
+    previousBytes = bytes;
+    progressTimer = setTimeout(watchProgress, 1000);
+  }
   function deliver(text: string): void {
     stdout += text;
-    if (!opts.onLine) return;
+    if (!opts.onLine && !opts.progressLine) return;
     pending += text;
     const lines = pending.split(/\r?\n/);
     pending = lines.pop() ?? '';
-    for (const line of lines) opts.onLine(line);
+    for (const line of lines) { opts.onLine?.(line); if (opts.progressLine?.(line)) armIdle(); }
   }
   function deliverStderr(text: string): void {
     stderr += text;
-    if (!opts.onStderrLine) return;
+    if (!opts.onStderrLine && !opts.progressLine) return;
     pendingStderr += text;
     const lines = pendingStderr.split(/\r?\n/);
     pendingStderr = lines.pop() ?? '';
-    for (const line of lines) opts.onStderrLine(line);
+    for (const line of lines) { opts.onStderrLine?.(line); if (opts.progressLine?.(line)) armIdle(); }
   }
   const promise = new Promise<SpawnBoundedResult>((resolve, reject) => {
     finish = (code, error) => {
@@ -330,6 +345,7 @@ export function spawnBounded(
       }
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (idleTimer) clearTimeout(idleTimer);
+      if (progressTimer) clearTimeout(progressTimer);
       if (killTimer) clearTimeout(killTimer);
       if (reapTimer) clearTimeout(reapTimer);
       if (!overflow) deliver(outDecoder.end());
@@ -345,12 +361,12 @@ export function spawnBounded(
       const remaining = Math.max(0, maxStdout - stdoutBytes);
       stdoutBytes += bytes.length;
       deliver(outDecoder.write(bytes.subarray(0, remaining)));
-      armIdle();
+      if (!opts.progressLine) armIdle();
       if (stdoutBytes > maxStdout) { overflow = true; pending = ''; stop(); }
     });
     child.stderr?.on('data', (chunk: Buffer | string) => {
       if (settled) return;
-      armIdle();
+      if (!opts.progressLine) armIdle();
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       deliverStderr(errDecoder.write(bytes.subarray(0, Math.max(0, maxStderr - stderrBytes))));
       stderrBytes += bytes.length;
@@ -360,9 +376,33 @@ export function spawnBounded(
   }) as Promise<SpawnBoundedResult> & {child: ChildProcess; cancel: () => Promise<void>};
   if (opts.timeoutMs && opts.timeoutMs > 0) timeoutTimer = setTimeout(() => { timedOut = true; stop(); }, opts.timeoutMs);
   armIdle();
+  if (opts.progressBytes) progressTimer = setTimeout(watchProgress, 1000);
   promise.child = child;
   promise.cancel = () => { stop(); return promise.then(() => undefined, () => undefined); };
   return promise;
+}
+
+/** Sample only regular files inside the admitted download directory. A merge
+ * may rename/delete inputs, so retain the high-water size for its silent budget.
+ * Allow a read and a write at 1 MiB/s; duration-based processing can need longer.
+ */
+export function downloadProgress(directory: AnchoredDir, minimumMs: () => number): {progressBytes: () => number; idleTimeoutMs: () => number} {
+  let largest = 0;
+  return {
+    progressBytes: () => {
+      let bytes = 0;
+      try {
+        for (const name of readdirSync(directory.verify())) {
+          if (name === 'source.info.json') continue;
+          const stat = lstatSync(directory.child(name));
+          if (stat.isFile()) bytes += stat.size;
+        }
+      } catch { /* final artifact validation reports missing/replaced directories */ }
+      largest = Math.max(largest, bytes);
+      return bytes;
+    },
+    idleTimeoutMs: () => Math.max(minimumMs(), largest * 2 / (1024 * 1024) * 1000),
+  };
 }
 
 export function spawnBoundedWithChild(binary: string, args: string[], spawn: Spawn, opts: SpawnBoundedOptions = {}) {

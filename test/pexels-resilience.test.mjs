@@ -45,16 +45,18 @@ test('PRV-21 rejected headers, oversized bodies and redirects cancel body owners
 });
 test('PRV-23 duplicate IDs normalize to first unique result', () => {assert.deepEqual(parsePexelsPage({photos:[row(1), row(1), row(2)]},'photo','studio',2).results.map(x=>x.id),[1,2]);});
 
-test('PRV-11 media progress renews idle deadline while overall deadline stays bounded', async t => {
+test('PRV-11 media progress renews the stall deadline without an overall deadline', async t => {
  const timers=clock(); let stream;
  const {client,root}=setup(t,async()=>new Response(new ReadableStream({start(c){stream=c;}}),{headers:{'content-type':'video/mp4'}}),timers);
  const pending=client.download('overall',{url:'https://videos.pexels.com/1.mp4',mime:'video/mp4'},()=>{});
- const outcome=assert.rejects(pending,/timed out/);
  await turn(); const firstIdle=[...timers.timers].find(([,timer])=>timer.ms===30000)[0];
  stream.enqueue(new Uint8Array([1,2,3])); await turn();
  assert.equal(timers.timers.has(firstIdle),false);
  assert.equal([...timers.timers.values()].filter(timer=>timer.ms===30000).length,1);
- timers.fire(6*60*60*1000); await outcome; assert.deepEqual(readdirSync(root),[]); assert.equal(timers.timers.size,0);
+ // REVIEW L1: real bytes renew the stall window; healthy work has no time cap.
+ assert.equal([...timers.timers.values()].some(timer=>timer.ms===6*60*60*1000),false);
+ stream.close(); const result=await pending;
+ assert.deepEqual(readdirSync(root),[result.fileName]); assert.equal(timers.timers.size,0);
 });
 
 // Virtual clock: advance() fires every timer that falls due, in order.

@@ -4,7 +4,7 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, win32 } from 'node:path';
 import { contains as pathContains } from './path-boundary';
-import { absoluteForPlatform, discoverBinary, executable, installCandidates, LruCache, requireBinary, spawnBounded, fetchBounded, cleanJobDirectory, SharedProviderOperation, type VersionProbe } from './provider-platform';
+import { absoluteForPlatform, discoverBinary, executable, installCandidates, LruCache, requireBinary, spawnBounded, fetchBounded, cleanJobDirectory, downloadProgress, SharedProviderOperation, type VersionProbe } from './provider-platform';
 import { ProviderJobRunner, ProviderJobCancelledError, ProviderJobRejectedError, ProviderSession, requireFfprobe, type ProviderJobContext } from './provider-job';
 import { homedir, tmpdir } from 'node:os';
 import { discoverFfprobe } from './media-prep';
@@ -32,8 +32,8 @@ export type DownloadEvent = { jobId: string; state: YtdlpState; percent: number 
 
 type Spawn = (binary: string, args: string[], options: { shell: false }) => ChildProcess;
 type Fetch = (url: string, init?: { redirect?: 'follow'; signal?: AbortSignal }) => Promise<{ ok: boolean; url?: string; headers: { get(name: string): string | null }; arrayBuffer(): Promise<ArrayBuffer> }>;
-type JobDetails = { jobDir: string; kind: 'metadata' | 'download' | 'search'; sharedMetadata?: boolean; cancelledLog?: string; emit?: (event: DownloadEvent) => void; jobId?: string; stallMs?: number };
-type WorkerOptions = { sessionDir?: string; platform?: NodeJS.Platform; processSpawn?: Spawn; killGraceMs?: number; ffmpegPath?: string | null; ffprobePath?: string | null; jsRuntime?: string | null; metadataTimeoutMs?: number; downloadTimeoutMs?: number; thumbnailTimeoutMs?: number; now?: () => number };
+type JobDetails = { jobDir: string; kind: 'metadata' | 'download' | 'search'; sharedMetadata?: boolean; cancelledLog?: string; emit?: (event: DownloadEvent) => void; jobId?: string; stallMs?: () => number };
+type WorkerOptions = { sessionDir?: string; platform?: NodeJS.Platform; processSpawn?: Spawn; killGraceMs?: number; ffmpegPath?: string | null; ffprobePath?: string | null; jsRuntime?: string | null; metadataTimeoutMs?: number; thumbnailTimeoutMs?: number; now?: () => number };
 type SearchCacheEntry = { query: string; createdAt: number; results: YoutubeSearchItem[] };
 // Workers using the same extractor dependencies share replies and in-flight work.
 // The spawn identity also keeps independent embedded/test extractors isolated.
@@ -334,7 +334,6 @@ export class YtdlpWorker {
   private current: (JobDetails & {context: ProviderJobContext}) | null = null;
   private readonly activeJobs = new Map<string, JobDetails>();
   private readonly metadataTimeoutMs: number;
-  private readonly downloadTimeoutMs: number;
   private readonly thumbnailTimeoutMs: number;
   private readonly ffprobePath: string | null;
   // Only named providers are pruned by workspace cleanup; recreation discards the old log identity.
@@ -360,8 +359,6 @@ export class YtdlpWorker {
     this.ffprobePath = options.ffprobePath === undefined ? discoverFfprobe(this.ffmpegPath) : options.ffprobePath;
     this.jsRuntime = options.jsRuntime ?? null;
     this.metadataTimeoutMs = options.metadataTimeoutMs ?? 30000;
-    // A backstop only: stalls are caught by the per-download silence window.
-    this.downloadTimeoutMs = options.downloadTimeoutMs ?? 8 * 60 * 60 * 1000;
     this.thumbnailTimeoutMs = options.thumbnailTimeoutMs ?? 5000;
     this.now = options.now ?? Date.now;
     this.searchCache = new LruCache<string, SearchCacheEntry>(SEARCH_CACHE_MAX, SEARCH_CACHE_TTL, this.now);
@@ -451,7 +448,11 @@ export class YtdlpWorker {
     context.check();
     const bounded = spawnBounded(requireBinary(this.binary, 'yt-dlp was not found. Install yt-dlp or set CLIPDOCK_YTDLP_PATH to an absolute executable path.'), this.jsRuntime ? [...args.slice(0, 1), '--js-runtimes', this.jsRuntime, ...args.slice(1)] : args, this.spawn, {
       env: literalPathEnv(args), maxStdout: details.kind === 'download' ? MAX_DOWNLOAD_STDOUT : MAX_STDOUT, maxStderr: MAX_STDERR, onLine, onStderrLine,
-      timeoutMs: details.kind === 'download' ? this.downloadTimeoutMs : this.metadataTimeoutMs, idleTimeoutMs: details.stallMs,
+      timeoutMs: details.kind === 'download' ? undefined : this.metadataTimeoutMs,
+      ...(details.kind === 'download' ? {
+        ...downloadProgress(this.session.jobDirectories.get(details.jobDir)!, details.stallMs ?? (() => 30 * 60 * 1000)),
+        progressLine: (line: string) => /^(?:C|Q|S|P)\|/.test(line),
+      } : {}),
       killGraceMs: this.killGraceMs, platform: this.platform, processSpawn: this.processSpawn,
     });
     return context.wait(bounded).then(result => {
@@ -665,8 +666,9 @@ export class YtdlpWorker {
     const jobDir = join(this.sessionDir, `download-${randomUUID()}`);
     const infoKey = 'videoId' in valid ? valid.videoId : valid.url;
     const knownDuration = 'videoId' in valid ? this.metadataStore.youtube.get(valid.videoId)?.duration : this.metadataStore.social.get(valid.url)?.metadata.duration;
-    const mediaSeconds = selection ? selection.end - selection.start : knownDuration ?? 3600;
-    const stallMs = Math.max(10 * 60 * 1000, mediaSeconds * (selection ? 4000 : 500));
+    // Full input duration bounds section cutting and audio conversion as well.
+    let mediaSeconds = knownDuration ?? 3600;
+    const stallMs = () => Math.max(10 * 60 * 1000, mediaSeconds * (selection || options.mediaMode === 'audio' ? 4000 : 500));
     let output: string | null = null;
     let failureDetail = '';
     return await this.runJob({jobDir, kind: 'download', emit, jobId}, async context => {
@@ -689,11 +691,13 @@ export class YtdlpWorker {
       if (cachedInfo) writeExclusive(this.session.jobDirectories.get(jobDir)!, basename(infoPath), cachedInfo);
       let bytesWritten = false;
       const combinedSubtitles = options.subtitles && !selection;
-      const runDownload = (loaded: boolean) => this.begin([...BASE, '--quiet', '--progress', '--progress-delta', '0.25', '--newline', '--progress-template', 'download:C|%(progress.status)s|%(progress._percent).1f|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s', '--progress-template', 'postprocess:Q|%(progress.status)s', '--print', 'before_dl:S|%(format_id)s|%(requested_formats.:.filesize)l|%(filesize,filesize_approx)s', '--print', 'after_move:P|%(filepath)s', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', literalPath(ffmpegPath, this.platform), ...(selection ? ['--download-sections', `*${selection.start.toFixed(3)}-${selection.end.toFixed(3)}`, '--force-keyframes-at-cuts'] : []), ...(combinedSubtitles ? ['--write-subs', '--write-auto-subs', '--sub-langs', subtitleLanguage, '--sub-format', 'srt/vtt', '--ignore-errors'] : []), ...conversion, '-f', selectedFormat, ...formatSort, '-o', literalPath(join(jobDir.replace(/%/g, '%%'), selection ? `%(title).120B [%(id)s] [${selection.label.replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 50)}].%(ext)s` : '%(title).150B [%(id)s].%(ext)s'), this.platform, true), ...(loaded ? ['--load-info-json', literalPath(infoPath, this.platform)] : [valid.url])], { jobDir, kind: 'download', emit, jobId, stallMs }, (line) => {
+      const runDownload = (loaded: boolean) => this.begin([...BASE, '--quiet', '--progress', '--progress-delta', '0.25', '--newline', '--progress-template', 'download:C|%(progress.status)s|%(progress._percent).1f|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s', '--progress-template', 'postprocess:Q|%(progress.status)s', '--print', 'before_dl:S|%(format_id)s|%(requested_formats.:.filesize)l|%(filesize,filesize_approx)s|%(duration)s', '--print', 'after_move:P|%(filepath)s', '--no-overwrites', '--windows-filenames', '--ffmpeg-location', literalPath(ffmpegPath, this.platform), ...(selection ? ['--download-sections', `*${selection.start.toFixed(3)}-${selection.end.toFixed(3)}`, '--force-keyframes-at-cuts'] : []), ...(combinedSubtitles ? ['--write-subs', '--write-auto-subs', '--sub-langs', subtitleLanguage, '--sub-format', 'srt/vtt', '--ignore-errors'] : []), ...conversion, '-f', selectedFormat, ...formatSort, '-o', literalPath(join(jobDir.replace(/%/g, '%%'), selection ? `%(title).120B [%(id)s] [${selection.label.replace(/[^A-Za-z0-9._ -]/g, '_').slice(0, 50)}].%(ext)s` : '%(title).150B [%(id)s].%(ext)s'), this.platform, true), ...(loaded ? ['--load-info-json', literalPath(infoPath, this.platform)] : [valid.url])], { jobDir, kind: 'download', emit, jobId, stallMs }, (line) => {
         if (line.startsWith('Q|')) { emit({jobId, state: 'processing', percent: null, message: 'Processing media…'}); return; }
         if (line.startsWith('P|')) { output = line.slice(2); return; }
         const fields = line.split('|');
         if (fields[0] === 'S' && fields.length >= 4) {
+          const duration = Number(fields[4]);
+          if (Number.isFinite(duration) && duration > 0) mediaSeconds = duration;
           streams = fields[1].trim().split('+').filter(Boolean);
           const sizes = (streams.length > 1 ? fields[2].split(',') : [fields[3]]).map(size => Number(size.trim()));
           weights = sizes.length === streams.length && sizes.every(size => Number.isFinite(size) && size > 0) ? sizes : streams.map(() => 1);

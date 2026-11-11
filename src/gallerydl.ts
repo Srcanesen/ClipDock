@@ -9,8 +9,8 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { contains as pathContains } from './path-boundary';
-import { discoverBinary, installCandidates, LruCache, requireBinary, spawnBounded, cleanJobDirectory } from './provider-platform';
-import { ProviderJobRunner, ProviderSession, abortableFetch, type ProviderJobContext } from './provider-job';
+import { discoverBinary, installCandidates, LruCache, requireBinary, spawnBounded, cleanJobDirectory, downloadProgress } from './provider-platform';
+import { ProviderJobRunner, ProviderSession, abortableFetch, cancelBody, type ProviderJobContext } from './provider-job';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { PIN_ID, pinterestPinHost, validatePinterestSearchQuery, validatePinterestShortUrl, validatePinterestUrl, type ValidPinterestUrl } from './ytdlp-url';
@@ -81,7 +81,6 @@ type GalleryDlOptions = {
   fetcher?: Fetch;
   killGraceMs?: number;
   metadataTimeoutMs?: number;
-  downloadTimeoutMs?: number;
   now?: () => number;
   searchSnapshots?: PinterestSearchSnapshotStore;
   /** Verified absolute ffmpeg from main; its directory is prepended to the spawned gallery-dl child PATH so merged Pinterest video downloads can locate it under Finder-launched Resolve. */
@@ -120,7 +119,7 @@ const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
 const sizeLimitMessage = (kind: 'image' | 'video'): string => `This ${kind} exceeds ClipDock’s ${kind === 'image' ? '20 MB' : '2 GB'} download limit.`;
 const NETWORK_HELPER_TIMEOUT_MS = 10_000;
 const METADATA_TIMEOUT_MS = 30_000;
-const DOWNLOAD_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const DOWNLOAD_STALL_MS = 10 * 60 * 1000;
 const MAX_OUTPUT_FILES = 64;
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png']);
 const VIDEO_EXTENSIONS = new Set(['.mp4']);
@@ -131,6 +130,7 @@ const HTTP_SLEEP_SECONDS = '0';
 const PINTEREST_ERROR = 'Could not load this Pinterest Pin.';
 const PINTEREST_STORY_ERROR = 'Pinterest Story Pins are not supported.';
 const PINTEREST_SEARCH_ERROR = 'Could not search Pinterest.';
+const PINTEREST_EXTRACTION_ERROR = 'Pinterest could not extract download URLs. Try again later.';
 const PINTEREST_SEARCH_TIMEOUT = 'Pinterest search timed out.';
 const PINTEREST_SEARCH_CANCELLED = 'Pinterest search cancelled.';
 const PINTEREST_SEARCH_TOO_LARGE = 'Search results were too large.';
@@ -583,6 +583,7 @@ function validateOutput(file: string, root: string): {path: string; kind: Pinter
 }
 function mapError(detail: unknown, download = false): string {
   const text = safeErrorText(detail).toLowerCase();
+  if (detail === PINTEREST_EXTRACTION_ERROR || text.includes('error when extracting download urls')) return PINTEREST_EXTRACTION_ERROR;
   if (/private|login|required authentication|unauthori[sz]ed|sign in|cookies?/.test(text)) return PINTEREST_PRIVATE_ERROR;
   if (/no module named ['"]?yt[_-]?dlp|yt[_-]?dlp.*(?:module|required|not found|missing)|(?:module|package).*yt[_-]?dlp/.test(text)) return PINTEREST_YTDLP_ERROR;
   if (/timed? ?out|timeout/.test(text)) return 'Pinterest request timed out.';
@@ -591,12 +592,13 @@ function mapError(detail: unknown, download = false): string {
 }
 function mapSearchError(detail: unknown): string {
   const text = safeErrorText(detail).toLowerCase();
+  if (detail === PINTEREST_EXTRACTION_ERROR || text.includes('error when extracting download urls')) return PINTEREST_EXTRACTION_ERROR;
   if (/private|login|required authentication|unauthori[sz]ed|sign in|cookies?/.test(text)) return PINTEREST_PRIVATE_ERROR;
   if (/timed? ?out|timeout/.test(text)) return PINTEREST_SEARCH_TIMEOUT;
   return PINTEREST_SEARCH_ERROR;
 }
 function searchStderrFailed(stderr: string): boolean {
-  return /\[[^\]\r\n]+\]\[error\]|\b(?:traceback|http(?:error| error)|exception|private|login|required authentication|unauthori[sz]ed|sign in|cookies?|timed? ?out|timeout)\b/i.test(stderr);
+  return /error when extracting download urls|\[[^\]\r\n]+\]\[error\]|\b(?:traceback|http(?:error| error)|exception|private|login|required authentication|unauthori[sz]ed|sign in|cookies?|timed? ?out|timeout)\b/i.test(stderr);
 }
 
 export class GalleryDlWorker {
@@ -607,7 +609,6 @@ export class GalleryDlWorker {
   private readonly processSpawn: Spawn;
   private readonly killGraceMs: number;
   private readonly metadataTimeoutMs: number;
-  private readonly downloadTimeoutMs: number;
   private readonly fetcher: Fetch;
   private readonly ffmpegPath: string | null;
   private readonly now: () => number;
@@ -624,7 +625,6 @@ export class GalleryDlWorker {
     this.processSpawn = options.processSpawn ?? nodeSpawn as Spawn;
     this.killGraceMs = options.killGraceMs ?? 3_000;
     this.metadataTimeoutMs = options.metadataTimeoutMs ?? METADATA_TIMEOUT_MS;
-    this.downloadTimeoutMs = options.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS;
     this.fetcher = options.fetcher ?? globalThis.fetch as unknown as Fetch;
     this.ffmpegPath = options.ffmpegPath === undefined ? null : options.ffmpegPath;
     this.now = options.now ?? Date.now;
@@ -645,7 +645,7 @@ export class GalleryDlWorker {
       cancelledEventMessage: details.kind === 'metadata' ? 'Download cancelled.' : undefined,
       invalidMessage: 'Invalid Pinterest download request.', prerequisites: () => { this.assertAvailable(); },
       cancelledMessage: details.kind === 'search' ? PINTEREST_SEARCH_CANCELLED : details.kind === 'metadata' ? 'Pinterest request cancelled.' : 'Download cancelled.',
-      timeoutMs: details.kind === 'download' ? this.downloadTimeoutMs : this.metadataTimeoutMs,
+      timeoutMs: details.kind === 'download' ? undefined : this.metadataTimeoutMs,
       timeoutMessage: details.kind === 'search' ? PINTEREST_SEARCH_TIMEOUT : 'Pinterest request timed out.',
     }, context => {
       const current = {...details, context}; this.current = current;
@@ -672,7 +672,11 @@ export class GalleryDlWorker {
       env,
       maxStdout: MAX_STDOUT,
       maxStderr: MAX_STDERR,
-      timeoutMs: details.kind === 'download' ? this.downloadTimeoutMs : this.metadataTimeoutMs,
+      timeoutMs: details.kind === 'download' ? undefined : this.metadataTimeoutMs,
+      ...(details.kind === 'download' ? {
+        ...downloadProgress(this.session.jobDirectories.get(details.jobDir)!, () => DOWNLOAD_STALL_MS),
+        progressLine: () => false,
+      } : {}),
       killGraceMs: this.killGraceMs,
       onLine,
       platform: this.platform,
@@ -699,6 +703,7 @@ export class GalleryDlWorker {
     const request = (url: string): Promise<FetchResponse> => abortableFetch(url, {redirect: 'manual', signal: controller.signal}, {fetch: this.fetcher, signal: controller.signal, cancelledMessage: 'Pinterest request cancelled.'});
     try {
       const first = await request(short.url);
+      cancelBody(first);
       if (first.status < 300 || first.status > 399) throw new Error('Pinterest short link could not be resolved.');
       if (signal?.aborted) throw new Error('Pinterest request cancelled.');
       const firstLocation = first.headers.get('location') ?? '';
@@ -707,6 +712,7 @@ export class GalleryDlWorker {
       const apiUrl = pinterestApiRedirect(firstLocation, short.url, short.token);
       if (!apiUrl) throw new Error('Pinterest short link redirect was rejected.');
       const second = await request(apiUrl);
+      cancelBody(second);
       if (second.status < 300 || second.status > 399) throw new Error('Pinterest short link could not be resolved.');
       if (signal?.aborted) throw new Error('Pinterest request cancelled.');
       const resolved = pinterestPinRedirect(second.headers.get('location') ?? '', apiUrl);
@@ -835,7 +841,7 @@ export class GalleryDlWorker {
       // Artifact discovery and validation are performed from the private job directory below.
       // gallery-dl treats --filesize-max rejection as a successful skip.
       if (/file size (?:is )?larger than allowed maximum/i.test(result.stderr)) throw new Error(sizeLimitMessage(expectedKind));
-      if (result.code !== 0) throw new Error(mapError(result.stderr, true));
+      if (result.code !== 0 || /error when extracting download urls/i.test(result.stderr)) throw new Error(mapError(result.stderr, true));
       if (/no module named ['"]?yt[_-]?dlp|yt[_-]?dlp.*(?:module|required|not found|missing)|(?:module|package).*yt[_-]?dlp/i.test(result.stderr)) throw new Error(PINTEREST_YTDLP_ERROR);
       const scanned = outputFiles(jobDir);
       if (scanned.symlink || scanned.files.length > MAX_OUTPUT_FILES) throw new Error('Pinterest download failed its safety check.');

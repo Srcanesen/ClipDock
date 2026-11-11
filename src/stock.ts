@@ -51,8 +51,6 @@ const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
 const API_TIMEOUT_MS = 15_000;
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000;
-// Backstop only; the idle timer catches stalls. Lets the 2 GB cap finish at ~100 KB/s.
-const DOWNLOAD_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const METADATA_CACHE_MAX = 60;
 const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const MAX_REDIRECTS = 3;
@@ -379,20 +377,20 @@ export class StockClient {
     return await this.#downloads.run(jobId, async context => {
       const expire = (): void => { this.#downloads.cancel(jobId, new Error(`${label} media download timed out.`)); };
       let idle = this.#setTimeout(expire, DOWNLOAD_IDLE_TIMEOUT_MS);
-      const overall = this.#setTimeout(expire, DOWNLOAD_TIMEOUT_MS);
       const resetIdle = (): void => { this.#clearTimeout(idle); idle = this.#setTimeout(expire, DOWNLOAD_IDLE_TIMEOUT_MS); };
       let out: ReturnType<typeof createWriteStream> | null = null;
+      let response: Response | undefined;
+      let detached: ReadableStream<Uint8Array> | undefined;
+      let input: Readable | undefined;
       try {
         emit({ jobId, state: 'downloading', percent: 0, message: `Downloading from ${label}…` });
-        const response = await this.#fetchMedia(file.url, context.signal);
+        response = await this.#fetchMedia(file.url, context.signal);
         const lengthHeader = response.headers.get('content-length');
         const length = lengthHeader === null ? NaN : Number(lengthHeader);
         if (Number.isFinite(length) && (length < 1 || length > max)) {
-          cancelBody(response);
           throw new Error(`${label} media exceeds the download size limit.`);
         }
         if (contentType(response) !== file.mime) {
-          cancelBody(response);
           throw new Error(`${label} returned an unexpected media type.`);
         }
         if (!response.body) throw new Error(`${label} returned no media body.`);
@@ -407,7 +405,7 @@ export class StockClient {
         };
         const meter = new Transform({
           transform(chunk: Buffer, _encoding, callback) {
-            resetIdle();
+            if (chunk.byteLength) resetIdle();
             written += chunk.byteLength;
             if (written > max) {
               callback(new Error(`${label} media exceeds the download size limit.`));
@@ -420,7 +418,12 @@ export class StockClient {
         const opened = openExclusive(directory, basename(temp));
         context.register(opened.file);
         out = createWriteStream(temp, {fd: opened.fd, autoClose: true});
-        await pipeline(Readable.fromWeb(detachCancel(response.body) as never), meter, out, {signal: context.signal});
+        detached = detachCancel(response.body);
+        response = undefined; // The proxy owns the upstream reader from here.
+        input = Readable.fromWeb(detached as never);
+        const transfer = pipeline(input, meter, out, {signal: context.signal});
+        detached = undefined; input = undefined; // The pipeline owns cancellation.
+        await transfer;
         emitProgress(100, true);
         context.check();
         const temporary = context.owned(temp);
@@ -430,12 +433,14 @@ export class StockClient {
         context.publish(final);
         return { filePath: final, fileName: basename(final) };
       } catch (error) {
+        if (input) input.destroy();
+        else if (detached) cancelBody({body: detached});
+        else if (response) cancelBody(response);
         if (out && !out.destroyed) out.destroy();
         if (out) await finished(out).catch(() => undefined);
         throw error;
       } finally {
         this.#clearTimeout(idle);
-        this.#clearTimeout(overall);
       }
     }, {invalidMessage: `Invalid ${label} download request.`, notifyFailure: error => error.message === `${label} media download timed out.`, mapError: error => {
       const message = error.message;

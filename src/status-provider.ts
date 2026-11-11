@@ -47,6 +47,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const STATUS_TIMEOUT_MS = 10_000;
+const SHUTDOWN_MESSAGE = 'Resolve is shutting down; the bridge is no longer available.';
+
+function unavailable(message: string): StatusSnapshot {
+  return buildStatus({initialized: false, initError: null, resolveAvailable: false, resolveError: message,
+    moduleVersion: null, resolveVersion: null, projectName: null, timelineName: null});
+}
+
 export function createStatusProvider(
   workflowIntegration: WorkflowIntegration,
   pluginId: string,
@@ -54,13 +62,7 @@ export function createStatusProvider(
   let initOk = false;
   let quitReceived = false;
   let statusInFlight: Promise<StatusSnapshot> | null = null;
-
-  /** Initialize once after success; retry later if Resolve was not ready yet. */
-  async function ensureInitialized(): Promise<boolean> {
-    if (initOk) return true;
-    initOk = (await workflowIntegration.Initialize(pluginId)) === true;
-    return initOk;
-  }
+  let finishCurrent: ((status: StatusSnapshot) => void) | null = null;
 
   /** GetInfo().version — display only, best-effort. */
   function moduleVersion(): string | null {
@@ -77,7 +79,15 @@ export function createStatusProvider(
   }
 
   /** Collect raw bridge facts for the status snapshot (errors captured, never thrown). */
-  async function getStatusFacts(): Promise<BridgeFacts> {
+  async function getStatusFacts(signal: AbortSignal): Promise<BridgeFacts> {
+    // Native promises cannot be cancelled. An expired traversal must neither
+    // update initialization nor start more calls when its pending call returns.
+    async function call<T>(operation: () => T | Promise<T>): Promise<T> {
+      if (signal.aborted) throw signal.reason;
+      const result = await operation();
+      if (signal.aborted) throw signal.reason;
+      return result;
+    }
     const facts: BridgeFacts = {
       initialized: false,
       initError: null,
@@ -90,12 +100,14 @@ export function createStatusProvider(
     };
 
     if (quitReceived) {
-      facts.resolveError = 'Resolve is shutting down; the bridge is no longer available.';
+      facts.resolveError = SHUTDOWN_MESSAGE;
       return facts;
     }
 
     try {
-      if (!(await ensureInitialized())) {
+      // Initialize once after success; retry later if Resolve was not ready yet.
+      if (!initOk) initOk = (await call(() => workflowIntegration.Initialize(pluginId))) === true;
+      if (!initOk) {
         facts.initError = 'WorkflowIntegration.Initialize failed. Is the plugin installed for Resolve Studio?';
         return facts;
       }
@@ -108,7 +120,7 @@ export function createStatusProvider(
 
     let resolve: unknown;
     try {
-      resolve = await workflowIntegration.GetResolve();
+      resolve = await call(() => workflowIntegration.GetResolve());
     } catch (err) {
       facts.resolveError = `GetResolve threw: ${errorMessage(err)}`;
       return facts;
@@ -122,21 +134,21 @@ export function createStatusProvider(
     try {
       const r = resolve as ResolveLike;
       try {
-        facts.resolveVersion = await r.GetVersionString();
+        facts.resolveVersion = await call(() => r.GetVersionString());
       } catch {
         /* optional display value */
       }
 
-      const pm = await r.GetProjectManager();
+      const pm = await call(() => r.GetProjectManager());
       const project = pm
-        ? await (pm as { GetCurrentProject(): Promise<unknown> }).GetCurrentProject()
+        ? await call(() => (pm as { GetCurrentProject(): Promise<unknown> }).GetCurrentProject())
         : null;
       if (project) {
         const p = project as ProjectLike;
-        facts.projectName = bridgeName(await p.GetName(), 'project');
-        const timeline = await p.GetCurrentTimeline();
+        facts.projectName = bridgeName(await call(() => p.GetName()), 'project');
+        const timeline = await call(() => p.GetCurrentTimeline());
         if (timeline) {
-          facts.timelineName = bridgeName(await (timeline as TimelineLike).GetName(), 'timeline');
+          facts.timelineName = bridgeName(await call(() => (timeline as TimelineLike).GetName()), 'timeline');
         }
       }
     } catch (err) {
@@ -147,26 +159,30 @@ export function createStatusProvider(
   }
 
   function getStatus(): Promise<StatusSnapshot> {
-    if (!statusInFlight) {
-      statusInFlight = getStatusFacts().then((facts) => {
-        // A quit notification can arrive while a native call is still pending.
-        if (quitReceived) {
-          facts.resolveAvailable = false;
-          facts.resolveError = 'Resolve is shutting down; the bridge is no longer available.';
-          facts.initError = null;
-          facts.projectName = null;
-          facts.timelineName = null;
-        }
-        return buildStatus(facts);
-      }).finally(() => { statusInFlight = null; });
-    }
-    return statusInFlight;
+    if (quitReceived) return Promise.resolve(unavailable(SHUTDOWN_MESSAGE));
+    if (statusInFlight) return statusInFlight;
+    const controller = new AbortController();
+    let resolve!: (status: StatusSnapshot) => void;
+    const pending = new Promise<StatusSnapshot>(done => { resolve = done; });
+    statusInFlight = pending;
+    const finish = (status: StatusSnapshot): void => {
+      if (controller.signal.aborted) return;
+      controller.abort();
+      clearTimeout(timer);
+      if (statusInFlight === pending) { statusInFlight = null; finishCurrent = null; }
+      resolve(status);
+    };
+    const timer = setTimeout(() => finish(unavailable('Resolve status collection timed out. Click Refresh to retry.')), STATUS_TIMEOUT_MS);
+    finishCurrent = finish;
+    void getStatusFacts(controller.signal).then(facts => finish(buildStatus(facts)));
+    return pending;
   }
 
   return {
     getStatus,
     noteResolveQuit: () => {
       quitReceived = true;
+      finishCurrent?.(unavailable(SHUTDOWN_MESSAGE));
     },
   };
 }
