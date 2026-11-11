@@ -506,6 +506,23 @@ if (previewParam !== null) {
   };
   (window as unknown as { clipdockAPI: PreviewApi }).clipdockAPI = api;
 
+  async function waitForFixtureControl(read: () => HTMLButtonElement | null | undefined): Promise<HTMLButtonElement> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const control = read(); if (control && !control.disabled) return control;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error(`Preview fixture ${previewParam}: control did not become ready.`);
+  }
+  async function openFixtureResult(index: number): Promise<void> {
+    const details = await waitForFixtureControl(() => document.querySelectorAll<HTMLButtonElement>('#youtube-search-results .youtube-details')[index]);
+    details.click();
+    await waitForFixtureControl(() => document.getElementById('download-youtube-btn') as HTMLButtonElement | null);
+  }
+  function setFixtureQuality(): void {
+    const quality = document.getElementById('youtube-quality') as HTMLSelectElement | null;
+    if (quality) { quality.value = '2160p'; quality.dispatchEvent(new Event('change')); }
+  }
+
   // Each fixture URL opens directly into the named state. Ready, queue and
   // download-failed use the production renderer's download flow; queue slows
   // jobs so active/pending rows remain visible, download-failed rejects the job
@@ -523,8 +540,7 @@ if (previewParam !== null) {
       if (search) search.value = 'editing workflow';
       (document.getElementById('youtube-search-form') as HTMLFormElement | null)?.requestSubmit();
       await new Promise((resolve) => setTimeout(resolve, 0));
-      (document.getElementById('youtube-search-results')?.children[0] as HTMLButtonElement | undefined)?.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await openFixtureResult(0);
       (document.getElementById('download-youtube-btn') as HTMLButtonElement | null)?.click();
       return;
     }
@@ -533,7 +549,7 @@ if (previewParam !== null) {
       const input = document.getElementById('pinterest-url') as HTMLInputElement | null;
       if (input) input.value = 'https://www.pinterest.com/pin/123456789/';
       (document.getElementById('load-pinterest-btn') as HTMLButtonElement | null)?.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitForFixtureControl(() => document.getElementById('download-youtube-btn') as HTMLButtonElement | null);
       (document.getElementById('download-youtube-btn') as HTMLButtonElement | null)?.click();
       return;
     }
@@ -555,8 +571,7 @@ if (previewParam !== null) {
       if (search) search.value = 'editing workflow';
       (document.getElementById('youtube-search-form') as HTMLFormElement | null)?.requestSubmit();
       await new Promise((resolve) => setTimeout(resolve, 0));
-      (document.getElementById('youtube-search-results')?.children[0] as HTMLButtonElement | undefined)?.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await openFixtureResult(0);
       (document.getElementById('download-youtube-btn') as HTMLButtonElement | null)?.click();
       return;
     }
@@ -572,16 +587,14 @@ if (previewParam !== null) {
       }
       return;
     }
-    (document.getElementById('youtube-search-results')?.children[0] as HTMLButtonElement | undefined)?.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const quality = document.getElementById('youtube-quality') as HTMLSelectElement | null;
-    if (quality) quality.value = '2160p';
+    await openFixtureResult(0);
+    setFixtureQuality();
     if (previewParam === 'audio') { const mode = document.getElementById('youtube-media-mode') as HTMLSelectElement | null; if (mode) { mode.value = 'audio'; mode.dispatchEvent(new Event('change')); } const subtitles = document.getElementById('youtube-subtitles') as HTMLInputElement | null; if (subtitles) { subtitles.checked = true; subtitles.dispatchEvent(new Event('change')); } }
     (document.getElementById('download-youtube-btn') as HTMLButtonElement | null)?.click();
     if (previewParam === 'queue') {
       await new Promise((resolve) => setTimeout(resolve, 0));
-      (document.getElementById('youtube-search-results')?.children[1] as HTMLButtonElement | undefined)?.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await openFixtureResult(1);
+      setFixtureQuality();
       (document.getElementById('download-youtube-btn') as HTMLButtonElement | null)?.click();
     }
     if (previewParam === 'duplicate') {

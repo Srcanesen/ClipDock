@@ -10,12 +10,13 @@ const adapter = transpilePreviewAdapter(root);
 function preview(mode) {
   const dom = createFakeDom(); const elements = new Map(); const events = []; const timers = []; const listeners = {};
   for (const id of ['youtube-search-input', 'youtube-search-form', 'youtube-search-results', 'youtube-quality', 'download-youtube-btn', 'provider-pinterest']) elements.set(id, dom.makeElement('div', id));
+  elements.get('youtube-quality').dispatchEvent = () => {};
   elements.get('youtube-search-form').requestSubmit = () => events.push('search');
   elements.get('download-youtube-btn').listeners.click = () => events.push('download');
   elements.get('provider-pinterest').listeners.click = () => events.push('pinterest');
-  for (const index of [0, 1]) { const row = dom.makeElement('button'); row.listeners.click = () => events.push(`result-${index}`); elements.get('youtube-search-results').append(row); }
+  for (const index of [0, 1]) { const row = dom.makeElement('div'); const details = dom.makeElement('button'); details.className = 'youtube-details'; details.listeners.click = () => events.push(`result-${index}`); row.append(details); elements.get('youtube-search-results').append(row); }
   const window = { location: { search: `?preview=${mode}` }, addEventListener: (type, callback) => { listeners[type] = callback; } };
-  runInNewContext(adapter, { window, document: { getElementById: (id) => elements.get(id) ?? null }, URLSearchParams, Date, Math, setTimeout: (callback, delay) => { timers.push({ callback, delay }); } });
+  runInNewContext(adapter, { window, document: { getElementById: (id) => elements.get(id) ?? null, querySelectorAll: () => elements.get('youtube-search-results').children.map(row => row.children[0]) }, URLSearchParams, Event, Date, Math, setTimeout: (callback, delay) => { timers.push({ callback, delay }); } });
   const flush = async () => { for (let turn = 0; turn < 20; turn += 1) { for (const timer of timers.splice(0)) timer.callback(); await Promise.resolve(); } };
   return { api: window.clipdockAPI, elements, events, timers, listeners, flush };
 }

@@ -122,6 +122,7 @@ let youtubeBusy = false;
 const metadataSession = new MetadataSession();
 const searchGuard = createGenerationGuard();
 let youtubeSearchPending: number | null = null;
+let youtubeSubmittedQuery = '';
 let youtubeSearchFailure: string | null = null;
 const announcedQueueStates = new WeakMap<QueueItem, QueueState>();
 let searchButtons: HTMLElement[] = [];
@@ -138,6 +139,8 @@ let statusRefreshTimer: number | null = null;
 let hostStatus: StatusSnapshot | null = null;
 const ACTION_RESULT_MS = 9_000;
 let actionResultUntil = 0;
+let workspaceResultUntil = 0;
+let workspaceResultTimer: number | null = null;
 function showActionResult(text: string, ok?: boolean): void { actionResultUntil = Date.now() + ACTION_RESULT_MS; setText('message', text, ok); }
 let settingsOpen = false;
 let settingsTrigger: HTMLElement | null = null;
@@ -158,6 +161,11 @@ const selectedChapters = new Set<number>();
 const subtitleGuard = createGenerationGuard();
 let subtitleCues: SubtitleCue[] = [];
 const selectedSubtitleCues = new Set<number>();
+let renderedChapters: YoutubeChapter[] | undefined;
+let chapterChecks: HTMLInputElement[] = [];
+let renderedSubtitleCues: SubtitleCue[] | null = null;
+let renderedSubtitleQuery = '';
+let cueChecks: Array<{ index: number; check: HTMLInputElement }> = [];
 let openHistoryMenu: HTMLElement | null = null;
 let historyHostRefreshers: Array<() => void> = [];
 function refreshHistoryHostState(): void { for (const refresh of historyHostRefreshers) refresh(); }
@@ -273,10 +281,10 @@ async function refreshWorkspace(): Promise<void> {
   try {
     const workspace = await window.clipdockAPI.workspaceStatus();
     const summary = `${workspace.fileCount} stored files · ${formatBytes(workspace.totalBytes)}`;
-    setOptionalText('workspace-status', summary); setOptionalText('settings-workspace-status', summary);
+    if (Date.now() >= workspaceResultUntil) { setOptionalText('workspace-status', summary); setOptionalText('settings-workspace-status', summary); }
     const cleanup = document.getElementById('cleanup-workspace-btn') as HTMLButtonElement | null;
     if (cleanup) { cleanup.disabled = workspace.cleanupFileCount === 0; cleanup.dataset.count = String(workspace.cleanupFileCount); cleanup.dataset.bytes = String(workspace.cleanupBytes); }
-  } catch (err) { setOptionalText('workspace-status', (err as Error).message); setOptionalText('settings-workspace-status', (err as Error).message); }
+  } catch (err) { if (Date.now() >= workspaceResultUntil) { setOptionalText('workspace-status', (err as Error).message); setOptionalText('settings-workspace-status', (err as Error).message); } }
 }
 async function openWorkspace(): Promise<void> {
   const error = 'Could not open the managed ClipDock folder.';
@@ -292,7 +300,7 @@ async function cleanupWorkspace(): Promise<void> {
   const count = Number(button.dataset.count ?? 0), bytes = Number(button.dataset.bytes ?? 0);
   if (!count || !window.confirm(`Delete ${count} old download${count === 1 ? '' : 's'} (${formatBytes(bytes)})? Current session files are kept.`)) return;
   button.disabled = true;
-  try { const result = await window.clipdockAPI.cleanupWorkspace(); setOptionalText('workspace-status', `Deleted ${result.deletedFileCount} files · ${formatBytes(result.deletedBytes)} freed`); setOptionalText('settings-workspace-status', `Deleted ${result.deletedFileCount} files · ${formatBytes(result.deletedBytes)} freed`); await refreshWorkspace(); } catch (err) { setOptionalText('workspace-status', (err as Error).message); setOptionalText('settings-workspace-status', (err as Error).message); button.disabled = false; }
+  try { const result = await window.clipdockAPI.cleanupWorkspace(); workspaceResultUntil = Date.now() + ACTION_RESULT_MS; if (workspaceResultTimer !== null) window.clearTimeout(workspaceResultTimer); workspaceResultTimer = window.setTimeout(() => { workspaceResultTimer = null; void refreshWorkspace(); }, ACTION_RESULT_MS); setOptionalText('workspace-status', `Deleted ${result.deletedFileCount} files · ${formatBytes(result.deletedBytes)} freed`); setOptionalText('settings-workspace-status', `Deleted ${result.deletedFileCount} files · ${formatBytes(result.deletedBytes)} freed`); await refreshWorkspace(); } catch (err) { setOptionalText('workspace-status', (err as Error).message); setOptionalText('settings-workspace-status', (err as Error).message); button.disabled = false; }
 }
 function wireResizableRegions(): void {
   restoreLayoutPreferences();
@@ -1301,16 +1309,16 @@ function beginSearchTransition(): void {
   applyDetailOutput();
   updateControls();
 }
-async function searchPinterest(page: number): Promise<void> {
+async function searchPinterest(page: number, query = ($('youtube-search-input') as HTMLInputElement).value): Promise<void> {
   // Generation marker: a newer query/page/provider supersedes any in-flight search, so only
   // the newest success, error, and busy-reset may touch Pinterest search state.
   beginSearchTransition();
-  const request = searchGuard.next(); const query = ($('youtube-search-input') as HTMLInputElement).value; setSearchBusy(true); setText('youtube-search-status', 'Searching Pinterest…');
-  try { const result = await window.clipdockAPI.searchPinterest(query, page, {orientation}); if (searchGuard.isStale(request) || provider !== 'pinterest') return; pinterestSearch = result; clearResultSelection(); }
+  const request = searchGuard.next(); setSearchBusy(true); setText('youtube-search-status', 'Searching Pinterest…');
+  try { const result = await window.clipdockAPI.searchPinterest(query, page, {orientation}); if (searchGuard.isStale(request) || provider !== 'pinterest') return; pinterestSearch = { ...result, query }; clearResultSelection(); }
   catch (err) { if (searchGuard.isStale(request)) return; searchError = (err as Error).message; pinterestSearch = null; renderPinterestSearchResults(); setText('youtube-search-status', (err as Error).message); }
   finally { if (searchGuard.isCurrent(request)) setSearchBusy(false); }
 }
-async function searchPexels(page: number): Promise<void> {
+async function searchPexels(page: number, query = ($('youtube-search-input') as HTMLInputElement).value): Promise<void> {
   const source: StockProvider = provider === 'pixabay' ? 'pixabay' : 'pexels';
   if (!stockConnected[source]) {
     showYoutubeStatus(`Connect a ${stockLabel(source)} API key for this session.`);
@@ -1320,7 +1328,7 @@ async function searchPexels(page: number): Promise<void> {
     return;
   }
   beginSearchTransition();
-  const request = searchGuard.next(); const query = ($('youtube-search-input') as HTMLInputElement).value; setSearchBusy(true); setText('youtube-search-status', `Searching ${stockLabel(source)}…`); try { const result = await stockApi(source).search(stockKind(), query, page, {orientation}); if (searchGuard.isStale(request) || provider !== source) return; pexelsSearch = result; clearResultSelection(); } catch (err) { if (searchGuard.isStale(request)) return; searchError = (err as Error).message; pexelsSearch = null; renderPexelsSearchResults(); setText('youtube-search-status', (err as Error).message); } finally { if (searchGuard.isCurrent(request)) setSearchBusy(false); } }
+  const request = searchGuard.next(); setSearchBusy(true); setText('youtube-search-status', `Searching ${stockLabel(source)}…`); try { const result = await stockApi(source).search(stockKind(), query, page, {orientation}); if (searchGuard.isStale(request) || provider !== source) return; pexelsSearch = { ...result, query }; clearResultSelection(); } catch (err) { if (searchGuard.isStale(request)) return; searchError = (err as Error).message; pexelsSearch = null; renderPexelsSearchResults(); setText('youtube-search-status', (err as Error).message); } finally { if (searchGuard.isCurrent(request)) setSearchBusy(false); } }
 function youtubeUrlFromSearch(input: string): string | null {
   if (input.length < 12 || input.length > 2_048) return null;
   let parsed: URL;
@@ -1408,20 +1416,20 @@ function cancelPendingYoutubeSearch(): void {
 }
 function handleYoutubeSearchPage(event: YoutubeSearchEvent): void {
   if (provider !== 'youtube' || youtubeSearchPending !== event.generation || searchGuard.isStale(event.generation)) return;
-  searchPage = event.page; setSearchBusy(false); clearResultSelection();
+  searchPage = { ...event.page, query: youtubeSubmittedQuery }; setSearchBusy(false); clearResultSelection();
 }
-async function searchYoutube(page: number): Promise<void> {
+async function searchYoutube(page: number, query = ($('youtube-search-input') as HTMLInputElement).value): Promise<void> {
   if (metadataSession.busy) { showYoutubeStatus('Wait for the current source to finish loading.'); return; }
   beginSearchTransition();
   // Both the early page and the final reply belong to this generation.
-  const request = searchGuard.next(); youtubeSearchPending = request; youtubeSearchFailure = null; searchPage = null;
-  const query = ($('youtube-search-input') as HTMLInputElement).value; setSearchBusy(true); setText('youtube-search-status', 'Searching YouTube…');
+  const request = searchGuard.next(); youtubeSubmittedQuery = query; youtubeSearchPending = request; youtubeSearchFailure = null; searchPage = null;
+  setSearchBusy(true); setText('youtube-search-status', 'Searching YouTube…');
   try {
     const result = await window.clipdockAPI.searchYoutube(query, page, request, {orientation});
     if (searchGuard.isStale(request) || provider !== 'youtube') return;
     const current = searchPage as YoutubeSearchPage | null;
     const samePage = current?.totalResults === null && JSON.stringify(current.results) === JSON.stringify(result.results);
-    searchPage = result;
+    searchPage = { ...result, query };
     if (samePage) { renderYoutubeSearchStatus(); renderSearchState(); }
     else clearResultSelection();
   } catch (err) {
@@ -1436,9 +1444,9 @@ async function searchYoutube(page: number): Promise<void> {
 // Shared pager: Previous/Next resolve against the active provider's page and rely on the
 // same per-search generation suppression, so a stale page can never render.
 function searchPageRelative(delta: number): void {
-  if (isStock(provider) && pexelsSearch) void searchPexels(pexelsSearch.page + delta);
-  else if (provider === 'pinterest' && pinterestSearch) void searchPinterest(pinterestSearch.page + delta);
-  else if (searchPage) void searchYoutube(searchPage.page + delta);
+  if (isStock(provider) && pexelsSearch) void searchPexels(pexelsSearch.page + delta, pexelsSearch.query);
+  else if (provider === 'pinterest' && pinterestSearch) void searchPinterest(pinterestSearch.page + delta, pinterestSearch.query);
+  else if (searchPage) void searchYoutube(searchPage.page + delta, searchPage.query);
 }
 function renderInspectorTitle(source: Provider, _id: string, label: string = providerLabel(source)): void {
   const page = source === 'youtube' ? searchPage : isStock(source) ? pexelsSearch : source === 'pinterest' ? pinterestSearch : null;
@@ -1732,13 +1740,16 @@ function chapterSelectionRange(chapters: YoutubeChapter[], selected: Iterable<nu
 }
 function applyChapterSelection(): void { sourceSelection = selectSourceSegments(sourceSelection, 'chapters', youtube?.chapters ?? [], [...selectedChapters]); const range = chapterSelectionRange(youtube?.chapters ?? [], selectedChapters); writeRangeInput('range-in', range?.start); writeRangeInput('range-out', range?.end); selectedSubtitleCues.clear(); commitRangeEdit(); }
 function renderSelection(): void {
-  const chapters = document.getElementById('chapter-list'); if (!chapters) return; chapters.replaceChildren();
+  const chapters = document.getElementById('chapter-list'); if (!chapters) return;
+  const corpus = youtube?.chapters;
+  if (renderedChapters === corpus) { chapterChecks.forEach((check, index) => { check.checked = selectedChapters.has(index); }); return; }
+  renderedChapters = corpus; chapterChecks = []; chapters.replaceChildren();
   for (const [index, chapter] of (youtube?.chapters ?? []).entries()) {
     const label = document.createElement('label'); label.className = 'chapter-row ledger-row'; label.dataset.chapterIndex = String(index); label.setAttribute('aria-label', `Chapter ${index + 1}: ${chapter.title}. ${formatDuration(chapter.start)} to ${formatDuration(chapter.end)}`);
     const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selectedChapters.has(index); check.dataset.field = 'chapter-selection'; check.addEventListener('change', () => { if (check.checked) selectedChapters.add(index); else selectedChapters.delete(index); applyChapterSelection(); });
     const time = document.createElement('span'); time.className = 'ct'; time.textContent = formatTimecode(chapter.start); time.setAttribute('aria-hidden', 'true');
     const name = document.createElement('span'); name.className = 'cn'; name.textContent = chapter.title; name.setAttribute('aria-hidden', 'true');
-    label.append(check, time, name); chapters.append(label);
+    chapterChecks.push(check); label.append(check, time, name); chapters.append(label);
   }
 }
 function currentSelectionPlan(): SourceSelection {
@@ -1771,15 +1782,38 @@ function applySubtitleSelection(): void {
   selectedChapters.clear(); commitRangeEdit();
 }
 function renderSubtitleCues(): void {
-  const list = document.getElementById('subtitle-results'); if (!list) return; const query = (document.getElementById('subtitle-search-query') as HTMLInputElement | null)?.value ?? ''; const matches = filterSubtitleCues(subtitleCues, query); list.replaceChildren();
+  const list = document.getElementById('subtitle-results'); if (!list) return; const query = (document.getElementById('subtitle-search-query') as HTMLInputElement | null)?.value ?? ''; if (renderedSubtitleCues === subtitleCues && renderedSubtitleQuery === query) { for (const { index, check } of cueChecks) check.checked = selectedSubtitleCues.has(index); return; }
+  renderedSubtitleCues = subtitleCues; renderedSubtitleQuery = query; cueChecks = [];
+  const matches = filterSubtitleCues(subtitleCues, query); list.replaceChildren();
   for (const { index, cue } of matches) {
     const row = document.createElement('div'); row.className = 'subtitle-cue subtitle-row ledger-row'; row.dataset.cueIndex = String(index); row.setAttribute('role', 'listitem'); row.setAttribute('aria-label', `Subtitle cue: ${formatDuration(cue.start)} to ${formatDuration(cue.end)}. ${cue.text}`);
-    const label = document.createElement('label'); label.className = 'subtitle-label'; const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selectedSubtitleCues.has(index); check.dataset.field = 'cue-selection'; check.addEventListener('change', () => { if (check.checked) selectedSubtitleCues.add(index); else selectedSubtitleCues.delete(index); applySubtitleSelection(); }); label.append(check, document.createTextNode(`Cue ${formatDuration(cue.start)}–${formatDuration(cue.end)} · ${cue.text}`));
+    const label = document.createElement('label'); label.className = 'subtitle-label'; const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selectedSubtitleCues.has(index); check.dataset.field = 'cue-selection'; check.addEventListener('change', () => { if (check.checked) selectedSubtitleCues.add(index); else selectedSubtitleCues.delete(index); applySubtitleSelection(); }); cueChecks.push({ index, check }); label.append(check, document.createTextNode(`Cue ${formatDuration(cue.start)}–${formatDuration(cue.end)} · ${cue.text}`));
     const preview = button('Preview', () => { if (youtube) { void startYoutubePreview(youtube.id, cue.start); } }); preview.className = 'subtitle-action'; preview.setAttribute('aria-label', `Preview at ${formatDuration(cue.start)}`); row.append(label, preview); list.append(row);
   }
   if (!matches.length) list.textContent = subtitleCues.length ? 'No matching cues.' : 'No subtitle cues.';
 }
-async function searchSubtitles(): Promise<void> { if (!youtube) return; const request = subtitleGuard.next(); const list = $('subtitle-results'); list.textContent = 'Searching subtitles…'; try { const cues = await window.clipdockAPI.searchSubtitles(`https://www.youtube.com/watch?v=${youtube.id}`, detailOutput().subtitleLanguage); if (subtitleGuard.isStale(request)) return; subtitleCues = cues; selectedSubtitleCues.clear(); renderSubtitleCues(); } catch (err) { if (subtitleGuard.isCurrent(request)) { subtitleCues = []; selectedSubtitleCues.clear(); list.textContent = (err as Error).message; } } }
+function replaceSubtitleCues(cues: SubtitleCue[]): void {
+  subtitleCues = cues; selectedSubtitleCues.clear();
+  if (sourceSelection.mode === 'cues') {
+    sourceSelection = transitionSourceSelection(sourceSelection, { type: 'full', source: sourceSelection.source });
+    writeRangeInput('range-in', undefined); writeRangeInput('range-out', undefined); commitRangeEdit();
+  }
+  renderSubtitleCues();
+}
+async function searchSubtitles(): Promise<void> {
+  if (!youtube) return;
+  const request = subtitleGuard.next(); const source = youtube.id; const language = detailOutput().subtitleLanguage;
+  const isCurrent = (): boolean => subtitleGuard.isCurrent(request) && provider === 'youtube' && youtube?.id === source && detailOutput().subtitleLanguage === language;
+  const list = $('subtitle-results'); renderedSubtitleCues = null; list.textContent = 'Searching subtitles…';
+  try {
+    const cues = await window.clipdockAPI.searchSubtitles(`https://www.youtube.com/watch?v=${source}`, language);
+    if (!isCurrent()) return;
+    replaceSubtitleCues(cues);
+  } catch (err) {
+    if (!isCurrent()) return;
+    replaceSubtitleCues([]); list.textContent = (err as Error).message;
+  }
+}
 function renderMetadata(): void {
   document.getElementById('pinterest-item-list')?.classList.add('hidden'); document.getElementById('pinterest-original-note')?.classList.add('hidden'); const section = $('youtube-metadata'); section.classList.toggle('hidden', !youtube); updatePreviewButton(); renderRangeUi(); if (!youtube) return;
   setInspectorPoster(youtube.thumbnailUrl ?? outputSession.selected?.thumbnailDataUrl ?? null, youtube.title);
@@ -2739,6 +2773,7 @@ window.addEventListener('DOMContentLoaded', () => {
     window.removeEventListener('focus', scheduleHostRefresh);
     document.removeEventListener?.('visibilitychange', onHostVisibilityChange);
     stopHostPolling();
+    if (workspaceResultTimer !== null) window.clearTimeout(workspaceResultTimer);
     if (hostRefreshTimer !== null) window.clearTimeout(hostRefreshTimer);
     if (statusRefreshTimer !== null) window.clearTimeout(statusRefreshTimer);
     if (queueRenderTimer !== null) window.clearTimeout(queueRenderTimer);

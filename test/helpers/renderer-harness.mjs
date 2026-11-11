@@ -2,10 +2,12 @@
 import { createFakeDom } from './fake-dom.mjs';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { fileURLToPath } from 'node:url';
+import { transpilePreviewAdapter } from '../../scripts/lib/preview-adapter.mjs';
 
 const renderer = readFileSync(new URL('../../dist/renderer.js', import.meta.url), 'utf8');
 
-export function createHarness({ eventsOnly = false, preferencesInit = {} } = {}) {
+export function createHarness({ eventsOnly = false, preferencesInit = {}, previewMode } = {}) {
   const elements = new Map();
   let activeElement = null;
   const { makeElement } = createFakeDom({ onFocus: (element) => { activeElement = element; }, bounds: { right: 800, bottom: 500, width: 800, height: 500 } });
@@ -94,9 +96,9 @@ export function createHarness({ eventsOnly = false, preferencesInit = {} } = {})
     createElement: (tag) => makeElement(tag), createTextNode: (text) => ({ textContent: text, tagName: '#TEXT', children: [] }),
     querySelector: (selector) => selector === '.advanced-options' ? makeElement('details') : selector === '.feed-toolbar' ? makeElement('div') : selector === '.inspector-thumb' ? makeElement('div') : null,
     querySelectorAll: (selector) => {
-      if (selector !== '#youtube-search-results .result-card-thumbnail.card-thumb') return [];
+      if (!['#youtube-search-results .result-card-thumbnail.card-thumb', '#youtube-search-results .youtube-details'].includes(selector)) return [];
       const thumbnails = [];
-      const visit = (element) => { for (const child of element.children ?? []) { if (/\bresult-card-thumbnail\b/.test(child.className) && /\bcard-thumb\b/.test(child.className)) thumbnails.push(child); visit(child); } };
+      const visit = (element) => { for (const child of element.children ?? []) { if (selector.endsWith('.youtube-details') ? child.classList?.contains('youtube-details') : /\bresult-card-thumbnail\b/.test(child.className) && /\bcard-thumb\b/.test(child.className)) thumbnails.push(child); visit(child); } };
       visit(elements.get('youtube-search-results'));
       return thumbnails;
     }, addEventListener: () => undefined, removeEventListener: () => undefined,
@@ -105,6 +107,22 @@ export function createHarness({ eventsOnly = false, preferencesInit = {} } = {})
   const preferenceWrites = [];
   const fakeWindow = { clipdockAPI: api, innerWidth: 960, innerHeight: 720, localStorage: { getItem: (key) => preferences.get(key) ?? null, setItem: (key, value) => { preferences.set(key, String(value)); preferenceWrites.push([key, String(value)]); } }, matchMedia: () => ({ matches: false }), addEventListener: (type, callback) => { (windowListeners[type] ??= []).push(callback); }, removeEventListener: () => undefined, requestAnimationFrame: () => { animationFrameRequests += 1; return animationFrameRequests; }, setTimeout, clearTimeout, setInterval: () => 0, clearInterval: () => undefined, confirm: () => true };
   const sandbox = { window: fakeWindow, document, console, Date, Intl, Math, Number, Promise, URL, WeakMap, Set, Map, queueMicrotask, crypto: { randomUUID: (() => { let i = 0; return () => `test-${++i}`; })(), getRandomValues: (value) => value }, setTimeout, clearTimeout };
+  if (previewMode) {
+    fakeWindow.location = { search: `?preview=${previewMode}` };
+    sandbox.URLSearchParams = URLSearchParams;
+    sandbox.Event = class { constructor(type) { this.type = type; } };
+    for (const element of elements.values()) {
+      element.click = function() { if (!this.disabled) return this.listeners.click?.({ target: this, detail: 1, preventDefault() {}, stopPropagation() {} }); };
+      element.requestSubmit = function() { return this.listeners.submit?.({ preventDefault() {} }); };
+      element.dispatchEvent = function(event) { return this.listeners[event.type]?.(event); };
+    }
+    runInNewContext(transpilePreviewAdapter(fileURLToPath(new URL('../../', import.meta.url))), sandbox);
+    Object.assign(api, fakeWindow.clipdockAPI); fakeWindow.clipdockAPI = api;
+    for (const name of ['downloadYoutube', 'downloadPinterest', 'downloadPexels']) {
+      const download = api[name];
+      api[name] = (...args) => { downloads.push({ provider: name, args }); return download(...args); };
+    }
+  }
   runInNewContext(eventsOnly ? `${renderer}\nglobalThis.__functionTest = { queue: () => queue };` : `${renderer}\nglobalThis.__functionTest = {\n  staged: () => Array.from(outputSession.staged.values()).map((entry) => ({ key: entry.key, snapshot: entry.snapshot, overrides: entry.overrides })),\n  stage: (entry) => (outputSession.edit('defaults', entry.snapshot), outputSession.stage(entry.key, entry), outputSession.edit(entry.key, entry.overrides)),\n  queue: () => queue,\n  enqueueSelected,\n  setOrientation,\n  orientation: () => orientation,\n  searchPageRelative,\n  submitSourceSearch,\n  setProvider,\n  setPexelsKind,\n  enqueueStagedSelection,\n  setSurface,\n  // Inline result-card seams for deterministic card UX checks. These are the exact\n  // functions the built renderer wires to the per-card controls (enqueue/now buttons,\n  // thumbnail play button, options disclosure, advanced -> detail Inspector).\n  enqueueResultCard: (key, selection, mode) => enqueueResultCard(key, selection, mode),\n  startYoutubePreview: (id, startAt, target, resultKey) => startYoutubePreview(id, startAt, target, resultKey),\n  stopPreview: () => stopPreview(),\n  updateYoutubePreviewBounds: () => updateYoutubePreviewBounds(),\n  openInspectorForSelection: (keyboardActivation) => openInspectorForSelection(keyboardActivation),\n  renderSearchResults: () => renderSearchResults(),\n  paintOutput: () => { renderProfile(); renderQuality(); },\n  optionsOpen: (key) => cardOptionsOpen.get(key),\n  cardEffectiveOutput: (key) => outputSession.output(key),\n  cardOutputOverrides: (key) => outputSession.overrides(key),\n  commitCardOutput: (key, value) => outputSession.edit(key, value),\n  renderQueue,\n  activeQueueId: () => downloadQueue.activeId,\n};`, sandbox);
   const flush = async () => { await new Promise((resolve) => setImmediate(resolve)); await new Promise((resolve) => setImmediate(resolve)); };
   const fireReady = async () => { for (const callback of windowListeners.DOMContentLoaded ?? []) callback(); await flush(); };
