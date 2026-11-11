@@ -8,7 +8,7 @@ import { test } from 'node:test';
 test('preview request callback refuses files and directories linked outside dist, including HTML', (t) => {
   const root = fs.mkdtempSync(path.join(tmpdir(), 'clipdock-preview-boundary-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['scripts/preview.mjs', 'scripts/lib/preview-adapter.mjs', 'src/preview.ts', 'dist']) {
+  for (const entry of ['scripts', 'src', 'static', 'dist', 'package.json', 'package-lock.json', 'tsconfig.json']) {
     fs.cpSync(entry, path.join(root, entry), { recursive: true });
   }
   fs.symlinkSync(path.resolve('node_modules'), path.join(root, 'node_modules'));
@@ -16,11 +16,11 @@ test('preview request callback refuses files and directories linked outside dist
   fs.mkdirSync(outside);
   fs.writeFileSync(path.join(outside, 'secret.txt'), 'PRIVATE OUTSIDE CONTENT');
   fs.writeFileSync(path.join(outside, 'index.html'), '<p>PRIVATE OUTSIDE CONTENT</p><script src="./renderer.js"></script>');
-  fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(root, 'dist', 'leak.txt'));
-  fs.symlinkSync(outside, path.join(root, 'dist', 'linked'));
   const preload = path.join(root, 'requests.cjs');
   fs.writeFileSync(preload, `const http = require('node:http'); const fs = require('node:fs'); const path = require('node:path');
 http.createServer = callback => ({ listen() {
+  fs.symlinkSync(path.join(process.cwd(), 'outside/secret.txt'), path.join(process.cwd(), 'dist/leak.txt'));
+  fs.symlinkSync(path.join(process.cwd(), 'outside'), path.join(process.cwd(), 'dist/linked'));
   const request = url => { const response = {}; callback({url}, {writeHead(status) { response.status = status; }, end(body) {response.body = String(body);} }); return response; };
   const linked = ['/leak.txt', '/%6ceak.txt', '/linked/secret.txt'].map(request);
   const good = request('/renderer.js');

@@ -3,7 +3,7 @@
 // from the Resolve developer package (the binary is NEVER committed to the repo).
 //
 // macOS: the plugins directory is /Library/... (system-wide) — may require sudo.
-import { copyFileSync, existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCompletedBuild } from './lib/completed-build.mjs';
@@ -16,6 +16,17 @@ import { PLUGIN_ID } from './lib/contracts.mjs';
 const DRY_RUN = process.argv.includes('--dry-run');
 
 const isWin = process.platform === 'win32';
+// System-wide installs must be readable by Resolve's ordinary user even when
+// the build or native source was created under a restrictive umask.
+function normalizeInstallModes(file) {
+  if (isWin) return;
+  const info = lstatSync(file);
+  if (!info.isDirectory() && !info.isFile()) throw new Error(`Unsupported staged install entry: ${file}`);
+  const mode = info.isDirectory() || (info.mode & 0o111) ? 0o755 : 0o644;
+  chmodSync(file, mode);
+  if ((lstatSync(file).mode & 0o7777) !== mode) throw new Error(`Staged install permission mode differs from ${mode.toString(8)}: ${file}`);
+  if (info.isDirectory()) for (const entry of readdirSync(file)) normalizeInstallModes(path.join(file, entry));
+}
 const destRoot = isWin
   ? path.join(
       process.env.PROGRAMDATA || 'C:\\ProgramData',
@@ -91,6 +102,7 @@ act(`WorkflowIntegration.node: ${found}`);
 if (!DRY_RUN) reconcileDirectoryContents(dist, dest, undefined, (stage) => {
   copyFileSync(found, path.join(stage, 'WorkflowIntegration.node'));
   if (hashFile(path.join(stage, 'WorkflowIntegration.node')) !== nativeHash) throw new Error('Native module changed during installation');
+  normalizeInstallModes(stage);
   // Validate the copied bytes, including the build record, before promotion.
   // The structural artifact validator reserves the host sidecar for this boundary.
   validateCompletedBuild(root, stage, true);

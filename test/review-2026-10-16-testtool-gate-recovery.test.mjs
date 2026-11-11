@@ -28,9 +28,9 @@ function fixture(t, installed = true) {
 }
 
 const crashBeforeMkdir = `reconcileDirectoryContents(source, destination, {...fs,
-  writeFileSync(file, data, options) {
-    fs.writeFileSync(file, data, options);
-    if (file === lock) process.exit(73);
+  mkdirSync(file, options) {
+    if (fs.existsSync(lock) && file === JSON.parse(fs.readFileSync(lock, 'utf8')).workDir) process.exit(73);
+    fs.mkdirSync(file, options);
   },
 });`;
 const crashAfterCleanup = `reconcileDirectoryContents(source, destination, {...fs,

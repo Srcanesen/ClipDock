@@ -257,7 +257,12 @@ test('unrelated filesystem errors propagate with original identity after safe ro
   }
 });
 
-test('EBUSY/EPERM at staging or rename boundary is classified, others propagate', () => {
+test('EBUSY/EPERM at staging or rename boundary is classified, others propagate', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'clipdock-stage-errors-'));
+  t.after(() => rmSync(root, {recursive: true, force: true}));
+  const source = path.join(root, 'source');
+  const destination = path.join(root, 'destination');
+  mkdirSync(source);
   const forLock = (code) => {
     const err = Object.assign(new Error(`${code} lock`), {code, syscall: 'rename', path: '/installed'});
     return err;
@@ -265,23 +270,23 @@ test('EBUSY/EPERM at staging or rename boundary is classified, others propagate'
   // Test EBUSY at stage copy
   {
     const err = forLock('EBUSY');
-    const w = makeFakeFs({real: fs, overrides: {lstatSync: () => ({isDirectory: () => true, isSymbolicLink: () => false}), writeFileSync: () => {}, mkdirSync: () => {}, rmSync: () => {}, cpSync: () => { throw err; }}});
-    const e = captureError(() => reconcileDirectoryContents('/src', '/dest', w));
+    const w = makeFakeFs({real: fs, overrides: {cpSync: () => { throw err; }}});
+    const e = captureError(() => reconcileDirectoryContents(source, destination, w));
     assert.equal(e.code, 'EBUSY');
     assert.equal(e.cause, err);
   }
   {
     const err = forLock('EPERM');
-    const w = makeFakeFs({real: fs, overrides: {lstatSync: () => ({isDirectory: () => true, isSymbolicLink: () => false}), writeFileSync: () => {}, mkdirSync: () => {}, rmSync: () => {}, cpSync: () => { throw err; }}});
-    const e = captureError(() => reconcileDirectoryContents('/src', '/dest', w));
+    const w = makeFakeFs({real: fs, overrides: {cpSync: () => { throw err; }}});
+    const e = captureError(() => reconcileDirectoryContents(source, destination, w));
     assert.equal(e.code, 'EPERM');
     assert.equal(e.cause, err);
   }
   // Unrelated at same boundary propagates
   {
     const err = Object.assign(new Error('ENOSPC'), {code: 'ENOSPC'});
-    const w = makeFakeFs({real: fs, overrides: {lstatSync: () => ({isDirectory: () => true, isSymbolicLink: () => false}), writeFileSync: () => {}, mkdirSync: () => {}, rmSync: () => {}, cpSync: () => { throw err; }}});
-    const e = captureError(() => reconcileDirectoryContents('/src', '/dest', w));
+    const w = makeFakeFs({real: fs, overrides: {cpSync: () => { throw err; }}});
+    const e = captureError(() => reconcileDirectoryContents(source, destination, w));
     assert.equal(e, err);
   }
 });

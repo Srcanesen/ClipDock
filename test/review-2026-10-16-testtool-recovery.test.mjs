@@ -25,7 +25,7 @@ function fixture(t) {
 test('retry restores original after recovery itself is interrupted, and remains repeatable', t => {
   const fx = fixture(t);
   for (let attempt = 0; attempt < 2; attempt++) {
-    const crashed = fx.run(`recoverInterruptedTransaction(destination, {...fs, writeFileSync(file, data, options) { fs.writeFileSync(file, data, options); if (file.includes('.recovery')) process.exit(74); }});`);
+    const crashed = fx.run(`recoverInterruptedTransaction(destination, {...fs, linkSync(from, to) { fs.linkSync(from, to); fs.rmSync(from); if (to.includes('.recovery')) process.exit(74); }});`);
     assert.equal(crashed.status, 74, crashed.stderr);
     assert.equal(fs.existsSync(fx.destination), false);
   }
@@ -49,12 +49,12 @@ test('recovery refuses a live recovery owner and preserves the journal and backu
 
 test('a competing recovery cannot pass an active successor claim', t => {
   const fx = fixture(t);
-  const crashed = fx.run(`recoverInterruptedTransaction(destination, {...fs, writeFileSync(file, data, options) { fs.writeFileSync(file, data, options); if (file.includes('.recovery')) process.exit(74); }});`);
+  const crashed = fx.run(`recoverInterruptedTransaction(destination, {...fs, linkSync(from, to) { fs.linkSync(from, to); fs.rmSync(from); if (to.includes('.recovery')) process.exit(74); }});`);
   assert.equal(crashed.status, 74, crashed.stderr);
   let competed = false;
-  recoverInterruptedTransaction(fx.destination, { ...fs, writeFileSync(file, data, options) {
-    fs.writeFileSync(file, data, options);
-    if (file.includes('.recovery')) {
+  recoverInterruptedTransaction(fx.destination, { ...fs, linkSync(from, to) {
+    fs.linkSync(from, to);
+    if (to.includes('.recovery')) {
       competed = true;
       assert.throws(() => recoverInterruptedTransaction(fx.destination), { code: 'INSTALL_BUSY' });
       assert.equal(fs.existsSync(fx.destination), false);

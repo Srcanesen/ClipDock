@@ -12,7 +12,7 @@ os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
 
 FALLBACK_METHODS = (
     'GetProjectManager', 'GetMediaStorage', 'OpenPage', 'GetVersionString',
-    'GetCurrentProject', 'GetName', 'GetCurrentTimeline', 'GetMediaPool',
+    'GetCurrentProject', 'GetName', 'GetUniqueId', 'GetCurrentTimeline', 'GetMediaPool',
     'GetSetting', 'GetStartFrame', 'GetStartTimecode', 'GetCurrentTimecode',
     'GetEndFrame', 'AddMarker', 'GetCurrentFolder', 'GetRootFolder',
     'AddSubFolder', 'SetCurrentFolder', 'AppendToTimeline', 'GetSubFolderList',

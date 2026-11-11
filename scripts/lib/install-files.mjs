@@ -1,8 +1,8 @@
-import {cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, statSync, lstatSync} from 'node:fs';
+import {cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, statSync, lstatSync, openSync, fsyncSync, closeSync, linkSync} from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 
-const realFs = {cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, statSync, lstatSync};
+const realFs = {cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, statSync, lstatSync, openSync, fsyncSync, closeSync, linkSync};
 
 const ABSENT_PATH_CODES = new Set(['ENOENT', 'ENOTDIR']);
 
@@ -118,7 +118,22 @@ function acquireTransaction(destination, fs) {
   const parent = path.dirname(destination);
   const lock = path.join(parent, `.__clipdock_lock_${path.basename(destination)}`);
   const recovery = `${lock}.recovery`;
-  const write = fs.writeFileSync ?? writeFileSync;
+  const publish = (claim, record) => {
+    const temporary = `${claim}.${randomUUID()}.tmp`;
+    let fd;
+    try {
+      fd = (fs.openSync ?? openSync)(temporary, 'wx');
+      (fs.writeFileSync ?? writeFileSync)(fd, JSON.stringify(record));
+      (fs.fsyncSync ?? fsyncSync)(fd);
+      (fs.closeSync ?? closeSync)(fd);
+      fd = undefined;
+      // The exclusive hard link exposes only a complete, flushed owner record.
+      (fs.linkSync ?? linkSync)(temporary, claim);
+    } finally {
+      if (fd !== undefined) (fs.closeSync ?? closeSync)(fd);
+      fs.rmSync(temporary, {force: true});
+    }
+  };
   const owner = { pid: process.pid, destination: path.resolve(destination), workDir: path.join(parent, `.__clipdock_work_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}`) };
   const busy = () => Object.assign(new Error(`Installation transaction is active or needs recovery: ${lock}`), {code: 'INSTALL_BUSY'});
   const recover = () => {
@@ -129,11 +144,18 @@ function acquireTransaction(destination, fs) {
     const recoveryOwner = {pid: process.pid, token: randomUUID()};
     let claim = recovery;
     for (;;) {
-      try { write(claim, JSON.stringify(recoveryOwner), {flag: 'wx'}); break; } catch (error) {
+      try { publish(claim, recoveryOwner); break; } catch (error) {
         if (error.code !== 'EEXIST') throw error;
       }
       let previous;
-      try { previous = JSON.parse(fs.readFileSync(claim, 'utf8')); } catch { throw busy(); }
+      try { previous = JSON.parse(fs.readFileSync(claim, 'utf8')); } catch (error) {
+        if (!(error instanceof SyntaxError)) throw busy();
+        // Legacy torn claims have no live owner. All retries follow the same
+        // immutable successor, so they cannot remove each other's claims.
+        claims.push(claim);
+        claim = `${claim}.incomplete`;
+        continue;
+      }
       // The old installer recorded just a PID. Retain its live-owner refusal.
       if (Number.isInteger(previous)) previous = {pid: previous, token: `legacy-${previous}`};
       if (!Number.isInteger(previous?.pid) || previous.pid <= 0 || !/^(?:[a-f0-9-]{36}|legacy-\d+)$/.test(previous.token)) throw busy();
@@ -145,7 +167,15 @@ function acquireTransaction(destination, fs) {
     let recovered = false;
     try {
       let prior;
-      try { prior = JSON.parse(fs.readFileSync(lock, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return; throw busy(); }
+      try { prior = JSON.parse(fs.readFileSync(lock, 'utf8')); } catch (error) {
+        if (error.code === 'ENOENT') { recovered = true; return; }
+        if (!(error instanceof SyntaxError)) throw error;
+        // No work directory can be trusted without a complete journal. Only
+        // discard the torn journal, while holding the serialized recovery claim.
+        fs.rmSync(lock);
+        recovered = true;
+        return;
+      }
       if (typeof prior.workDir !== 'string' || !Number.isInteger(prior.pid) || prior.pid <= 0 || prior.destination !== path.resolve(destination) || path.dirname(prior.workDir) !== parent || !path.basename(prior.workDir).startsWith('.__clipdock_work_')) throw busy();
       try { process.kill(prior.pid, 0); throw busy(); } catch (error) { if (error.code !== 'ESRCH') throw error; }
       const backup = path.join(prior.workDir, 'backup');
@@ -174,10 +204,10 @@ function acquireTransaction(destination, fs) {
       fs.rmSync(claim, {force: true});
     }
   };
-  try { write(lock, JSON.stringify(owner), {flag: 'wx'}); } catch (error) {
+  try { publish(lock, owner); } catch (error) {
     if (error.code !== 'EEXIST') throw error;
     recover();
-    try { write(lock, JSON.stringify(owner), {flag: 'wx'}); } catch (next) { if (next.code === 'EEXIST') throw busy(); throw next; }
+    try { publish(lock, owner); } catch (next) { if (next.code === 'EEXIST') throw busy(); throw next; }
   }
   return {workDir: owner.workDir, release() {
     let current;

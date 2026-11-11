@@ -33,6 +33,7 @@ export function validatePluginArtifact(dist, withNative = false) {
   }
   if (manifest.match(/<FilePath>([^<]+)<\/FilePath>/)?.[1] !== MANIFEST_FILE_PATH) throw new Error('Manifest FilePath differs from runtime');
   const pkg = JSON.parse(readFileSync(path.join(dist, 'package.json'), 'utf8'));
+  if (manifest.match(/<Version>([^<]+)<\/Version>/)?.[1] !== pkg.version) throw new Error('Manifest Version differs from artifact package.json version');
   if (pkg.main !== MANIFEST_FILE_PATH) throw new Error('Artifact package main differs from runtime');
   const html = readFileSync(path.join(dist, 'index.html'), 'utf8');
   const references = [...html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)=["']([^"']+)["']/g)].map((match) => match[1].replace(/^\.\//, ''));

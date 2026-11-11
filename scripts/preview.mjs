@@ -10,6 +10,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transpilePreviewAdapter } from './lib/preview-adapter.mjs';
+import { requireCompletedBuild } from './lib/completed-build.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -28,8 +29,10 @@ const MIME = {
   '.svg': 'image/svg+xml',
 };
 
-if (!existsSync(path.join(dist, 'index.html'))) {
-  console.error(`No build found at ${dist}. Run "npm run build" first.`);
+try {
+  requireCompletedBuild(root);
+} catch (error) {
+  console.error(error.message);
   process.exit(1);
 }
 
