@@ -44,7 +44,7 @@ test('package zip holds the exact built plugin and install notes, without the Re
   assert.ok(built.includes('main.js') && built.includes('manifest.xml'));
   for (const file of built) assert.equal(hashFile(path.join(top, 'com.clipdock.app', file)), hashFile(path.join(dist, file)), file);
   assert.equal(packaged.files.includes('WorkflowIntegration.node'), false);
-  assert.match(fs.readFileSync(path.join(top, 'INSTALL.txt'), 'utf8'), /sudo cp -RX com\.clipdock\.app/);
+  assert.match(fs.readFileSync(path.join(top, 'INSTALL.txt'), 'utf8'), /sudo cp -R com\.clipdock\.app/);
 });
 
 test('package refuses a build that is older than the sources and writes no zip', (t) => {

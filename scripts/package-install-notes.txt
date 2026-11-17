@@ -21,12 +21,15 @@ macOS
      cd ~/Downloads/ClipDock-*
 
 3. Paste these lines. macOS asks for your password because Resolve's plugin
-   folder is system-wide. The third line removes an older ClipDock install.
+   folder is system-wide. The third line removes an older ClipDock install;
+   the fifth clears the "downloaded from the internet" mark macOS puts on
+   unzipped files.
 
      P="/Library/Application Support/Blackmagic Design/DaVinci Resolve/Workflow Integration Plugins"
      sudo mkdir -p "$P"
      sudo rm -rf "$P/com.clipdock.app"
-     sudo cp -RX com.clipdock.app "$P/"
+     sudo cp -R com.clipdock.app "$P/"
+     sudo xattr -dr com.apple.quarantine "$P/com.clipdock.app"
      sudo cp "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Workflow Integrations/Examples/SamplePlugin/WorkflowIntegration.node" "$P/com.clipdock.app/"
 
 4. Start Resolve Studio and open Workspace > Workflow Integrations > ClipDock.
