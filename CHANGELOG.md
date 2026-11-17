@@ -4,6 +4,27 @@ All notable changes to ClipDock are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and ClipDock follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.4] - 2026-11-17
+
+### Added
+
+- **Warning before deleting a file that was sent to DaVinci Resolve.** ClipDock now remembers, across restarts, that a file was imported, added to a timeline or dragged into Resolve. The delete confirmation in History and Downloads says that deleting the file takes the clip offline in Resolve. Deleting stays possible.
+- **Release zip.** Releases now include `ClipDock-<version>.zip` with the built plugin and install steps, so installing no longer needs Node.js or a build.
+
+### Changed
+
+- **Delete old downloads keeps files that were sent to Resolve.** They are not counted or removed by the cleanup in Settings; delete them one by one from History instead.
+- **A file dragged from History into Resolve is protected for the session**, like a file imported with ClipDock's own buttons.
+- **Retrying the conversion of a file that was sent to Resolve keeps the original.** The converted file is added as a separate History entry.
+- **A running transfer or conversion blocks deletion only of the files it uses.** Other History entries can be deleted meanwhile.
+- **ClipDock deletes and converts files only in folders it owns:** the current download folder, the default folder, and folders it marked as its own. History entries from any other folder stay listed and can still be imported, but ClipDock leaves their files alone.
+
+### Fixed
+
+- **Files are no longer left without a History entry after a crash.** If ClipDock stops between finishing a download or conversion and saving it to History, the next start adds the entry and tidies up an interrupted retry. A crash in the short moment before ClipDock has noted the new file is not covered; **Delete old downloads** still removes such a file.
+- **Row menus open on screen.** The three-dot menu of a History row opens downward when there is no room above.
+- **A transfer or drag no longer fails because ClipDock could not save its note** that the file was sent to Resolve.
+
 ## [0.3.3] - 2026-11-11
 
 ### Added
