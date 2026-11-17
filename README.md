@@ -60,6 +60,16 @@ ClipDock looks on `PATH` and in common install locations. See
 
 ## Install
 
+### From the release zip
+
+Download `ClipDock-<version>.zip` from the
+[latest release](https://github.com/Srcanesen/ClipDock/releases/latest), unzip it and
+follow the `INSTALL.txt` inside. The zip holds the built plugin, so you need neither
+Node.js nor a build step: you copy the plugin folder and Resolve's own
+`WorkflowIntegration.node` into Resolve's plugin folder, then restart Resolve.
+
+### From source
+
 1. Clone the repository:
 
    ```sh
@@ -173,6 +183,7 @@ npm run check                  # Build and verify the plugin.
 npm run preview                # Serve the panel with sample data at /?preview=ready.
 npm run test:resolve:headless  # Check the Resolve scripting API without a GUI.
 npm run test:resolve:e2e       # Exercise transfer, status and media preparation in Resolve.
+npm run package                # Build and write the release zip to release/.
 ```
 
 For preview, open the printed local URL with `/?preview=ready`; bare `/` has no host API.

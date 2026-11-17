@@ -1,0 +1,53 @@
+ClipDock - install from the release zip
+=======================================
+
+This folder holds the built plugin (com.clipdock.app). You do not need Node.js
+or a build step. ClipDock needs DaVinci Resolve Studio; Workflow Integrations
+do not run in the free edition. The download tools ClipDock uses (yt-dlp,
+ffmpeg, gallery-dl, Deno) are listed in the README:
+https://github.com/Srcanesen/ClipDock#requirements
+
+One file is not in this zip: WorkflowIntegration.node. It belongs to Resolve
+and ships with Resolve Studio, so the steps below copy it from your own
+Resolve installation.
+
+
+macOS
+-----
+
+1. Quit DaVinci Resolve.
+2. Open Terminal and go to this folder (the one that contains this file), e.g.
+
+     cd ~/Downloads/ClipDock-*
+
+3. Paste these lines. macOS asks for your password because Resolve's plugin
+   folder is system-wide. The third line removes an older ClipDock install.
+
+     P="/Library/Application Support/Blackmagic Design/DaVinci Resolve/Workflow Integration Plugins"
+     sudo mkdir -p "$P"
+     sudo rm -rf "$P/com.clipdock.app"
+     sudo cp -RX com.clipdock.app "$P/"
+     sudo cp "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Workflow Integrations/Examples/SamplePlugin/WorkflowIntegration.node" "$P/com.clipdock.app/"
+
+4. Start Resolve Studio and open Workspace > Workflow Integrations > ClipDock.
+
+
+Windows (not tested yet)
+------------------------
+
+ClipDock's Windows support is built in but has not been tested. If a path
+below does not exist on your machine, find WorkflowIntegration.node under
+Resolve's Help > Documentation > Developer folder, in
+Workflow Integrations\Examples\SamplePlugin.
+
+1. Quit DaVinci Resolve.
+2. Open PowerShell as Administrator and go to this folder.
+3. Paste these lines:
+
+     $p = "$env:ProgramData\Blackmagic Design\DaVinci Resolve\Support\Workflow Integration Plugins"
+     New-Item -ItemType Directory -Force $p | Out-Null
+     Remove-Item -Recurse -Force "$p\com.clipdock.app" -ErrorAction SilentlyContinue
+     Copy-Item -Recurse com.clipdock.app $p
+     Copy-Item "$env:ProgramData\Blackmagic Design\DaVinci Resolve\Support\Developer\Workflow Integrations\Examples\SamplePlugin\WorkflowIntegration.node" "$p\com.clipdock.app"
+
+4. Start Resolve Studio and open Workspace > Workflow Integrations > ClipDock.
