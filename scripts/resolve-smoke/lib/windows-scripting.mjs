@@ -6,10 +6,9 @@ const POLL_MS = 250;
 
 export function hasWindowsScriptingConnection(listing, pid) {
   return listing.split(/\r?\n/).some(row => {
-    const columns = row.trim().split(/\s+/);
-    const [protocol, local, remote] = columns;
+    const [protocol, local, remote, state, owner] = row.trim().split(/\s+/);
     return protocol === 'TCP' && local?.startsWith('127.0.0.1:') &&
-      remote === LOCAL_SCRIPT_SERVER && columns.at(-1) === String(pid);
+      remote === LOCAL_SCRIPT_SERVER && state === 'ESTABLISHED' && owner === String(pid);
   });
 }
 
