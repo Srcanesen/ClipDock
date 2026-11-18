@@ -112,6 +112,7 @@ export function parseArgs(argv, { platform = process.platform, env = process.env
       }
       out[PROP[name]] = Math.floor(n);
     } else if (STRING_OPTIONS.has(name)) {
+      if (value.startsWith('--')) throw new ArgError(`missing value for --${name}`);
       out[PROP[name]] = value;
     } else {
       throw new ArgError(`unknown option --${name}`);

@@ -59,6 +59,8 @@ test('parseArgs rejects unknown options, positional arguments, bad numbers, and 
   assert.throws(() => parseArgs(['--timeout-ms', '-5']), ArgError);
   assert.throws(() => parseArgs(['--timeout-ms=0']), ArgError);
   assert.throws(() => parseArgs(['--quit-grace-ms']), ArgError);
+  assert.throws(() => parseArgs(['--python', '--windows-interactive']), { name: 'ArgError', message: 'missing value for --python' });
+  assert.throws(() => parseArgs(['--bundle=--pretty']), { name: 'ArgError', message: 'missing value for --bundle' });
 });
 
 test('parseArgs --help short-circuits and -- ends option parsing', () => {
