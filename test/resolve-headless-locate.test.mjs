@@ -3,7 +3,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { resolveBinary, scriptEnv, scriptLibForBinary, validatePaths } from '../scripts/resolve-smoke/lib/locate.mjs';
+import { pythonInvocation, resolveBinary, scriptEnv, scriptLibForBinary, validatePaths } from '../scripts/resolve-smoke/lib/locate.mjs';
+
+test('Windows Python aliases use the launcher and explicit interpreter paths are preserved', () => {
+  const args = ['probe.py'];
+  assert.deepEqual(pythonInvocation('PYTHON3.EXE', args, 'win32'), ['py', ['-3', 'probe.py']]);
+  for (const interpreter of ['D:\\Python Tools\\python3.exe', './python3', 'D:python3.exe']) {
+    assert.deepEqual(pythonInvocation(interpreter, args, 'win32'), [interpreter, args]);
+  }
+});
 
 function fakeBundle(root) {
   const bundle = path.join(root, 'DaVinci Resolve.app');

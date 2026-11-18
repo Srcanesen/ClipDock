@@ -67,7 +67,7 @@ export function pythonInvocation(python, args, platform = process.platform) {
   if (platform === 'win32') {
     const name = path.win32.basename(python).toLowerCase();
     // Old callers pass the POSIX default. Avoid the Windows Store alias.
-    if (name === 'python3' || name === 'python3.exe') return ['py', ['-3', ...args]];
+    if (python.toLowerCase() === 'python3' || python.toLowerCase() === 'python3.exe') return ['py', ['-3', ...args]];
     if (name === 'py' || name === 'py.exe') return [python, ['-3', ...args]];
   }
   return [python, args];
