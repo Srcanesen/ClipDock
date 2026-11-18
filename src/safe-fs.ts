@@ -155,8 +155,11 @@ export function removePrivateDir(priv: AnchoredDir): void {
 export function removeEmptyDir(dir: AnchoredDir): void { const path = dir.verify(); rmdirSync(path); }
 export function openExclusive(dir: AnchoredDir, name: string, mode = 0o600): {fd: number; file: OwnedFile} {
   const path = dir.child(name);
+  dir.verify();
+  // Windows can follow a dangling symlink even with O_EXCL.
+  if (lstatSync(path, {throwIfNoEntry: false})?.isSymbolicLink()) throw new SafeFsError('exists');
   let fd: number;
-  try { dir.verify(); fd = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, mode); }
+  try { fd = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), mode); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new SafeFsError('exists'); throw error; }
   try {
     const file = captureFile(dir, path);

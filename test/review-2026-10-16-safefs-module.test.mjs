@@ -105,13 +105,19 @@ test('private directories are exclusive, private and cleaned only with matching 
   assert.equal(fs.existsSync(emptyPath), false);
 });
 
-test('exclusive creation preserves existing regular files and dangling symlinks', t => {
-  const {base, dir} = fixture(t), file = write(dir, 'clip', 'precious');
+test('exclusive creation preserves existing files and symlinks without touching outside targets', t => {
+  const {base, dir: parent} = fixture(t), managed = createDirectory(parent, 'managed').verify();
+  const dir = AnchoredDir.capture(managed, ManagedRoot.capture(managed)), file = write(dir, 'clip', 'precious');
   if (process.platform !== 'win32') assert.equal(fs.statSync(file.path).mode & 0o777, 0o600);
   assert.throws(() => openExclusive(dir, 'clip'), code('exists'));
-  const outside = path.join(base, 'absent'); fs.symlinkSync(outside, dir.child('dangling'));
+  const outside = path.join(base, 'absent'), dangling = dir.child('dangling');
+  fs.symlinkSync(outside, dangling, 'file');
   assert.throws(() => openExclusive(dir, 'dangling'), code('exists'));
-  assert.equal(fs.existsSync(outside), false);
+  assert.equal(fs.existsSync(outside), false, 'exclusive create must leave the outside target absent');
+  assert.equal(fs.lstatSync(dangling).isSymbolicLink(), true);
+  fs.writeFileSync(outside, 'outside contents');
+  assert.throws(() => openExclusive(dir, 'dangling'), code('exists'));
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'outside contents');
   assert.equal(fs.readFileSync(file.path, 'utf8'), 'precious');
 });
 
