@@ -12,6 +12,7 @@ import { checkPython, runProbe } from './lib/probe.mjs';
 import { EXIT, renderReport, sanitizeError, sanitizeMessage } from './lib/report.mjs';
 import { createPythonBridge } from './lib/bridge.mjs';
 import { runInWindowsSession } from './lib/windows-session.mjs';
+import { waitForWindowsScriptingServer } from './lib/windows-scripting.mjs';
 import { requireCompletedBuild } from '../lib/completed-build.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -258,10 +259,11 @@ export async function waitForProjectManager(bridge, timeoutMs) {
 
 /** Injectable orchestration seam: tests never spawn a Resolve binary. */
 export async function runE2e(cfg, injected = {}) {
-  const deps = { assertNoResolveRunning, collectProcesses, collectResidue, spawnResolve, shutdown, runProbe, createPythonBridge, validatePaths, checkPython, loadClipDock, generateFixtures, platform: process.platform, ...injected };
+  const deps = { assertNoResolveRunning, collectProcesses, collectResidue, spawnResolve, shutdown, runProbe, createPythonBridge, validatePaths, checkPython, loadClipDock, generateFixtures, waitForWindowsScriptingServer, platform: process.platform, ...injected };
   const startedAt = Date.now();
   const report = { harness: 'clipdock-resolve-e2e', ok: false, platform: deps.platform, bundle: { binary: resolveBinary(cfg.bundle, deps.platform), scriptApi: cfg.scriptApi, python: cfg.python }, refusal: { resolveRunningBefore: null, fuscriptRunningBefore: null, resolvePids: null, fuscriptPids: null }, projectName: null, checks: null, phases: {}, residue: null, errors: [] };
   let exitCode = EXIT.OK;
+  let scriptingReady = deps.platform !== 'win32';
   let fixtureRoot, child, bridge, pm, project, created = false, creationAttempted = false, creationResponded = false, projectClosed = false;
   const childErr = new BoundedBuffer(4096);
   const error = (code, err) => report.errors.push(sanitizeError({ code, message: err?.message ?? String(err) }));
@@ -294,8 +296,10 @@ export async function runE2e(cfg, injected = {}) {
     if (!launch.ok) throw launch.error;
     env.RESOLVE_SMOKE_CHILD_PID = String(child.pid);
     report.phases.spawn = { ms: Date.now() - startedAt };
+    const connectTimeoutMs = scriptingReady ? cfg.timeoutMs : await deps.waitForWindowsScriptingServer(child, cfg.timeoutMs);
+    scriptingReady = true;
     bridge = deps.createPythonBridge({ python: cfg.python, env, script: path.join(DIR, 'bridge.py'), timeoutMs: Math.min(30000, cfg.timeoutMs) });
-    const connected = await waitForProjectManager(bridge, cfg.timeoutMs);
+    const connected = await waitForProjectManager(bridge, connectTimeoutMs);
     pm = connected.pm;
     report.phases.connect = { ms: Date.now() - startedAt - report.phases.spawn.ms };
     const projectName = `${PREFIX}${Date.now()}-${process.pid}`;
@@ -355,7 +359,7 @@ export async function runE2e(cfg, injected = {}) {
     if (child) {
       await cleanup('resolve-shutdown-failed', async () => {
         // Reuse the smoke probe's ownership-gated Quit; never signal another process.
-        if ((await child.launch).ok) await deps.runProbe({ python: cfg.python, probeScript: path.join(DIR, 'probe.py'), env: { ...scriptEnv(report.bundle.binary, cfg.scriptApi, process.env, deps.platform), RESOLVE_SMOKE_CHILD_PID: String(child.pid) }, timeoutMs: Math.min(10000, cfg.timeoutMs), mode: 'quit-only' });
+        if (scriptingReady && (await child.launch).ok) await deps.runProbe({ python: cfg.python, probeScript: path.join(DIR, 'probe.py'), env: { ...scriptEnv(report.bundle.binary, cfg.scriptApi, process.env, deps.platform), RESOLVE_SMOKE_CHILD_PID: String(child.pid) }, timeoutMs: Math.min(10000, cfg.timeoutMs), mode: 'quit-only' });
       });
       await cleanup('resolve-cleanup-failed', async () => {
         report.phases.cleanup = await deps.shutdown(child, { graceMs: cfg.quitGraceMs, termMs: cfg.termWaitMs, killMs: cfg.killWaitMs });

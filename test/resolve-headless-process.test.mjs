@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { test } from 'node:test';
+import { hasWindowsScriptingConnection, waitForWindowsScriptingServer } from '../scripts/resolve-smoke/lib/windows-scripting.mjs';
 import {
   BoundedBuffer,
   assertNoResolveRunning,
@@ -14,6 +15,27 @@ import {
 } from '../scripts/resolve-smoke/lib/spawn.mjs';
 
 const NODE = process.execPath;
+
+test('Windows scripting readiness requires a loopback connection owned by the Resolve child', async () => {
+  const rows = [
+    'TCP  0.0.0.0:1144       0.0.0.0:0       LISTENING    40',
+    'TCP  127.0.0.1:29125   127.0.0.1:1144  ESTABLISHED  41',
+    'TCP  127.0.0.1:29126   127.0.0.1:1144  SYN_SENT     42',
+    'TCP  192.0.2.1:29127   192.0.2.2:1144  ESTABLISHED  42',
+  ].join('\r\n');
+  const ready = rows + '\r\nTCP  127.0.0.1:29126  127.0.0.1:1144  ESTABLISHED  42';
+  assert.equal(hasWindowsScriptingConnection(rows, 42), false);
+  assert.equal(hasWindowsScriptingConnection(ready, 42), true);
+  const child = { pid: 42, exitCode: null, signalCode: null };
+  const observations = [rows, ready];
+  const remaining = await waitForWindowsScriptingServer(child, 5000, {
+    connected: pid => hasWindowsScriptingConnection(observations.shift(), pid),
+  });
+  assert.deepEqual(observations, []);
+  assert.ok(remaining > 0 && remaining < 5000);
+  await assert.rejects(waitForWindowsScriptingServer(child, 5, { connected: () => false }),
+    /did not connect to its Windows scripting server within 5 ms/);
+});
 
 function childProcess(code) {
   return spawn(NODE, ['-e', code], { stdio: ['ignore', 'ignore', 'ignore'] });

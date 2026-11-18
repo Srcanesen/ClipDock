@@ -61,6 +61,9 @@ the WI plugin (no menu, undocumented behavior).
 - Waits **bounded** for `scriptapp` and ProjectManager readiness
   (`--timeout-ms`, default 120 s); the probe polls `GetProjectListInCurrentFolder()`
   as readiness evidence, not just `scriptapp`.
+  On Windows, the runners first wait for the launched Resolve PID's connection
+  to its local scripting server on TCP port 1144. This wait shares the readiness
+  deadline and keeps the Python client out of the server's startup handshake.
 - **Read-only checks only.** The probe never calls any mutating API; the
   harness never creates, saves, closes, renames, or deletes projects,
   timelines, bins, or clips. Mutating APIs needed by `src/transfer.ts`

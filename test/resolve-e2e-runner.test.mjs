@@ -68,6 +68,7 @@ async function runInjected(t, markers = '1', extra = {}, overrides = {}) {
       return { fixture, oddFixture };
     },
     spawnResolve: () => ({ pid: 123, launch: Promise.resolve({ ok: true }), stdout: new EventEmitter(), stderr: new EventEmitter() }),
+    waitForWindowsScriptingServer: async (_, timeoutMs) => timeoutMs,
     createPythonBridge: options => {
       const bridge = createPythonBridge({ ...options, env });
       return { ...bridge, close: async () => { log.push('bridge-close'); await bridge.close(); } };

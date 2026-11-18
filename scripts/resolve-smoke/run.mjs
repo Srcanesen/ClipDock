@@ -7,6 +7,7 @@ import { BoundedBuffer, activeProcessMessage, assertNoResolveRunning, collectRes
 import { checkPython, runProbe } from './lib/probe.mjs';
 import { EXIT, buildReport, classifyExit, renderReport, sanitizeMessage } from './lib/report.mjs';
 import { runInWindowsSession } from './lib/windows-session.mjs';
+import { waitForWindowsScriptingServer } from './lib/windows-scripting.mjs';
 
 const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RESOLVE_CHILD_STDOUT_LIMIT = 64 * 1024;
@@ -135,10 +136,13 @@ async function main() {
 
   // Bounded probe: scriptapp + ProjectManager readiness, read-only checks, Quit.
   let probe;
+  let scriptingReady = process.platform !== 'win32';
   try {
-    probe = await runProbe({ python: cfg.python, probeScript, env, timeoutMs: cfg.timeoutMs, mode: 'probe' });
+    const timeoutMs = scriptingReady ? cfg.timeoutMs : await waitForWindowsScriptingServer(child, cfg.timeoutMs);
+    scriptingReady = true;
+    probe = await runProbe({ python: cfg.python, probeScript, env, timeoutMs, mode: 'probe' });
   } catch (err) {
-    probe = { ok: false, error: { code: 'probe-runner-failed', message: sanitizeMessage(err?.message ?? String(err)) } };
+    probe = { ok: false, error: { code: scriptingReady ? 'probe-runner-failed' : 'scripting-startup-failed', message: sanitizeMessage(err?.message ?? String(err)) } };
   }
   phases.probe = {
     ok: probe.ok,
@@ -151,7 +155,7 @@ async function main() {
   // Best-effort Quit request when the main probe never reached the app (and
   // did not already report an unproven-ownership skip: the fallback would make
   // the same ownership decision).
-  if (!probe.ok && probe.quitRequested !== true && probe.quitError == null) {
+  if (scriptingReady && !probe.ok && probe.quitRequested !== true && probe.quitError == null) {
     try {
       await runProbe({ python: cfg.python, probeScript, env, timeoutMs: Math.min(QUIT_ONLY_FALLBACK_MS, cfg.timeoutMs), mode: 'quit-only' });
     } catch {
