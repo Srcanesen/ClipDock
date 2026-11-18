@@ -18,6 +18,7 @@ for (const separateStores of [false, true]) {
     };
     const first = new PexelsCredentialStore(file, storage);
     const second = separateStores ? new PexelsCredentialStore(file, storage) : first;
+    assert.equal(await first.save('C'.repeat(20)), true);
     const originalWrite = fs.writeFile;
     let writes = 0, release;
     const written = new Promise(resolve => { release = resolve; });
@@ -28,11 +29,26 @@ for (const separateStores of [false, true]) {
       if (++writes === 2) release();
       await written;
     });
+    if (process.platform === 'win32') {
+      const originalRename = fs.rename;
+      let renaming = false;
+      t.mock.method(fs, 'rename', async (...args) => {
+        assert.equal(renaming, false, 'Windows credential renames must not overlap');
+        renaming = true;
+        try { await originalRename(...args); } finally { renaming = false; }
+      });
+    }
     const keys = ['A'.repeat(20), 'B'.repeat(20)];
-    const outcomes = await Promise.allSettled([first.save(keys[0]), second.save(keys[1])]);
-    assert.deepEqual(outcomes.map(result => result.status), ['fulfilled', 'fulfilled'], 'one save must not remove the other save\'s temporary file');
-    assert.deepEqual(outcomes.map(result => result.value), [true, true]);
-    assert.equal(keys.includes((await first.load()).key), true, 'published credential must be one complete input key');
+    const completed = [];
+    const outcomes = await Promise.allSettled([first, second].map(async (store, index) => {
+      assert.equal(await store.save(keys[index]), true);
+      completed.push(keys[index]);
+    }));
+    for (const result of outcomes) if (result.status === 'rejected') throw result.reason;
+    assert.notEqual(fs.writeFile.mock.calls[0].arguments[0], fs.writeFile.mock.calls[1].arguments[0]);
+    const {key} = await first.load();
+    if (process.platform === 'win32') assert.equal(key, completed.at(-1));
+    else assert.equal(keys.includes(key), true, 'published credential must be one complete input key');
     assert.deepEqual(readdirSync(root), ['credential.json'], 'temporary ciphertext files must be removed');
   });
 }

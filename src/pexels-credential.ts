@@ -34,6 +34,8 @@ export const PIXABAY_CREDENTIAL: CredentialSource = { service: PIXABAY_KEYCHAIN_
 export const isValidPexelsKey = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(value);
 
+let windowsCredentialPublication: Promise<void> = Promise.resolve();
+
 export class PexelsCredentialStore implements PexelsCredentialPersistence {
   constructor(private readonly file: string, private readonly safeStorage: SafeStorage) {}
 
@@ -58,13 +60,21 @@ export class PexelsCredentialStore implements PexelsCredentialPersistence {
     if (!this.safeStorage.isEncryptionAvailable()) return false;
     const data = JSON.stringify({ version: 1, ciphertext: this.safeStorage.encryptString(key).toString('base64') });
     const temp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
+    let finishPublication: (() => void) | undefined;
     try {
       await mkdir(dirname(this.file), { recursive: true, mode: 0o700 });
       await writeFile(temp, data, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      // Windows can reject simultaneous replacements of the same file, even from distinct stores.
+      if (process.platform === 'win32') {
+        const previousPublication = windowsCredentialPublication;
+        windowsCredentialPublication = new Promise<void>(resolve => { finishPublication = resolve; });
+        await previousPublication;
+      }
       await rename(temp, this.file);
       return true;
     } finally {
       await rm(temp, { force: true }).catch(() => undefined);
+      finishPublication?.();
     }
   }
 
