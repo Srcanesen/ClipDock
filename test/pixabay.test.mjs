@@ -151,7 +151,7 @@ test('cancelling a Pixabay download removes the partial file', async t => {
   assert.deepEqual(readdirSync(directory), []);
 });
 
-test('the Pixabay Keychain store uses its own service name and lock', async t => {
+test('the Pixabay Keychain store uses its own service name and lock', { skip: process.platform === 'win32' && 'macOS Keychain transaction' }, async t => {
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-pixabay-keychain-'));
   t.after(() => rmSync(root, {recursive: true, force: true}));
   const calls = [];

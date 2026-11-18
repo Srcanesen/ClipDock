@@ -31,7 +31,7 @@ test('provider events preserve payloads and contain destroyed/stale renderer fai
 
 test('Pinterest preload forwards query/page/options through main and returns search items without path/raw', async t => {
   const f = await mainFixture(t);
-  const worker = f.workers.find(worker => worker.initialRoot.endsWith('/pinterest-search'));
+  const worker = f.workers.find(worker => path.basename(worker.initialRoot) === 'pinterest-search');
   const calls = [], invocations = [];
   const source = [
     [2, {id: '123', title: 'Cat', count: 1, pinner: {username: 'Creator'}, path: '/private/pin', raw: {secret: true}}],

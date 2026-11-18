@@ -120,8 +120,8 @@ test('file store saves and loads private ciphertext atomically', async () => {
     assert.equal(typeof blob.ciphertext, 'string');
     assert.equal(disk.includes(TEST_KEY), false);
     assert.notEqual(blob.ciphertext, Buffer.from(TEST_KEY, 'utf8').toString('base64'));
-    assert.equal(statSync(file).mode & 0o777, 0o600);
-    assert.equal(statSync(path.dirname(file)).mode & 0o777, 0o700);
+    if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(statSync(path.dirname(file)).mode & 0o777, 0o700);
     assertNoFileTemp(file);
     assert.deepEqual(await store.load(), {key: TEST_KEY, message: 'Connected · saved securely'});
   });
@@ -176,7 +176,7 @@ test('file store preserves the prior file when atomic rename fails and cleans it
   });
 });
 
-test('Keychain save/load uses fake child streams, fixed commands, and no argv key', async () => {
+test('Keychain save/load uses fake child streams, fixed commands, and no argv key', { skip: process.platform === 'win32' && 'macOS Keychain transaction' }, async () => {
   await withTempRoot('clipdock-pexels-keychain-roundtrip-', async root => {
     const lockPath = path.join(root, 'keychain.lock');
     const saveCalls = [];
@@ -206,7 +206,7 @@ test('Keychain save/load uses fake child streams, fixed commands, and no argv ke
   });
 });
 
-test('Keychain timeout kills the child and returns a sanitized load result', async () => {
+test('Keychain timeout kills the child and returns a sanitized load result', { skip: process.platform === 'win32' && 'macOS Keychain transaction' }, async () => {
   await withTempRoot('clipdock-pexels-keychain-timeout-', async root => {
     const lockPath = path.join(root, 'keychain.lock');
     const calls = [];
@@ -230,7 +230,7 @@ test('Keychain timeout kills the child and returns a sanitized load result', asy
   });
 });
 
-test('Keychain mismatch with no prior value rolls back by deleting the candidate', async () => {
+test('Keychain mismatch with no prior value rolls back by deleting the candidate', { skip: process.platform === 'win32' && 'macOS Keychain transaction' }, async () => {
   await withTempRoot('clipdock-pexels-keychain-rollback-empty-', async root => {
     const lockPath = path.join(root, 'keychain.lock');
     const calls = [];
@@ -249,7 +249,7 @@ test('Keychain mismatch with no prior value rolls back by deleting the candidate
   });
 });
 
-test('Keychain mismatch with a prior value restores and verifies that prior value', async () => {
+test('Keychain mismatch with a prior value restores and verifies that prior value', { skip: process.platform === 'win32' && 'macOS Keychain transaction' }, async () => {
   await withTempRoot('clipdock-pexels-keychain-rollback-prior-', async root => {
     const lockPath = path.join(root, 'keychain.lock');
     const calls = [];
@@ -270,7 +270,7 @@ test('Keychain mismatch with a prior value restores and verifies that prior valu
   });
 });
 
-test('Keychain reclaims a stale dead-owner lock and cleans its replacement lock', async () => {
+test('Keychain reclaims a stale dead-owner lock and cleans its replacement lock', { skip: process.platform === 'win32' && 'macOS Keychain transaction' }, async () => {
   await withTempRoot('clipdock-pexels-keychain-stale-', async root => {
     const lockPath = path.join(root, 'keychain.lock');
     const staleWhen = new Date(Date.now() - 120_000);
@@ -290,7 +290,7 @@ test('Keychain reclaims a stale dead-owner lock and cleans its replacement lock'
   });
 });
 
-test('Keychain refuses an active live-owner lock without invoking spawn', async () => {
+test('Keychain refuses an active live-owner lock without invoking spawn', { skip: process.platform === 'win32' && 'macOS Keychain transaction' }, async () => {
   await withTempRoot('clipdock-pexels-keychain-active-', async root => {
     const lockPath = path.join(root, 'keychain.lock');
     const owner = {pid: process.pid, token: 'live-owner-token', createdAt: Date.now()};

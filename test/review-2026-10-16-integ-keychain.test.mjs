@@ -7,7 +7,7 @@ import {mock, test} from 'node:test';
 import {MacKeychainPexelsCredentialStore} from '../dist/pexels-credential.js';
 
 for (const kind of ['temp-itself', 'outside-existing', 'outside-missing', 'shared-parent', 'symlink', 'private-existing', 'private-new']) {
-  test(`keychain lock parent: ${kind}`, async t => {
+  test(`keychain lock parent: ${kind}`, { skip: process.platform === 'win32' && 'macOS Keychain lock directory' }, async t => {
     const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clipdock-integ-keychain-')));
     t.after(() => fs.rmSync(base, {recursive: true, force: true}));
     const temp = path.join(base, 'temp'); fs.mkdirSync(temp, {mode: 0o755});

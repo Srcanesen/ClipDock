@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 import { prepareCustomDownloadFolder, DOWNLOAD_FOLDER_MARKER } from '../dist/settings.js';
 
@@ -57,7 +58,7 @@ test('safety: real verify-installed CLI rejects a shipped symlink and accepts ma
     fs.symlinkSync(outside, path.join(installed, 'renderer.js'));
     const preload = path.join(root, 'platform.mjs');
     fs.writeFileSync(preload, "Object.defineProperty(process, 'platform', { value: 'win32' });");
-    const run = () => spawnSync(process.execPath, ['--import', preload, path.join(root, 'scripts', 'verify-installed-plugin.mjs')], { env: { ...process.env, PROGRAMDATA: programData }, encoding: 'utf8', timeout: 5000 });
+    const run = () => spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, path.join(root, 'scripts', 'verify-installed-plugin.mjs')], { env: { ...process.env, PROGRAMDATA: programData }, encoding: 'utf8', timeout: 5000 });
     const rejected = run();
     assert.equal(rejected.status, 1);
     assert.match(rejected.stderr, /installed artifact contains symbolic link.*renderer\.js/);

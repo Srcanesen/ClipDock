@@ -12,7 +12,7 @@ function fixture(t) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clipdock-boot-lock-')));
   t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
   // Stand-in for the crashed owner's reused PID: a live process that never touched the lock.
-  const unrelated = spawn('/bin/sleep', ['30'], {stdio: 'ignore'});
+  const unrelated = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], {stdio: 'ignore', windowsHide: true});
   t.after(() => unrelated.kill('SIGKILL'));
   return {lock: path.join(dir, 'history.json.lock'), pid: unrelated.pid};
 }

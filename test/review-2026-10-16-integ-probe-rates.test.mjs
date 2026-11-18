@@ -1,3 +1,4 @@
+import {testPython} from './helpers/python.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -79,11 +80,14 @@ for (const [rate, custom, accepted, projectRate = '24'] of [
     const root = fs.mkdtempSync(path.join(tmpdir(), 'clipdock-integ-probe-'));
     t.after(() => fs.rmSync(root, {recursive: true, force: true}));
     const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
-    fs.writeFileSync(path.join(bin, 'pgrep'), '#!/bin/sh\necho 4242\n', {mode: 0o755});
+    const ownershipEnv = process.platform === 'win32'
+      ? { RESOLVE_SMOKE_CHILD_PID: '' }
+      : { PATH: [bin, process.env.PATH].join(path.delimiter), RESOLVE_SMOKE_CHILD_PID: '4242' };
+    if (process.platform !== 'win32') fs.writeFileSync(path.join(bin, 'pgrep'), '#!/bin/sh\necho 4242\n', {mode: 0o755});
     fs.writeFileSync(path.join(root, 'DaVinciResolveScript.py'), module);
     const mutation = path.join(root, 'mutations');
-    const probe = await runProbe({python: 'python3', probeScript: fileURLToPath(new URL('../scripts/resolve-smoke/probe.py', import.meta.url)),
-      env: {...process.env, PATH: `${bin}:${process.env.PATH}`, PYTHONPATH: root, RESOLVE_SMOKE_CHILD_PID: '4242',
+    const probe = await runProbe({python: testPython(), probeScript: fileURLToPath(new URL('../scripts/resolve-smoke/probe.py', import.meta.url)),
+      env: {...process.env, ...ownershipEnv, PYTHONPATH: root,
         RATE: JSON.stringify(rate), CUSTOM: JSON.stringify(custom), PROJECT_RATE: JSON.stringify(projectRate), MUTATE_LOG: mutation}, timeoutMs: 5000, mode: 'probe'});
     assert.equal(probe.exitCode, accepted ? 0 : 5, JSON.stringify(probe));
     assert.equal(probe.checks.transferApi.ok, accepted);

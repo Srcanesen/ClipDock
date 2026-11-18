@@ -135,7 +135,7 @@ for (const provider of providers) {
   test(`${provider}: preparation failure keeps the original in History and removes partial output and subtitles`, async t => {
     const f = fixture(t, provider, 'failure');
     await assert.rejects(f.start(), {message: 'Media preparation failed: fixture failure. The original download was kept in History.'});
-    assert.deepEqual(f.files(), [`${provider}/original.mp4`]);
+    assert.deepEqual(f.files(), [join(provider, 'original.mp4')]);
     assert.deepEqual(f.ledger.protectedPaths(), []);
     const records = f.history.list();
     assert.equal(records.length, 1);
@@ -165,7 +165,7 @@ for (const provider of providers) {
       const result = await f.start(profile);
       const file = profile === 'original' ? f.original : f.prepared;
       const fileName = profile === 'original' ? 'original.mp4' : 'prepared.mp4';
-      const expected = [`${provider}/${fileName}`, ...(provider === 'youtube' ? ['youtube/original.en.srt'] : [])].sort();
+      const expected = [join(provider, fileName), ...(provider === 'youtube' ? [join('youtube', 'original.en.srt')] : [])].sort();
       assert.equal(result.fileName, fileName);
       assert.equal(f.ledger.resolve(result.cardId)?.path, file);
       assert.equal(readFileSync(file, 'utf8'), profile === 'original' ? 'downloaded' : 'prepared');
@@ -225,7 +225,7 @@ for (const provider of providers) {
     assert.equal(result.fileName, 'original.mp4');
     assert.equal(f.ledger.resolve(result.cardId)?.path, f.original);
     assert.equal(readFileSync(f.original, 'utf8'), 'downloaded');
-    assert.deepEqual(f.files(), [`${provider}/original.mp4`, ...(provider === 'youtube' ? ['youtube/original.en.srt'] : [])].sort());
+    assert.deepEqual(f.files(), [join(provider, 'original.mp4'), ...(provider === 'youtube' ? [join('youtube', 'original.en.srt')] : [])].sort());
     assert.equal(f.history.list()[0].profile, 'fast');
   });
 }

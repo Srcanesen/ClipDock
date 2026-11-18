@@ -127,7 +127,7 @@ function child() {
 
 test('subtitle search creates its job exactly once and returns literal cues', async t => {
   const {dir} = fixture(t), mkdir = fs.mkdirSync; let creations = 0;
-  t.mock.method(fs, 'mkdirSync', (name, ...args) => {if (String(name).includes('/subtitles-')) creations++; return mkdir(name, ...args);});
+  t.mock.method(fs, 'mkdirSync', (name, ...args) => {if (path.basename(String(name)).startsWith('subtitles-')) creations++; return mkdir(name, ...args);});
   const worker = new YtdlpWorker('/fake/engine', (_binary, args) => {
     const value = child(); queueMicrotask(() => {
       fs.writeFileSync(args[args.indexOf('-o') + 1].replace('%(ext)s', 'vtt'), 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhello\n'); value.emit('close', 0);

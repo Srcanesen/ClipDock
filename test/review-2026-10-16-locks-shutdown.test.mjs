@@ -13,7 +13,7 @@ async function until(predicate) {
   assert.equal(predicate(), true, 'operation must finish within the shutdown bound');
 }
 
-test('quit kills pending credential restoration, releases its lock, and rejects queued credential work', async t => {
+test('quit kills pending credential restoration, releases its lock, and rejects queued credential work', { skip: process.platform === 'win32' && 'macOS Keychain lock and shutdown' }, async t => {
   const root = fs.mkdtempSync(path.join(tmpdir(), 'clipdock-shutdown-keychain-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   let child, lock, clientDisposed = false, ran = false;
@@ -71,8 +71,8 @@ test('quit owns an admitted credential mutation until its continuation drains', 
   assert.equal(quitWhilePending, 0); assert.equal(mutatedAfterDispose, false);
 });
 
-test('disposing credential lock waiters cancels admission without removing a live owner', async t => {
-  const root = fs.mkdtempSync(path.join(process.env.TMPDIR, 'credential-wait-'));
+test('disposing credential lock waiters cancels admission without removing a live owner', { skip: process.platform === 'win32' && 'macOS Keychain lock and shutdown' }, async t => {
+  const root = fs.mkdtempSync(path.join(tmpdir(), 'credential-wait-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const lock = path.join(root, 'keychain.lock');
   const owner = JSON.stringify({pid: process.pid, token: 'live-owner', createdAt: Date.now()});

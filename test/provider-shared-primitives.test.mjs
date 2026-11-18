@@ -69,7 +69,7 @@ test('ProviderSession recreates a pruned provider directory through its parent b
   }, {});
   assert.deepEqual(seen, [true, true]);
   assert.equal(recreated, 1);
-  assert.equal(lstatSync(path).mode & 0o777, 0o700);
+  if (process.platform !== 'win32') assert.equal(lstatSync(path).mode & 0o777, 0o700);
   assert.equal(session.jobDirectories.size, 0);
   rmSync(parent, {recursive: true});
 });

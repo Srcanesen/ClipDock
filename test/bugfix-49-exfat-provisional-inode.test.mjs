@@ -51,7 +51,7 @@ test('a volume whose file identity changes on write is refused at folder choice'
   assert.throws(() => ManagedRoot.prepare(path.join(dir, 'managed')), /Managed root failed the safety check/);
 });
 
-test('a placeholder identity is not adopted across a replaced file', t => {
+test('a placeholder identity is not adopted across a replaced file', { skip: process.platform === 'win32' && 'macOS exFAT placeholder inode and replacement birth time' }, t => {
   const dir = fixture(t);
   const root = ManagedRoot.prepare(path.join(dir, 'managed'));
   const youtube = AnchoredDir.capture(root.providerPath('youtube'), root);

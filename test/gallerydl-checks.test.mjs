@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -13,7 +13,7 @@ const expect = (label, got, want) => assert.deepEqual(
 const fail = (message) => assert.fail(message);
 
 test('Pinterest version and path-free metadata/search normalization', async (t) => {
-  const { discoverGalleryDl, galleryDlVersionSupported, parseGalleryDlJsonl, parsePinterestMetadataJsonl, parsePinterestMetadataValues, parsePinterestSearchJsonl } = await import(path.join(dist, 'gallerydl.js'));
+  const { discoverGalleryDl, galleryDlVersionSupported, parseGalleryDlJsonl, parsePinterestMetadataJsonl, parsePinterestMetadataValues, parsePinterestSearchJsonl } = await import(pathToFileURL(path.join(dist, 'gallerydl.js')).href);
   const galleryExpect = expect;
   galleryExpect('pinterest: gallery-dl version floor accepts 1.28.0 and rejects 1.27.9', [galleryDlVersionSupported('gallery-dl 1.28.0'), galleryDlVersionSupported('1.27.9')], [true, false]);
   galleryExpect('pinterest: JSONL [-1] is an error even with a zero process exit', (() => { try { parseGalleryDlJsonl('[-1, "private"]'); return false; } catch { return true; } })(), true);

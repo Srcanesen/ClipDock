@@ -39,7 +39,7 @@ test('E2E refuses fuscript before setup and reports both process sets', async ()
 });
 
 
-test('default preflight uses exact pgrep names and rejects malformed successful output', t => {
+test('default preflight uses exact pgrep names and rejects malformed successful output', { skip: process.platform === 'win32' && 'POSIX pgrep process enumeration' }, t => {
   const original = childProcess.spawnSync;
   t.after(() => { childProcess.spawnSync = original; syncBuiltinESMExports(); });
   const calls = [];

@@ -369,7 +369,7 @@ test('GalleryDlWorker.search uses the fixed encoded argv and bounded cache pagin
     };
     const spawn = (_binary, args, options) => {
       assert.equal(options.shell, false);
-      assert.equal(options.detached, true);
+      assert.equal(options.detached, process.platform === 'win32' ? undefined : true);
       const child = new FakeChild();
       calls.push(args);
       setImmediate(() => { child.stdout.emit('data', `${output}\n`); child.emit('close', 0); });
@@ -689,7 +689,7 @@ test('GalleryDlWorker safely resolves pin.it, returns an allowlisted thumbnail U
     };
     const spawn = (_binary, args, options) => {
       assert.equal(options.shell, false);
-      assert.equal(options.detached, true);
+      assert.equal(options.detached, process.platform === 'win32' ? undefined : true);
       const child = new FakeChild();
       calls.push(args);
       const directory = args.includes('-D') ? args[args.indexOf('-D') + 1] : null;

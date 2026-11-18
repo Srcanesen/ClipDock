@@ -12,32 +12,28 @@ test('discoverBinary finds PATH candidate and respects executable + versionIdent
   const dir = tempRoot('clipdock-provider-discover-');
   const bin = path.join(dir, 'mybin');
   try {
-    writeFileSync(bin, '#!/bin/sh\necho version 1.0\n');
-    chmodSync(bin, 0o755);
+    writeFileSync(bin, '');
+    if (process.platform !== 'win32') chmodSync(bin, 0o755);
     const env = { PATH: dir, CUSTOM_PATH: bin };
     // plain discovery without version
-    const found = discoverBinary(['mybin'], null, { env, platform: 'linux', pathEntries: [dir], extraCandidates: [] });
+    const found = discoverBinary(['mybin'], null, { env, platform: process.platform, pathEntries: [dir], extraCandidates: [] });
     assert.equal(found, bin);
     // versionIdentity success
     const probeOk = () => ({ code: 0, text: 'mybin version 1.0' });
-    const foundVersion = discoverBinary(['mybin'], ['--version'], { env, platform: 'linux', pathEntries: [dir], versionIdentity: 'mybin version', probe: probeOk });
+    const foundVersion = discoverBinary(['mybin'], ['--version'], { env, platform: process.platform, pathEntries: [dir], versionIdentity: 'mybin version', probe: probeOk });
     assert.equal(foundVersion, bin);
     // version mismatch -> null
     const probeBad = () => ({ code: 0, text: 'other version' });
-    const notFound = discoverBinary(['mybin'], ['--version'], { env, platform: 'linux', pathEntries: [dir], versionIdentity: 'mybin version', probe: probeBad });
+    const notFound = discoverBinary(['mybin'], ['--version'], { env, platform: process.platform, pathEntries: [dir], versionIdentity: 'mybin version', probe: probeBad });
     assert.equal(notFound, null);
     // envKey override absolute executable takes precedence
     const env2 = { PATH: '', CUSTOM_PATH: bin, CLIPDOCK_CUSTOM_PATH: bin };
-    const viaEnv = discoverBinary(['other'], null, { env: env2, platform: 'linux', pathEntries: [], envKey: 'CLIPDOCK_CUSTOM_PATH' });
+    const viaEnv = discoverBinary(['other'], null, { env: env2, platform: process.platform, pathEntries: [], envKey: 'CLIPDOCK_CUSTOM_PATH' });
     assert.equal(viaEnv, bin);
-    // non-executable not found
-    const dir2 = tempRoot('clipdock-provider-discover2-');
-    const nonExec = path.join(dir2, 'mybin');
-    writeFileSync(nonExec, '#!/bin/sh\n');
-    chmodSync(nonExec, 0o644);
-    const notExec = discoverBinary(['mybin'], null, { env: { PATH: dir2 }, platform: 'linux', pathEntries: [dir2] });
-    assert.equal(notExec, null);
-    rmSync(dir2, { recursive: true, force: true });
+    if (process.platform !== 'win32') {
+      chmodSync(bin, 0o644);
+      assert.equal(discoverBinary(['mybin'], null, { env, platform: process.platform, pathEntries: [dir] }), null);
+    }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

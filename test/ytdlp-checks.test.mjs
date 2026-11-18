@@ -4,7 +4,8 @@ import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync, rmSync, m
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { redirectFixtureProbes, writeVersionFixture } from './helpers/node-fixture.cjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -16,7 +17,7 @@ const focusedExpect = expect;
 const fail = (message) => assert.fail(message);
 
 test('range validation and cleaned subtitle cues', async (t) => {
-  const { validateRange, parseSubtitleCues } = await import(path.join(dist, 'ytdlp.js'));
+  const { validateRange, parseSubtitleCues } = await import(pathToFileURL(path.join(dist, 'ytdlp.js')).href);
   focusedExpect('youtube: range accepts finite ordered duration-bounded values', validateRange({ start: 2, end: 4, label: 'Cut' }, 10)?.label, 'Cut');
   focusedExpect('youtube: range rejects reversed/outside values', [validateRange({ start: 4, end: 2, label: 'x' }, 10), validateRange({ start: 2, end: 11, label: 'x' }, 10)], [null, null]);
   focusedExpect('youtube: subtitle parser bounds and strips cue markup', parseSubtitleCues('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<b>Hello</b>', 1), [{ start: 1, end: 2, text: 'Hello' }]);
@@ -26,10 +27,10 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'clipdock-checks-'));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const fixtureDir = () => fixtureRoot;
-  const urlContracts = await import(path.join(dist, 'ytdlp-url.js'));
+  const urlContracts = await import(pathToFileURL(path.join(dist, 'ytdlp-url.js')).href);
   const { validateYoutubeUrl } = urlContracts;
   const { validateSocialUrl } = urlContracts;
-  const { YtdlpWorker, discoverFfmpeg, validateYoutubeSearch, downloadFailureMessage } = await import(path.join(dist, 'ytdlp.js'));
+  const { YtdlpWorker, discoverFfmpeg, validateYoutubeSearch, downloadFailureMessage } = await import(pathToFileURL(path.join(dist, 'ytdlp.js')).href);
   const canonical = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
   const socialCanonical = 'https://www.instagram.com/reel/ABC_def-123';
   const socialAccepted = [
@@ -62,6 +63,8 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   expect('social download seam exists', typeof YtdlpWorker.prototype.downloadSocial, 'function');
 
   const phase3Root = mkdtempSync(path.join(fixtureDir(), 'clipdock-contract-'));
+  redirectFixtureProbes(t, phase3Root);
+  const spawnOptions = process.platform === 'win32' ? { shell: false } : { shell: false, detached: true };
   const child = () => {
     const value = new EventEmitter();
     value.stdout = new EventEmitter(); value.stderr = new EventEmitter();
@@ -87,10 +90,6 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     try { await promise; fail(`${label} — resolved`); }
     catch (error) { expect(label, error.message, message); }
   };
-  const versionFixture = (file, identity) => {
-    writeFileSync(file, `#!/bin/sh\n[ "$1" = "-version" ] || exit 1\nprintf '${identity} version 99.0 fixture\\n'\n`, { mode: 0o755 });
-    return file;
-  };
   {
     const calls = []; const fetchCalls = [];
     const fakeFetch = async (url) => { fetchCalls.push(url); return { ok: true, url, headers: { get: (name) => name === 'content-type' ? 'image/jpeg' : name === 'content-length' ? '2' : null }, arrayBuffer: async () => Uint8Array.from([1, 2]).buffer }; };
@@ -98,7 +97,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith(socialJson)], calls), fakeFetch, { sessionDir: path.join(phase3Root, 'social-metadata') });
     const meta = await worker.metadataSocial('https://www.instagram.com/reel/ABC_def-123/?utm_source=share');
     expect('social metadata narrows platform, canonical source, creator, and heights', [meta.id, meta.platform, meta.source, meta.title, meta.channel, meta.heights, meta.formatSummary], ['social-video-1', 'instagram', socialCanonical, 'Social title', 'Social creator', [720, 1080], ['720p', '1080p']]);
-    expect('social metadata uses the existing no-playlist first-entry argv seam', [calls[0].args, calls[0].args.at(-1), calls[0].options], [['--ignore-config', '--no-warnings', '--no-colors', '--no-playlist', '--playlist-items', '1', '--socket-timeout', '15', '--max-filesize', '2147483648', '--dump-single-json', socialCanonical], socialCanonical, { shell: false, detached: true }]);
+    expect('social metadata uses the existing no-playlist first-entry argv seam', [calls[0].args, calls[0].args.at(-1), calls[0].options], [['--ignore-config', '--no-warnings', '--no-colors', '--no-playlist', '--playlist-items', '1', '--socket-timeout', '15', '--max-filesize', '2147483648', '--dump-single-json', socialCanonical], socialCanonical, spawnOptions]);
     expect('social thumbnail fetch uses only an approved platform CDN host', [await worker.thumbnailSocial(meta.source), fetchCalls], ['data:image/jpeg;base64,AQI=', ['https://scontent.cdninstagram.com/media.jpg']]);
   }
   {
@@ -285,7 +284,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     expect('ytdlp metadata exposes unique 4K height', [meta.id, meta.title, meta.heights, meta.thumbnailUrl], ['dQw4w9WgXcQ', 'Safe title', [360, 720, 1080, 1440, 2160], 'https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg']);
     expect('ytdlp metadata URL is canonical and last', calls[0].args.at(-1), canonical);
     expect('ytdlp metadata argv starts ignore-config', calls[0].args[0], '--ignore-config');
-    expect('ytdlp metadata spawn shell false', calls[0].options, { shell: false, detached: true });
+    expect('ytdlp metadata spawn shell false', calls[0].options, spawnOptions);
   }
   {
     let fetches = 0;
@@ -315,7 +314,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     expect('download exact progress template includes raw speed and ETA fields', calls[0].args[calls[0].args.indexOf('--progress-template') + 1], 'download:C|%(progress.status)s|%(progress._percent).1f|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s');
     expect('download URL is canonical and last', calls[0].args.at(-1), canonical);
     expect('download argv starts ignore-config', calls[0].args[0], '--ignore-config');
-    expect('download spawn shell false', calls[0].options, { shell: false, detached: true });
+    expect('download spawn shell false', calls[0].options, spawnOptions);
   }
   {
     const calls = [], events = [];
@@ -354,9 +353,11 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     await rejected('download requires ffmpeg before spawn', worker.download(canonical, '2160p', 'job-no-ffmpeg', () => undefined), 'ffmpeg was not found. Install ffmpeg or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.');
     expect('missing ffmpeg does not spawn yt-dlp', calls.length, 0);
   }
-  const ffmpegDiscoveryFixture = versionFixture(path.join(phase3Root, 'ffmpeg-version-fixture'), 'ffmpeg');
+  const ffmpegDiscoveryFixture = writeVersionFixture(path.join(phase3Root, 'ffmpeg-version-fixture'), 'ffmpeg');
   expect('ffmpeg discovery accepts executable env path', discoverFfmpeg({ CLIPDOCK_FFMPEG_PATH: ffmpegDiscoveryFixture, PATH: '' }, process.platform), ffmpegDiscoveryFixture);
 
+  // These fake children cover rejection and cleanup without installed engines.
+  const fakeTools = { ffmpegPath: '/fake/ffmpeg', ffprobePath: null };
   // Controlled parser/process failures and safe final-path enforcement.
   {
     const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith('{bad json')]), undefined, { sessionDir: path.join(phase3Root, 'bad-json') });
@@ -384,7 +385,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     ['download 2 GB limit error is actionable', closeWith('', 2, 'File is larger than max-filesize (2147483648 bytes), aborting'), 'This video exceeds ClipDock’s 2 GB download limit.'],
     ['download disk-space error is actionable', closeWith('', 2, 'ERROR: unable to write: No space left on device'), 'There is not enough disk space to finish the download.'],
   ]) {
-    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([run]), undefined, { sessionDir: path.join(phase3Root, label.replaceAll(' ', '-')) });
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([run]), undefined, { ...fakeTools, sessionDir: path.join(phase3Root, label.replaceAll(' ', '-')) });
     await rejected(label, worker.download(canonical, 'best', 'job-error', () => undefined), message);
   }
   for (const kind of ['parent', 'outside', 'symlink', 'relative', 'missing', 'directory']) {
@@ -397,7 +398,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
       if (kind === 'symlink') { const target = path.join(jobDir, '..', 'target.mp4'); writeFileSync(target, 'outside'); symlinkSync(target, output); }
       proc.stdout.emit('data', Buffer.from(`P|${output}\n`)); proc.emit('close', 0);
     };
-    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([run]), undefined, { sessionDir: path.join(phase3Root, `path-${kind}`) });
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([run]), undefined, { ...fakeTools, sessionDir: path.join(phase3Root, `path-${kind}`) });
     await rejected(`download rejects ${kind} final path`, worker.download(canonical, 'best', `job-path-${kind}`, () => undefined), 'Downloaded file failed the safety check.');
     expect(`download cleans ${kind} job directory`, existsSync(jobDir), false);
   }
@@ -405,7 +406,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   // Cancel is job-scoped; Unix escalates, Windows kills the process tree, dispose leaves no active child.
   {
     const calls = [], events = [], spawn = queuedSpawn([null, closeWith(metadataJson())], calls);
-    const worker = new YtdlpWorker('/fake/yt-dlp', spawn, undefined, { sessionDir: path.join(phase3Root, 'cancel-unix'), platform: 'darwin', killGraceMs: 5 });
+    const worker = new YtdlpWorker('/fake/yt-dlp', spawn, undefined, { ...fakeTools, sessionDir: path.join(phase3Root, 'cancel-unix'), platform: 'darwin', killGraceMs: 5 });
     const pending = worker.download(canonical, 'best', 'job-unix', (event) => events.push(event));
     expect('cancel matching job id is true', worker.cancel('job-unix') instanceof Promise, true);
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -415,7 +416,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   }
   {
     const calls = [], spawn = queuedSpawn([null], calls);
-    const worker = new YtdlpWorker('/fake/yt-dlp', spawn, undefined, { sessionDir: path.join(phase3Root, 'cancel-close'), platform: 'darwin', killGraceMs: 5 });
+    const worker = new YtdlpWorker('/fake/yt-dlp', spawn, undefined, { ...fakeTools, sessionDir: path.join(phase3Root, 'cancel-close'), platform: 'darwin', killGraceMs: 5 });
     const pending = worker.download(canonical, 'best', 'job-close', () => undefined);
     worker.cancel('job-close'); calls[0].child.emit('close', null);
     await rejected('cancel close before grace is controlled', pending, 'Download cancelled.');
@@ -441,7 +442,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   }
   {
     const calls = [], spawn = queuedSpawn([null], calls);
-    const worker = new YtdlpWorker('/fake/yt-dlp', spawn, undefined, { sessionDir: path.join(phase3Root, 'dispose-download') });
+    const worker = new YtdlpWorker('/fake/yt-dlp', spawn, undefined, { ...fakeTools, sessionDir: path.join(phase3Root, 'dispose-download') });
     const pending = worker.download(canonical, 'best', 'job-dispose', () => undefined);
     worker.dispose(); expect('dispose kills active download child', calls[0].child.kills[0], 'SIGTERM');
     calls[0].child.emit('close', null); await rejected('disposed download is controlled', pending, 'Download cancelled.');
@@ -451,7 +452,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   for (const kind of ['metadata', 'download']) {
     const sessionDir = path.join(phase3Root, `spawn-error-${kind}`);
     const run = (proc) => proc.emit('error', new Error('spawn failed https://www.youtube.com/?token=SPAWN_SECRET'));
-    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([run]), undefined, { sessionDir });
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([run]), undefined, { ...fakeTools, sessionDir });
     let message = '';
     try {
       if (kind === 'metadata') await worker.metadata(canonical);
@@ -467,7 +468,7 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
     const sessionDir = path.join(phase3Root, 'logging');
     const secretUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&token=TOP_SECRET';
     const stderr = `parser failed ${secretUrl}\n${'x'.repeat(400_000)}`;
-    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith('', 2, stderr)]), undefined, { sessionDir });
+    const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([closeWith('', 2, stderr)]), undefined, { ...fakeTools, sessionDir });
     let userError = '';
     try { await worker.download(secretUrl, 'best', 'job-log', () => undefined); } catch (error) { userError = error.message; }
     const logPath = path.join(sessionDir, 'clipdock.log');

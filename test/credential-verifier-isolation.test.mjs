@@ -8,7 +8,7 @@ import { MacKeychainPexelsCredentialStore } from '../dist/pexels-credential.js';
 
 // Exercise the real transaction with fake commands and a private mutex, including
 // fixture failure. Never acquire or remove the user's default Keychain mutex.
-for (const failFixture of [false, true]) test(`fake credential transactions clean an isolated mutex after ${failFixture ? 'failure' : 'success'}`, async () => {
+for (const failFixture of [false, true]) test(`fake credential transactions clean an isolated mutex after ${failFixture ? 'failure' : 'success'}`, { skip: process.platform === 'win32' && 'macOS Keychain transaction' }, async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-credential-isolation-'));
   const lock = path.join(root, 'keychain.lock');
   const key = 'test_key_12345678901234567890';

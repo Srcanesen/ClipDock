@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import {tmpdir} from 'node:os';
 import {EventEmitter} from 'node:events';
 import {test} from 'node:test';
 import {mainFixture, deferred} from './helpers/files-main.mjs';
 import {MacKeychainPexelsCredentialStore} from '../dist/pexels-credential.js';
 
 for (const previous of ['A'.repeat(20), null]) {
-  test(`orderly quit rolls back an admitted credential save during verification (${previous ? 'existing key' : 'absent key'})`, async t => {
-    const root = fs.mkdtempSync(path.join(process.env.TMPDIR, 'gate-credential-'));
+  test(`orderly quit rolls back an admitted credential save during verification (${previous ? 'existing key' : 'absent key'})`, { skip: process.platform === 'win32' && 'macOS Keychain shutdown rollback' }, async t => {
+    const root = fs.mkdtempSync(path.join(tmpdir(), 'gate-credential-'));
     t.after(() => fs.rmSync(root, {recursive: true, force: true}));
     const lock = path.join(root, 'keychain.lock'), reached = deferred();
     const candidate = 'B'.repeat(20);
@@ -66,8 +67,8 @@ for (const previous of ['A'.repeat(20), null]) {
   });
 }
 
-test('shutdown rollback keeps its lock and bounds an unresponsive verification child', async t => {
-  const root = fs.mkdtempSync(path.join(process.env.TMPDIR, 'gate-rollback-bound-'));
+test('shutdown rollback keeps its lock and bounds an unresponsive verification child', { skip: process.platform === 'win32' && 'macOS Keychain shutdown rollback' }, async t => {
+  const root = fs.mkdtempSync(path.join(tmpdir(), 'gate-rollback-bound-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const lock = path.join(root, 'keychain.lock'), reached = deferred(), rollbackVerification = deferred();
   const previous = 'A'.repeat(20);

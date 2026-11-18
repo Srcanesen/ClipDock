@@ -162,7 +162,7 @@ http.createServer = callback => ({ listen() {
   assert.match(responses.ready.body, /src="preview.js"/);
 });
 
-test('headless orchestrator reports an asynchronous spawn failure without probing (TLG-14)', (t) => {
+test('headless orchestrator reports an asynchronous spawn failure without probing (TLG-14)', { skip: process.platform === 'win32' && 'macOS Resolve bundle launcher fixture' }, (t) => {
   const fx = fixture(t);
   const bundle = path.join(fx.root, 'Fake.app');
   mkdirSync(path.join(bundle, 'Contents/MacOS'), { recursive: true });

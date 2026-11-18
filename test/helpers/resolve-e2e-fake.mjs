@@ -1,3 +1,4 @@
+import {testPython} from './python.mjs';
 import { mkdtempSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -127,7 +128,7 @@ export function fakeEnvironment(t, extra = {}) {
 }
 export function fakeBridge(t, extra = {}, timeoutMs = 3000) {
   const fixture = fakeEnvironment(t, extra);
-  const bridge = createPythonBridge({ python: 'python3', env: fixture.env, script: fileURLToPath(new URL('../../scripts/resolve-smoke/bridge.py', import.meta.url)), timeoutMs });
+  const bridge = createPythonBridge({ python: testPython(), env: fixture.env, script: fileURLToPath(new URL('../../scripts/resolve-smoke/bridge.py', import.meta.url)), timeoutMs });
   t.after(() => bridge.close());
   return { ...fixture, bridge };
 }

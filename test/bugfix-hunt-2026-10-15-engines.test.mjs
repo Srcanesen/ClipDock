@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import {existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdtempSync, readFileSync, readdirSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {test} from 'node:test';
 import {YtdlpWorker} from '../dist/ytdlp.js';
+import {spawnNodeFixture, writeNodeFixture} from './helpers/node-fixture.cjs';
 import {providerDownload} from './helpers/provider-job-main.mjs';
 
 const youtube = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
@@ -12,13 +13,9 @@ function fixture(t) {
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-engine-regression-'));
   t.after(() => rmSync(root, {recursive: true, force: true}));
   let sequence = 0;
-  const executable = body => {
-    const file = path.join(root, `tool-${++sequence}`);
-    writeFileSync(file, `#!${process.execPath}\n${body}\n`, {mode: 0o755});
-    return file;
-  };
+  const executable = body => writeNodeFixture(root, `tool-${++sequence}`, body);
   const worker = (body, options = {}) => {
-    const instance = new YtdlpWorker(executable(body), undefined, noFetch, {
+    const instance = new YtdlpWorker(executable(body), spawnNodeFixture, noFetch, {
       sessionDir: path.join(root, `session-${sequence}`), ffmpegPath: '/fixture/ffmpeg',
       ffprobePath: executable(`console.log(JSON.stringify({streams: [{codec_type: 'video', width: 160, height: 96}], format: {duration: '1', format_name: 'mov,mp4,webm'}}));`), jsRuntime: null, ...options,
     });
@@ -47,7 +44,7 @@ test('bug 2: gallery-dl successful size warnings report the image and video limi
   const {GalleryDlWorker} = await import('../dist/gallerydl.js');
   const {root, executable} = fixture(t);
   for (const [kind, limit] of [['image', '20 MB'], ['video', '2 GB']]) {
-    const instance = new GalleryDlWorker(executable(`console.error('[downloader.http][warning] File size larger than allowed maximum (123456789 > 1)');`), undefined, {sessionDir: path.join(root, kind)});
+    const instance = new GalleryDlWorker(executable(`console.error('[downloader.http][warning] File size larger than allowed maximum (123456789 > 1)');`), spawnNodeFixture, {sessionDir: path.join(root, kind)});
     t.after(() => instance.dispose());
     const events = [];
     await assert.rejects(providerDownload(instance, {provider: 'pinterest', url: 'https://www.pinterest.com/pin/123456789012/', kind, jobId: `size-${kind}`, emit: event => events.push(event)}),

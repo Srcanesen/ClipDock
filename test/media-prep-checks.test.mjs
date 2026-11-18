@@ -4,7 +4,8 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, mkdtempSync
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { redirectFixtureProbes, writeVersionFixture } from './helpers/node-fixture.cjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -19,8 +20,10 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'clipdock-checks-'));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const fixtureDir = () => fixtureRoot;
-  const { createMediaPrep, discoverFfprobe, parseFfprobe } = await import(path.join(dist, 'media-prep.js'));
+  const { createMediaPrep, discoverFfprobe, parseFfprobe } = await import(pathToFileURL(path.join(dist, 'media-prep.js')).href);
   const phase3Root = mkdtempSync(path.join(fixtureDir(), 'clipdock-contract-'));
+  redirectFixtureProbes(t, phase3Root);
+  const spawnOptions = process.platform === 'win32' ? { shell: false } : { shell: false, detached: true };
   const child = () => {
     const value = new EventEmitter();
     value.stdout = new EventEmitter(); value.stderr = new EventEmitter();
@@ -45,10 +48,6 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
   const rejected = async (label, promise, message) => {
     try { await promise; fail(`${label} — resolved`); }
     catch (error) { expect(label, error.message, message); }
-  };
-  const versionFixture = (file, identity) => {
-    writeFileSync(file, `#!/bin/sh\n[ "$1" = "-version" ] || exit 1\nprintf '${identity} version 99.0 fixture\\n'\n`, { mode: 0o755 });
-    return file;
   };
   const probeJson = ({ codec = 'h264', pix = 'yuv420p', avg = '30/1', real = '30/1', audio = 'aac', width = 3840, height = 2160, duration = '10', container = 'mp4', rotation } = {}) => JSON.stringify({
     streams: [
@@ -89,7 +88,7 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
     expect('media-prep direct only runs the decision probe', calls.map(({ args }) => args), [
       ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file],
     ]);
-    expect('media-prep probe spawn shell false', calls.map(({ options }) => options), [{ shell: false, detached: true }]);
+    expect('media-prep probe spawn shell false', calls.map(({ options }) => options), [spawnOptions]);
     expect('media-prep emits processing before probe', events[0], { jobId: 'prep-direct', state: 'processing', percent: 0, message: 'Preparing for Resolve…' });
   }
 
@@ -191,12 +190,12 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
     const { dir, file } = prepFile('prep-oversized-probe'); const worker = prepWorker([closeWith('x'.repeat(2 * 1024 * 1024 + 1))], []);
     await rejected('media-prep bounds ffprobe JSON', worker.prepare({ jobId: 'oversized-probe', inputPath: file, allowedRoot: dir, profile: 'fast', emit: () => undefined }), 'Media preparation failed: ffprobe output exceeded the 2 MB limit.');
   }
-  const ffprobeDiscoveryFixture = versionFixture(path.join(phase3Root, 'ffprobe-version-fixture'), 'ffprobe');
+  const ffprobeDiscoveryFixture = writeVersionFixture(path.join(phase3Root, 'ffprobe-version-fixture'), 'ffprobe');
   expect('ffprobe discovery accepts executable env path', discoverFfprobe(null, { CLIPDOCK_FFPROBE_PATH: ffprobeDiscoveryFixture, PATH: '' }, process.platform), ffprobeDiscoveryFixture);
   {
     const bin = path.join(phase3Root, 'discovery-bin'); mkdirSync(bin);
-    const ffmpeg = versionFixture(path.join(bin, 'ffmpeg'), 'ffmpeg');
-    const ffprobe = versionFixture(path.join(bin, 'ffprobe'), 'ffprobe');
+    const ffmpeg = writeVersionFixture(path.join(bin, 'ffmpeg'), 'ffmpeg');
+    const ffprobe = writeVersionFixture(path.join(bin, 'ffprobe'), 'ffprobe');
     expect('ffprobe discovery prefers ffmpeg executable sibling', discoverFfprobe(ffmpeg, { PATH: '' }, process.platform), ffprobe);
   }
 

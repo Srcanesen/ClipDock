@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { existsSync, statSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -19,7 +19,7 @@ test('artifact completion preparation, fallback, cancellation and safety', async
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const fixtureDir = () => fixtureRoot;
   {
-    const { createArtifactCompletionService } = await import(path.join(dist, 'main-process.js'));
+    const { createArtifactCompletionService } = await import(pathToFileURL(path.join(dist, 'main-process.js')).href);
     const rootDir = mkdtempSync(path.join(fixtureDir(), 'clipdock-completion-'));
     const originalPath = path.join(rootDir, 'original-download.mp4'); const preparedPath = path.join(rootDir, 'prepared.resolve.mp4');
     writeFileSync(originalPath, 'original'); writeFileSync(preparedPath, 'prepared');

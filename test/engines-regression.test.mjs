@@ -86,7 +86,7 @@ function downloader(root, {name = 'café.mp4', size = 24, probe = videoProbe(), 
   };
   return {calls, worker: new YtdlpWorker('/fixture/yt-dlp', spawn, undefined, {sessionDir: root, ffmpegPath: '/fixture/ffmpeg', ffprobePath: '/fixture/ffprobe', killGraceMs: 5})};
 }
-test('ENG-1/ENG-2: cancellation reaps a TERM-resistant descendant with inherited pipes before shutdown completes', {timeout: 5000}, async () => {
+test('ENG-1/ENG-2: cancellation reaps a TERM-resistant descendant with inherited pipes before shutdown completes', {timeout: 5000, skip: process.platform === 'win32' && 'POSIX process-group signals and SIGTERM handlers'}, async () => {
   const root = mkdtempSync(join(tmpdir(), 'engines-tree-'));
   let parent, descendant, watchdog;
   const worker = new YtdlpWorker('/fixture', (_binary, _args, opts) => {

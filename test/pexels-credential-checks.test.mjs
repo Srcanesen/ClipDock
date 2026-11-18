@@ -4,7 +4,7 @@ import { readFileSync, existsSync, statSync, writeFileSync, rmSync, mkdtempSync,
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -40,7 +40,7 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
     try { await promise; throw new Error('expected rejection'); }
     catch (error) { if (!pattern.test(error.message)) throw error; return error.message; }
   };
-  const pexelsTest = async (name, run) => t.test(name, async (caseTest) => {
+  const pexelsTest = async (name, run, options = {}) => t.test(name, options, async (caseTest) => {
     caseTest.after(() => {
       globalThis.fetch = realFetch;
       for (const client of caseClients) client.dispose();
@@ -48,7 +48,8 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
     });
     await run();
   });
-  const { PexelsCredentialStore, MacKeychainPexelsCredentialStore, PEXELS_KEYCHAIN_SERVICE, PEXELS_KEYCHAIN_ACCOUNT } = await import(path.join(dist, 'pexels-credential.js'));
+  const keychainTest = (name, run) => pexelsTest(name, run, { skip: process.platform === 'win32' && 'macOS Keychain transaction' });
+  const { PexelsCredentialStore, MacKeychainPexelsCredentialStore, PEXELS_KEYCHAIN_SERVICE, PEXELS_KEYCHAIN_ACCOUNT } = await import(pathToFileURL(path.join(dist, 'pexels-credential.js')).href);
   const keychainProcess = () => {
     const proc = new EventEmitter(); proc.stdout = new EventEmitter(); proc.stderr = new EventEmitter(); proc.stdin = new EventEmitter(); proc.stdin.chunks = []; proc.kills = [];
     proc.stdin.write = (chunk) => { proc.stdin.chunks.push(String(chunk)); };
@@ -151,7 +152,7 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
     return { state, saveReadbackBlocked, clearStarted, clearDone, saveVerified, releaseSaveReadback: () => releaseSaveReadback(), releaseClearDelete: () => releaseClearDelete(), spawn };
   };
 
-  await pexelsTest('macOS Keychain overlapping saves serialize rollback and preserve the reported winner', async () => {
+  await keychainTest('macOS Keychain overlapping saves serialize rollback and preserve the reported winner', async () => {
     const lockRoot = mkdtempSync(path.join(fixtureDir(), 'clipdock-pexels-lock-overlap-')); const lockPath = path.join(lockRoot, 'keychain.lock');
     const A_KEY = 'a_key_12345678901234567890'; const B_KEY = 'b_key_12345678901234567890'; const secrets = [OLD_KEY, A_KEY, B_KEY];
     const backend = overlappingSaveBackend(OLD_KEY, A_KEY, B_KEY); const aCalls = []; const bCalls = [];
@@ -173,7 +174,7 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
     }
   });
 
-  await pexelsTest('macOS Keychain save and clear serialize in both completion orders', async () => {
+  await keychainTest('macOS Keychain save and clear serialize in both completion orders', async () => {
     const SAVE_KEY = 'save_key_12345678901234567890'; const checkSecrets = [OLD_KEY, SAVE_KEY];
     const firstRoot = mkdtempSync(path.join(fixtureDir(), 'clipdock-pexels-lock-save-clear-')); const firstPath = path.join(firstRoot, 'keychain.lock');
     const firstBackend = saveClearBackend(null, SAVE_KEY, { gateSaveReadback: true }); const firstSaveCalls = []; const firstClearCalls = [];
@@ -205,7 +206,7 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
     }
   });
 
-  await pexelsTest('macOS Keychain lock recovers stale owners and protects newer owner tokens', async () => {
+  await keychainTest('macOS Keychain lock recovers stale owners and protects newer owner tokens', async () => {
     const STALE_KEY = 'stale_key_12345678901234567890'; const secrets = [OLD_KEY, STALE_KEY];
     const staleRoot = mkdtempSync(path.join(fixtureDir(), 'clipdock-pexels-lock-stale-')); const stalePath = path.join(staleRoot, 'keychain.lock'); const staleWhen = new Date(Date.now() - 120_000);
     writeFileSync(stalePath, JSON.stringify({ pid: 99_999_999, token: 'stale-owner-token', createdAt: staleWhen.getTime() }), { encoding: 'utf8', mode: 0o600 }); utimesSync(stalePath, staleWhen, staleWhen);
@@ -232,7 +233,7 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
   const credentialCheckLock = path.join(credentialCheckRoot, 'keychain.lock');
   const fakeCredentialStore = (spawn) => new MacKeychainPexelsCredentialStore(spawn, credentialCheckLock);
   try {
-  await pexelsTest('macOS Keychain credential persistence keeps the key out of argv and uses bounded child commands', async () => {
+  await keychainTest('macOS Keychain credential persistence keeps the key out of argv and uses bounded child commands', async () => {
     const calls = []; const store = fakeCredentialStore(keychainSpawn([keychainClose('', 44), keychainClose(''), keychainClose(`${TEST_KEY}\n`)], calls));
     if (!await store.save(TEST_KEY)) throw new Error('Keychain credential was not saved');
     const save = calls[1]; const args = save.args.join(' ');
@@ -241,7 +242,7 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
     const result = await loaded.load();
     if (result.key !== TEST_KEY || loadCalls[0].args[0] !== 'find-generic-password' || loadCalls[0].args.at(-1) !== '-w' || JSON.stringify(loadCalls[0].args).includes(TEST_KEY) || loadCalls[0].args.includes(PEXELS_KEYCHAIN_SERVICE) === false || loadCalls[0].args.includes(PEXELS_KEYCHAIN_ACCOUNT) === false) throw new Error('Keychain load did not use the fixed find command or returned the wrong credential');
   });
-  await pexelsTest('macOS Keychain rejects exit-zero writes without exact read-back and compensates', async () => {
+  await keychainTest('macOS Keychain rejects exit-zero writes without exact read-back and compensates', async () => {
     for (const readback of ['', `${OLD_KEY}\n`]) {
       const calls = []; const store = fakeCredentialStore(keychainSpawn([keychainClose('', 44), keychainClose(''), keychainClose(readback), keychainClose('', 44)], calls));
       const message = await expectReject(store.save(TEST_KEY), /^Could not save the Pexels credential securely\.$/);
@@ -249,18 +250,18 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
       if (calls.length !== 4 || JSON.stringify(calls[1].args) !== JSON.stringify(['-i']) || calls[1].proc.stdin.chunks.join('') !== keychainAddInput(TEST_KEY) || calls[2].args[0] !== 'find-generic-password' || calls[3].args[0] !== 'delete-generic-password' || args.includes(TEST_KEY) || JSON.stringify({ message }).includes(TEST_KEY)) throw new Error('exit-zero Keychain write was accepted without an exact read-back or safe cleanup');
     }
   });
-  await pexelsTest('macOS Keychain bounds multibyte string output by UTF-8 bytes', async () => {
+  await keychainTest('macOS Keychain bounds multibyte string output by UTF-8 bytes', async () => {
     const calls = []; const oversized = '\u3000'.repeat(3000) + TEST_KEY; const store = fakeCredentialStore(keychainSpawn([keychainClose(oversized), keychainClose('')], calls));
     const result = await store.load();
     if (result.key !== null || result.message !== 'Disconnected. Saved credential was invalid and removed.' || calls.length !== 2) throw new Error('multibyte string output exceeded the Keychain byte cap');
   });
-  await pexelsTest('macOS Keychain decodes split Buffer output only after applying the byte cap', async () => {
+  await keychainTest('macOS Keychain decodes split Buffer output only after applying the byte cap', async () => {
     const keyBytes = Buffer.from(TEST_KEY); const whitespace = Buffer.from('\u3000'.repeat((8 * 1024 - keyBytes.byteLength) / 3));
     const chunks = [Buffer.concat([keyBytes, whitespace.subarray(0, 1)]), Buffer.concat([whitespace.subarray(1), Buffer.from('\u3000')])];
     const calls = []; const store = fakeCredentialStore(keychainSpawn([keychainClose(chunks)], calls)); const result = await store.load();
     if (Buffer.concat(chunks).byteLength <= 8 * 1024 || result.key !== TEST_KEY || calls.length !== 1) throw new Error('split UTF-8 Buffer output was decoded or retained incorrectly');
   });
-  await pexelsTest('macOS Keychain stdin EPIPE is sanitized, kills once, and attempts no-prior cleanup', async () => {
+  await keychainTest('macOS Keychain stdin EPIPE is sanitized, kills once, and attempts no-prior cleanup', async () => {
     const calls = []; const asyncEpipe = (proc) => {
       proc.stderr.emit('data', `${TEST_KEY} /private/client/login.keychain`);
       queueMicrotask(() => {
@@ -276,19 +277,19 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
     const args = calls.map(({ args: commandArgs }) => commandArgs.join(' ')).join('\n');
     if (message !== 'Could not save the Pexels credential securely.' || calls.length !== 3 || calls[1].proc.kills.length !== 1 || args.includes(TEST_KEY) || message.includes(TEST_KEY)) throw new Error('stdin EPIPE was exposed, settled twice, or skipped candidate cleanup');
   });
-  await pexelsTest('macOS Keychain refuses replacement when the prior lookup fails', async () => {
+  await keychainTest('macOS Keychain refuses replacement when the prior lookup fails', async () => {
     const calls = []; const secretError = `${TEST_KEY} /private/client/login.keychain`; const store = fakeCredentialStore(keychainSpawn([keychainClose('', 1, secretError)], calls));
     const message = await expectReject(store.save(TEST_KEY), /^Could not save the Pexels credential securely\.$/);
     const args = JSON.stringify(calls.map(({ args: commandArgs }) => commandArgs));
     if (calls.length !== 1 || args.includes(TEST_KEY) || message.includes(TEST_KEY) || message.includes('/private/')) throw new Error('prior Keychain lookup failure was not fail-closed');
   });
-  await pexelsTest('macOS Keychain discards an invalid prior before replacement', async () => {
+  await keychainTest('macOS Keychain discards an invalid prior before replacement', async () => {
     const calls = []; const store = fakeCredentialStore(keychainSpawn([keychainClose('not-valid\n'), keychainClose(''), keychainClose(''), keychainClose(`${TEST_KEY}\n`)], calls));
     if (!await store.save(TEST_KEY)) throw new Error('replacement after invalid prior was not saved');
     const args = calls.map(({ args: commandArgs }) => commandArgs[0]).join(',');
     if (calls.length !== 4 || args !== 'find-generic-password,delete-generic-password,-i,find-generic-password' || calls[2].proc.stdin.chunks.join('') !== keychainAddInput(TEST_KEY) || JSON.stringify(calls.map(({ args: commandArgs }) => commandArgs)).includes(TEST_KEY)) throw new Error('invalid prior did not follow discard-before-replacement semantics');
   });
-  await pexelsTest('macOS Keychain restores the prior value after an ambiguous replacement', async () => {
+  await keychainTest('macOS Keychain restores the prior value after an ambiguous replacement', async () => {
     const calls = []; const realSetTimeout = globalThis.setTimeout; let candidateClosed = false; let rollbackBeforeClose = false;
     const ambiguousCandidate = (proc) => {
       proc.mutated = true; const kill = proc.kill;
@@ -303,12 +304,12 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
       if (message !== 'Could not save the Pexels credential securely.' || !candidateClosed || rollbackBeforeClose || calls.length !== 4 || !calls[1].proc.mutated || calls[1].proc.kills.length !== 1 || JSON.stringify(calls[2].args) !== JSON.stringify(['-i']) || calls[2].proc.stdin.chunks.join('') !== keychainAddInput(OLD_KEY) || calls[3].args[0] !== 'find-generic-password' || args.includes(TEST_KEY) || args.includes(OLD_KEY) || publicStatus.includes(TEST_KEY) || publicStatus.includes(OLD_KEY)) throw new Error('ambiguous replacement did not restore the prior Keychain value safely');
     } finally { globalThis.setTimeout = realSetTimeout; }
   });
-  await pexelsTest('macOS Keychain invalid values are discarded with key-free status', async () => {
+  await keychainTest('macOS Keychain invalid values are discarded with key-free status', async () => {
     const calls = []; const store = fakeCredentialStore(keychainSpawn([keychainClose('not-valid\n'), keychainClose('')], calls));
     const result = await store.load();
     if (result.key !== null || result.message !== 'Disconnected. Saved credential was invalid and removed.' || calls.length !== 2 || calls[1].args[0] !== 'delete-generic-password' || JSON.stringify(result).includes(TEST_KEY)) throw new Error('invalid Keychain value was not discarded safely');
   });
-  await pexelsTest('macOS Keychain clear accepts not-found and sanitizes save/clear failures and load timeouts', async () => {
+  await keychainTest('macOS Keychain clear accepts not-found and sanitizes save/clear failures and load timeouts', async () => {
     const notFound = fakeCredentialStore(keychainSpawn([keychainClose('', 44)])); await notFound.clear();
     const secretError = `${TEST_KEY} /private/client/login.keychain`; const failed = fakeCredentialStore(keychainSpawn([keychainClose('', 1, secretError)]));
     const message = await expectReject(failed.save(TEST_KEY), /^Could not save the Pexels credential securely\.$/);
@@ -327,7 +328,7 @@ test('credential persistence and isolated Keychain transactions', async (t) => {
     const temp = mkdtempSync(path.join(fixtureDir(), 'clipdock-credential-')); const file = path.join(temp, 'userData', 'pexels-credential.json');
     const cipher = { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from([...Buffer.from(value)].map((byte) => byte ^ 0x5a)), decryptString: (value) => Buffer.from([...value].map((byte) => byte ^ 0x5a)).toString() };
     const store = new PexelsCredentialStore(file, cipher); if (!await store.save(TEST_KEY)) throw new Error('credential was not saved');
-    const disk = readFileSync(file, 'utf8'); if (disk.includes(TEST_KEY) || statSync(file).mode & 0o077) throw new Error('credential was plaintext or not private');
+    const disk = readFileSync(file, 'utf8'); if (disk.includes(TEST_KEY) || (process.platform !== 'win32' && (statSync(file).mode & 0o077))) throw new Error('credential was plaintext or not private');
     if ((await store.load()).key !== TEST_KEY) throw new Error('encrypted credential did not roundtrip');
     writeFileSync(file, '{bad'); const corrupt = await store.load(); if (corrupt.key !== null || existsSync(file)) throw new Error('corrupt credential was not removed');
     await store.save(TEST_KEY); await store.clear(); if (existsSync(file)) throw new Error('disconnect did not remove persisted credential');

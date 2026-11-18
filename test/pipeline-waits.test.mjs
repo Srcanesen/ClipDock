@@ -14,13 +14,18 @@ function workers(t, {stale = false, selection = null, caption = false, wroteMedi
   const root = mkdtempSync(join(tmpdir(), 'clipdock-pipeline-')); const calls = [];
   const spawn = (binary, args) => {
     calls.push(args);
-    if (args.includes('--load-info-json')) {const info = JSON.parse(readFileSync(args[args.indexOf('--load-info-json') + 1], 'utf8')); assert.equal(info.id, 'PavYAOpVpJI'); assert.equal(info.webpage_url, undefined);}
+    if (args.includes('--load-info-json')) {const info = JSON.parse(readFileSync(args[args.indexOf('--load-info-json') + 1], 'utf8')); assert.equal(info.id, 'PavYAOpVpJI'); assert.equal(info.webpage_url, undefined);
+      if (stale && process.platform !== 'win32') {
+        const mode = statSync(args[args.indexOf('--load-info-json') + 1]).mode & 0o777;
+        t.after(() => assert.equal(mode, 0o600));
+      }
+    }
     const c = new EventEmitter(); c.stdout = new EventEmitter(); c.stderr = new EventEmitter();
     queueMicrotask(() => {
       let code = 0;
       if (args.includes('--dump-single-json')) c.stdout.emit('data', JSON.stringify({id: 'PavYAOpVpJI', webpage_url: url, title: 'Clip', duration: 24, formats: [{height: 1080}]}));
       else if (args.includes('-show_streams')) c.stdout.emit('data', JSON.stringify({streams: [{codec_type: 'video', width: 1920, height: 1080, avg_frame_rate: '30/1', start_time: '0'}, {codec_type: 'audio'}], format: {duration: selection ? '1' : '24', format_name: 'mov,mp4'}}));
-      else if ((stale && args.includes('--load-info-json')) || (failUrl && args.includes('--progress'))) { if (args.includes('--load-info-json')) assert.equal(statSync(args[args.indexOf('--load-info-json') + 1]).mode & 0o777, 0o600); if (wroteMedia) {const dir = dirname(args[args.indexOf('-o') + 1]); writeFileSync(join(dir, 'clip.mp4.part'), 'bytes'); c.stdout.emit('data', 'C|downloading|1|5|500|0|0\n');}
+      else if ((stale && args.includes('--load-info-json')) || (failUrl && args.includes('--progress'))) { if (wroteMedia) {const dir = dirname(args[args.indexOf('-o') + 1]); writeFileSync(join(dir, 'clip.mp4.part'), 'bytes'); c.stdout.emit('data', 'C|downloading|1|5|500|0|0\n');}
         c.stderr.emit('data', stale === true ? 'HTTP Error 403: Forbidden' : stale); code = 1; }
       else {
         const dir = dirname(args[args.indexOf('-o') + 1]);

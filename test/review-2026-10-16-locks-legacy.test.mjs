@@ -16,7 +16,7 @@ const owners = [
 for (const [kind, encoded] of owners) {
   for (const aged of [false, true]) {
     for (const provider of ['History', 'Keychain']) {
-      test(`${provider} ${aged ? 'recovers aged' : 'preserves fresh'} ${kind} legacy lock`, async t => {
+      test(`${provider} ${aged ? 'recovers aged' : 'preserves fresh'} ${kind} legacy lock`, { skip: process.platform === 'win32' && provider === 'Keychain' && 'macOS Keychain lock recovery' }, async t => {
         const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-lock-')));
         t.after(() => fs.rmSync(root, {recursive: true, force: true}));
         const lock = path.join(root, 'history.json.lock');

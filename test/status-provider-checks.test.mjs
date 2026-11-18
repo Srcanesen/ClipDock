@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -13,7 +13,7 @@ const expect = (label, got, want) => assert.deepEqual(
 const fail = (message) => assert.fail(message);
 
 test('injected WorkflowIntegration status lifecycle', async (t) => {
-  const { createStatusProvider } = await import(path.join(dist, 'status-provider.js'));
+  const { createStatusProvider } = await import(pathToFileURL(path.join(dist, 'status-provider.js')).href);
 
   // Fake Resolve object graph mirroring the real scripting API surface the provider calls.
   const makeResolve = (o) => ({

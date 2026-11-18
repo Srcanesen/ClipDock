@@ -5,6 +5,7 @@ import {mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync,
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {test} from 'node:test';
+import {spawnNodeFixture, writeNodeFixture} from './helpers/node-fixture.cjs';
 import {discoverFfmpeg, discoverYtdlp, downloadFailureMessage, YtdlpWorker} from '../dist/ytdlp.js';
 import {discoverGalleryDl, GalleryDlWorker} from '../dist/gallerydl.js';
 import {discoverFfprobe} from '../dist/media-prep.js';
@@ -45,7 +46,7 @@ async function localYoutube(t, root, info, workerOptions = {}) {
   const fakeExtraction = (binary, args, options) => {
     if (args.includes('--dump-single-json')) return spawn(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(JSON.stringify(resolved))})`], options);
     const at = args.indexOf(youtube);
-    if (path.basename(binary) !== 'ffprobe') downloads.push(args);
+    if (binary !== ffprobe) downloads.push(args);
     return spawn(binary, at < 0 ? args : [...args.slice(0, at), '--load-info-json', plainInfo, ...args.slice(at + 1)], options);
   };
   const sessionDir = workerOptions.sessionDir ?? path.join(root, 'folder', 'youtube');
@@ -64,8 +65,9 @@ test('bug 1: a $VAR download folder keeps yt-dlp media, info JSON and ffmpeg pat
   // $HOME is always set, so yt-dlp's expandvars would rewrite every path under it.
   const folder = path.join(root, '$HOME');
   mkdirSync(path.join(folder, 'bin'), {recursive: true});
-  symlinkSync(ffmpeg, path.join(folder, 'bin', 'ffmpeg'));
-  const {worker, downloads, sessionDir} = await localYoutube(t, root, {data: {}}, {sessionDir: path.join(folder, 'youtube'), ffmpegPath: path.join(folder, 'bin', 'ffmpeg')});
+  const ffmpegPath = path.join(folder, 'bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+  symlinkSync(ffmpeg, ffmpegPath);
+  const {worker, downloads, sessionDir} = await localYoutube(t, root, {data: {}}, {sessionDir: path.join(folder, 'youtube'), ffmpegPath});
   const video = await worker.download(youtube, 'best', 'dollar-video', () => {}, options);
   const audio = await worker.download(youtube, 'best', 'dollar-audio', () => {}, {...options, mediaMode: 'audio'});
   assert.equal(downloads.length, 2, 'the cached info JSON loads without a URL retry');
@@ -135,9 +137,8 @@ test('bug 4: words inside the extractor ID prefix do not classify yt-dlp failure
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-error-id-'));
   t.after(() => rmSync(root, {recursive: true, force: true}));
   for (const postId of ['DQ-live-x9', 'Cprivate_9A', 'Bxlogin7Qa']) {
-    const binary = path.join(root, `yt-dlp-${postId}`);
-    writeFileSync(binary, `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(`ERROR: [Instagram] ${postId}: Unable to extract shared data; please report this issue\n`)});process.exit(1);\n`, {mode: 0o755});
-    const worker = new YtdlpWorker(binary, undefined, noFetch, {sessionDir: path.join(root, postId), ffmpegPath: null, ffprobePath: null, jsRuntime: null});
+    const binary = writeNodeFixture(root, `yt-dlp-${postId}`, `process.stderr.write(${JSON.stringify(`ERROR: [Instagram] ${postId}: Unable to extract shared data; please report this issue\n`)});process.exit(1);`);
+    const worker = new YtdlpWorker(binary, spawnNodeFixture, noFetch, {sessionDir: path.join(root, postId), ffmpegPath: null, ffprobePath: null, jsRuntime: null});
     t.after(() => worker.dispose());
     await assert.rejects(worker.metadataSocial(`https://www.instagram.com/reel/${postId}/`), {message: 'Could not load public social video metadata. Only permitted public video posts are supported.'});
     assert.equal(downloadFailureMessage(`ERROR: [youtube] ${postId}: Unable to download video data\n`), 'Download failed.');

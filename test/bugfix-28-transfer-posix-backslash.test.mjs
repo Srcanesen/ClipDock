@@ -7,7 +7,7 @@ import { createTransfer } from '../dist/transfer.js';
 
 for (const platform of ['darwin', 'linux']) {
   for (const operation of ['import', 'append']) {
-    test(`${platform} ${operation} keeps literal filename backslashes distinct from directories`, async t => {
+    test(`${platform} ${operation} keeps literal filename backslashes distinct from directories`, { skip: process.platform === 'win32' && 'Windows reserves backslashes as path separators' }, async t => {
       const root = mkdtempSync(join(tmpdir(), 'resolve-backslash-'));
       t.after(() => rmSync(root, { recursive: true, force: true }));
       const literal = join(root, 'scene\\take.mp4');

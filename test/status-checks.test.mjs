@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -13,7 +13,7 @@ const expect = (label, got, want) => assert.deepEqual(
 const fail = (message) => assert.fail(message);
 
 test('status phases, root errors and trimmed project names', async (t) => {
-  const { buildStatus } = await import(path.join(dist, 'status.js'));
+  const { buildStatus } = await import(pathToFileURL(path.join(dist, 'status.js')).href);
   const facts = (over) => ({
     initialized: false, initError: null, resolveAvailable: false, resolveError: null,
     moduleVersion: '2.0.0', resolveVersion: null, projectName: null, timelineName: null, ...over,

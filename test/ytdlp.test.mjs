@@ -59,7 +59,7 @@ test('yt-dlp subtitles use the fixed metadata argv, parse SRT-compatible VTT, an
   const calls = [];
   try {
     const spawn = (_binary, args, options) => {
-      assert.deepEqual(options, {shell: false, detached: true});
+      assert.deepEqual(options, process.platform === 'win32' ? {shell: false} : {shell: false, detached: true});
       const child = new FakeChild();
       calls.push(args);
       const template = args[args.indexOf('-o') + 1];

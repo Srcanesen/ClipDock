@@ -1,29 +1,28 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { redirectFixtureProbes, writeNodeFixture } from './helpers/node-fixture.cjs';
 import { discoverJsRuntime, YtdlpWorker } from '../dist/ytdlp.js';
 
-function fixture(dir, name, version, code = 0) {
-  mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, name);
-  writeFileSync(file, `#!${process.execPath}\nconsole.log(${JSON.stringify(version)});\nprocess.exitCode = ${code};\n`, { mode: 0o700 });
-  return file;
-}
+const platform = process.platform === 'win32' ? 'win32' : 'linux';
+const fixture = (dir, name, version, code = 0) => writeNodeFixture(dir, name,
+  `console.log(${JSON.stringify(version)}); process.exitCode = ${code};`);
 
 function workspace(t) {
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-runtime-policy-'));
+  redirectFixtureProbes(t, root);
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = path.join(root, 'bin');
-  return { root, bin, env: { HOME: root, PATH: bin } };
+  return { root, bin, env: { HOME: root, USERPROFILE: root, PATH: bin } };
 }
 
 test('old Deno does not mask usable Node 24 and yt-dlp receives the chosen runtime', async (t) => {
   const { root, bin, env } = workspace(t);
   fixture(bin, 'deno', 'deno 2.0.0 (stable)');
   const node = fixture(bin, 'node', 'v24.0.0');
-  const runtime = discoverJsRuntime(env, 'linux');
+  const runtime = discoverJsRuntime(env, platform);
   assert.equal(runtime, `node:${node}`);
   const calls = [];
   const worker = new YtdlpWorker('/fixture/yt-dlp', (_command, args) => { calls.push(args); throw new Error('offline spawn boundary'); }, undefined,
@@ -38,7 +37,7 @@ test('only Node 18 yields no runtime flag and explains the supported versions', 
   fixture(bin, 'node', 'v18.20.8');
   const warnings = [];
   const warn = t.mock.method(console, 'warn', (message) => warnings.push(message));
-  const runtime = discoverJsRuntime(env, 'linux');
+  const runtime = discoverJsRuntime(env, platform);
   warn.mock.restore();
   assert.equal(runtime, null);
   assert.match(warnings.join('\n'), /No supported JavaScript runtime found/);
@@ -55,7 +54,7 @@ test('Deno 2.3.0 is usable and remains preferred to Node 24', (t) => {
   const { bin, env } = workspace(t);
   const deno = fixture(bin, 'deno', 'deno 2.3.0 (stable)\nv8 13.5.0');
   fixture(bin, 'node', 'v24.0.0');
-  assert.equal(discoverJsRuntime(env, 'linux'), `deno:${deno}`);
+  assert.equal(discoverJsRuntime(env, platform), `deno:${deno}`);
 });
 
 test('old configured and PATH candidates do not mask a later usable Deno', (t) => {
@@ -64,7 +63,7 @@ test('old configured and PATH candidates do not mask a later usable Deno', (t) =
   const oldDir = path.join(root, 'old'), goodDir = path.join(root, 'good');
   fixture(oldDir, 'deno', 'deno 2.2.99');
   const deno = fixture(goodDir, 'deno', 'deno 2.3.0');
-  assert.equal(discoverJsRuntime({ ...env, CLIPDOCK_DENO_PATH: configured }, 'linux', [oldDir, goodDir]), `deno:${deno}`);
+  assert.equal(discoverJsRuntime({ ...env, CLIPDOCK_DENO_PATH: configured }, platform, [oldDir, goodDir]), `deno:${deno}`);
 });
 
 // Policy source: yt-dlp 2026.8.19 utils/_jsruntime.py, including QuickJS-ng's
@@ -88,6 +87,6 @@ for (const [name, output, accepted, flag, code] of [
     const { bin, env } = workspace(t);
     const binary = fixture(bin, name, output, code);
     t.mock.method(console, 'warn', () => {});
-    assert.equal(discoverJsRuntime(env, 'linux'), accepted ? `${flag}:${binary}` : null);
+    assert.equal(discoverJsRuntime(env, platform), accepted ? `${flag}:${binary}` : null);
   });
 }

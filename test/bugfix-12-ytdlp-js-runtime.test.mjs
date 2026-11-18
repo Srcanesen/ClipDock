@@ -1,39 +1,37 @@
 import assert from 'node:assert/strict';
-import {chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {test} from 'node:test';
 
+import {redirectFixtureProbes, writeNodeFixture} from './helpers/node-fixture.cjs';
 import {YtdlpWorker, discoverJsRuntime} from '../dist/ytdlp.js';
 
 // Regression: inside Resolve the panel inherits a minimal PATH, yt-dlp finds no
 // JavaScript runtime, cannot solve YouTube's player challenge and downloads fail
 // with HTTP 403. ClipDock must find the runtime itself and hand it to yt-dlp.
 
-function fixture(dir, name, output) {
-  mkdirSync(dir, {recursive: true});
-  const file = path.join(dir, name);
-  writeFileSync(file, `#!/bin/sh\necho "${output}"\n`);
-  chmodSync(file, 0o755);
-  return file;
-}
+const platform = process.platform === 'win32' ? 'win32' : 'linux';
+const fixture = (dir, name, output) => writeNodeFixture(dir, name, `console.log(${JSON.stringify(output)});`);
 
-test('JS runtime discovery finds deno in ~/.deno/bin when PATH does not list it', () => {
+test('JS runtime discovery finds deno in ~/.deno/bin when PATH does not list it', t => {
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-jsrt-deno-'));
+  redirectFixtureProbes(t, root);
   try {
     const deno = fixture(path.join(root, '.deno', 'bin'), 'deno', 'deno 2.3.0 (stable)');
-    assert.equal(discoverJsRuntime({HOME: root, PATH: '/nonexistent'}, 'linux'), `deno:${deno}`);
+    assert.equal(discoverJsRuntime({HOME: root, USERPROFILE: root, PATH: ''}, platform), `deno:${deno}`);
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 
-test('JS runtime discovery falls back to node and rejects impostors', () => {
+test('JS runtime discovery falls back to node and rejects impostors', t => {
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-jsrt-node-'));
+  redirectFixtureProbes(t, root);
   try {
     const bin = path.join(root, 'bin');
     fixture(bin, 'deno', 'not a runtime');
     const node = fixture(bin, 'node', 'v22.3.0');
-    assert.equal(discoverJsRuntime({HOME: root, PATH: bin}, 'linux'), `node:${node}`);
-    assert.equal(discoverJsRuntime({HOME: root, PATH: '/nonexistent'}, 'linux'), null);
+    assert.equal(discoverJsRuntime({HOME: root, USERPROFILE: root, PATH: bin}, platform), `node:${node}`);
+    assert.equal(discoverJsRuntime({HOME: root, USERPROFILE: root, PATH: ''}, platform), null);
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 

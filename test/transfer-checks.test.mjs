@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -13,7 +13,7 @@ const expect = (label, got, want) => assert.deepEqual(
 const fail = (message) => assert.fail(message);
 
 test('bin import, duplicates, restoration, timeline and playhead frames', async (t) => {
-  const { createTransfer, timecodeToFrames } = await import(path.join(dist, 'transfer.js'));
+  const { createTransfer, timecodeToFrames } = await import(pathToFileURL(path.join(dist, 'transfer.js')).href);
 
   // Phase 5 slice 2 TDD: playhead timecode conversion must exist before insertion.
   expect('transfer: exports timecodeToFrames', typeof timecodeToFrames, 'function');

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, rmSync, mkdtempSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -18,7 +18,7 @@ test('history persistence, reuse, deletion and source boundaries', async (t) => 
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'clipdock-checks-'));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const fixtureDir = () => fixtureRoot;
-  const { DownloadHistory, recordHistoryWarning, safeHistorySource, supportedHistoryMediaPath } = await import(path.join(dist, 'history.js'));
+  const { DownloadHistory, recordHistoryWarning, safeHistorySource, supportedHistoryMediaPath } = await import(pathToFileURL(path.join(dist, 'history.js')).href);
   {
     const temp = mkdtempSync(path.join(fixtureDir(), 'clipdock-history-')); const managed = path.join(temp, 'managed'); mkdirSync(managed); const media = path.join(managed, 'one.mp4'); writeFileSync(media, 'video');
     const store = path.join(temp, 'userData', 'download-history.json'); let project = 'Project A'; const source = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'; const automation = { provider: 'youtube', source, selection: { start: 2, end: 8, label: 'Intro' }, chapters: [{ start: 2, end: 8, title: 'Intro' }] }; const input = { provider: 'youtube', source, filePath: media, assetId: 'dQw4w9WgXcQ', title: 'Title', creator: 'Channel', profile: 'original', quality: '1080p', mediaMode: 'video', selection: automation.selection, automation };

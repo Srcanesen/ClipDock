@@ -140,7 +140,7 @@ test('Pexels API and download boundaries', async (t) => {
     const rootDir = mkdtempSync(path.join(fixtureDir(), 'clipdock-pexels-root-recreate-')); const client = createPexelsClient(rootDir); rmSync(rootDir, { recursive: true, force: true }); const file = { id: '1', url: 'https://images.pexels.com/a.jpg', width: 1, height: 1, label: 'Original', mime: 'image/jpeg', size: null };
     globalThis.fetch = async () => bodyResponse([encoder.encode('image-bytes')], 'image/jpeg', { 'content-length': '11' });
     const result = await client.download('root-recreate', file, () => undefined);
-    if (!existsSync(result.filePath) || (statSync(rootDir).mode & 0o777) !== 0o700) throw new Error('deleted managed root was not recreated privately');
+    if (!existsSync(result.filePath) || (process.platform !== 'win32' && (statSync(rootDir).mode & 0o777) !== 0o700)) throw new Error('deleted managed root was not recreated privately');
     client.dispose(); rmSync(rootDir, { recursive: true, force: true });
   });
   await pexelsTest('pinned-clock media progress is throttled, monotonic, and forces final completion', async () => {

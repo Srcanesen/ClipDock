@@ -31,7 +31,7 @@ test('history refuses an aged live writer and retry preserves both successful ad
   assert.deepEqual(new DownloadHistory(f.store, f.root).list().map(x => x.title), ['B', 'A']);
 });
 
-test('Keychain recovery contenders cannot erase a successful save through a stale rollback', async t => {
+test('Keychain recovery contenders cannot erase a successful save through a stale rollback', { skip: process.platform === 'win32' && 'macOS Keychain lock recovery' }, async t => {
   const {base} = fixture(t), lock = path.join(base, 'keychain.lock'), saved = path.join(base, 'saved');
   fs.writeFileSync(lock, JSON.stringify({pid: 999999999, token: 'dead-owner-token', createdAt: Date.now() - 120000}));
   const old = new Date(Date.now() - 120000); fs.utimesSync(lock, old, old);

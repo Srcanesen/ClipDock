@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { writeFileSync, realpathSync } from 'node:fs';
+import path from 'node:path';
 import { test } from 'node:test';
 import { SessionTransferCards } from '../dist/main-process.js';
 import { download, mainFixture } from './helpers/files-main.mjs';
@@ -14,8 +15,8 @@ async function fixture(t, withSubtitle = false) {
   const f = await mainFixture(t, { realTransfer: true, SessionTransferCards: TrackedCards });
   // Exercise an accepted noncanonical spelling at the real publication boundary.
   const worker = f.workers[0];
-  const supplied = `${worker.root}/./clip één.mp4`;
-  const subtitle = `${worker.root}/clip één.en.srt`;
+  const supplied = [worker.root, '.', 'clip één.mp4'].join(path.sep);
+  const subtitle = path.join(worker.root, 'clip één.en.srt');
   worker.download = async () => {
     writeFileSync(supplied, 'media');
     if (withSubtitle) writeFileSync(subtitle, '1\n00:00:00,000 --> 00:00:01,000\nCaption\n');

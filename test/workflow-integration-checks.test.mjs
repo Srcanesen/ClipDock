@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -13,7 +13,7 @@ const expect = (label, got, want) => assert.deepEqual(
 const fail = (message) => assert.fail(message);
 
 test('shared initialization coalesces success and retries failure', async (t) => {
-  const { createSharedWorkflowIntegration } = await import(path.join(dist, 'workflow-integration.js'));
+  const { createSharedWorkflowIntegration } = await import(pathToFileURL(path.join(dist, 'workflow-integration.js')).href);
   {
     let initCalls = 0;
     const shared = createSharedWorkflowIntegration({

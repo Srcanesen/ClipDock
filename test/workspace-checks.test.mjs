@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { existsSync, mkdirSync, writeFileSync, rmSync, mkdtempSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const dist = path.join(root, 'dist');
@@ -18,7 +18,7 @@ test('managed workspace containment and cleanup', async (t) => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'clipdock-checks-'));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const fixtureDir = () => fixtureRoot;
-  const { inspectWorkspace, cleanupWorkspace } = await import(path.join(dist, 'workspace.js'));
+  const { inspectWorkspace, cleanupWorkspace } = await import(pathToFileURL(path.join(dist, 'workspace.js')).href);
   {
     const workspaceExpect = expect;
     const temp = mkdtempSync(path.join(fixtureDir(), 'clipdock-workspace-'));
