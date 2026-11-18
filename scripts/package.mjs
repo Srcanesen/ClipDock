@@ -23,7 +23,8 @@ try {
   // zip updates an existing archive in place; start from nothing so removed files do not survive.
   rmSync(zip, { force: true });
   if (process.platform === 'win32') {
-    execFileSync('tar.exe', ['-a', '-c', '-f', zip, name], { cwd: stage, stdio: 'inherit', windowsHide: true });
+    const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+    execFileSync(tar, ['-a', '-c', '-f', zip, name], { cwd: stage, stdio: 'inherit', windowsHide: true });
   } else {
     execFileSync('zip', ['-X', '-r', '-q', zip, name], { cwd: stage, stdio: 'inherit' });
   }

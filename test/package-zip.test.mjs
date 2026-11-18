@@ -6,6 +6,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { hashFile, inventory } from '../scripts/lib/release-artifact.mjs';
 
+const system32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(tmpdir(), 'clipdock-package-zip-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -15,7 +17,7 @@ function fixture(t) {
   return root;
 }
 
-const runPackage = (root, out) => spawnSync(process.execPath, [path.join(root, 'scripts', 'package.mjs'), `--out=${out}`], { encoding: 'utf8' });
+const runPackage = (root, out, env) => spawnSync(process.execPath, [path.join(root, 'scripts', 'package.mjs'), `--out=${out}`], { encoding: 'utf8', env });
 
 test('package zip holds the exact built plugin and install notes, without the Resolve native module', (t) => {
   const root = fixture(t);
@@ -25,7 +27,14 @@ test('package zip holds the exact built plugin and install notes, without the Re
   fs.mkdirSync(out);
   fs.writeFileSync(path.join(out, `ClipDock-${version}.zip`), 'not a zip');
 
-  const result = runPackage(root, out);
+  let env;
+  if (process.platform === 'win32') {
+    const bin = path.join(root, 'bin');
+    fs.mkdirSync(bin);
+    fs.copyFileSync(path.join(system32, 'where.exe'), path.join(bin, 'tar.exe'));
+    env = { ...process.env, PATH: [bin, process.env.PATH].join(path.delimiter) };
+  }
+  const result = runPackage(root, out, env);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.deepEqual(fs.readdirSync(out), [`ClipDock-${version}.zip`]);
 
@@ -33,7 +42,7 @@ test('package zip holds the exact built plugin and install notes, without the Re
   const archive = path.join(out, `ClipDock-${version}.zip`);
   fs.mkdirSync(extracted);
   const unzip = process.platform === 'win32'
-    ? spawnSync('tar.exe', ['-x', '-f', archive, '-C', extracted], { encoding: 'utf8', windowsHide: true })
+    ? spawnSync(path.join(system32, 'tar.exe'), ['-x', '-f', archive, '-C', extracted], { encoding: 'utf8', windowsHide: true })
     : spawnSync('unzip', ['-q', archive, '-d', extracted], { encoding: 'utf8' });
   assert.equal(unzip.status, 0, unzip.stderr);
   assert.deepEqual(fs.readdirSync(extracted), [`ClipDock-${version}`]);
