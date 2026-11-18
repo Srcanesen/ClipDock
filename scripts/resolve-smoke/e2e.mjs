@@ -278,7 +278,7 @@ export async function runE2e(cfg, injected = {}) {
     report.refusal.fuscriptPids = pre.fuscriptPids ?? [];
     if (!pre.ok) { exitCode = EXIT.REFUSED; throw new Error(activeProcessMessage(pre)); }
     const binary = report.bundle.binary;
-    const paths = deps.validatePaths({ binary, scriptApi: cfg.scriptApi, scriptLib: scriptLibForBinary(binary, deps.platform) });
+    const paths = deps.validatePaths({ binary, scriptApi: cfg.scriptApi, scriptLib: scriptLibForBinary(binary, deps.platform), platform: deps.platform });
     if (!paths.ok) throw new Error(paths.error.message);
     const python = deps.checkPython(cfg.python);
     if (!python.ok) throw new Error(python.error.message);

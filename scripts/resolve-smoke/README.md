@@ -56,6 +56,8 @@ the WI plugin (no menu, undocumented behavior).
 - Launches the **Resolve binary directly with `-nogui`** — never `open -a`
   (LaunchServices silently drops `-nogui`).
 - Configures the **official scripting env paths** for both spawned processes.
+  On Windows, preflight also checks for the installed `fuscript.exe` alongside
+  `Resolve.exe` and `fusionscript.dll`.
 - Waits **bounded** for `scriptapp` and ProjectManager readiness
   (`--timeout-ms`, default 120 s); the probe polls `GetProjectListInCurrentFolder()`
   as readiness evidence, not just `scriptapp`.

@@ -100,7 +100,7 @@ function isFile(filePath) {
  * Validates that every official path is present and a regular file/dir.
  * Returns {ok: true} or {ok: false, error: {code, message}}.
  */
-export function validatePaths({ binary, scriptApi, scriptLib }, { existsFn = existsSync, isFileFn = isFile } = {}) {
+export function validatePaths({ binary, scriptApi, scriptLib, platform = process.platform }, { existsFn = existsSync, isFileFn = isFile } = {}) {
   if (!existsFn(binary) || !isFileFn(binary)) {
     return {
       ok: false,
@@ -127,6 +127,12 @@ export function validatePaths({ binary, scriptApi, scriptLib }, { existsFn = exi
         message: `fusionscript library not found: ${scriptLib}`,
       },
     };
+  }
+  if (platform === 'win32') {
+    const fuscript = path.win32.join(path.win32.dirname(binary), 'fuscript.exe');
+    if (!existsFn(fuscript) || !isFileFn(fuscript)) {
+      return { ok: false, error: { code: 'fuscript-not-found', message: `Resolve scripting helper not found: ${fuscript}` } };
+    }
   }
   return { ok: true };
 }

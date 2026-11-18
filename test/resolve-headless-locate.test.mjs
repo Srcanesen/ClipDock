@@ -59,11 +59,26 @@ test('validatePaths accepts a complete environment and reports each missing piec
     const scriptApi = path.join(root, 'Scripting');
     mkdirSync(scriptApi, { recursive: true });
     const scriptLib = path.join(bundle, 'Contents', 'Libraries', 'Fusion', 'fusionscript.so');
-    assert.deepEqual(validatePaths({ binary, scriptApi, scriptLib }), { ok: true });
-    assert.equal(validatePaths({ binary: path.join(root, 'missing', 'Resolve'), scriptApi, scriptLib }).error.code, 'bundle-not-found');
-    assert.equal(validatePaths({ binary, scriptApi: path.join(root, 'no-scripting'), scriptLib }).error.code, 'script-api-not-found');
-    assert.equal(validatePaths({ binary, scriptApi, scriptLib: path.join(bundle, 'missing.so') }).error.code, 'script-lib-not-found');
+    const paths = { binary, scriptApi, scriptLib, platform: 'darwin' };
+    assert.deepEqual(validatePaths(paths), { ok: true });
+    assert.equal(validatePaths({ ...paths, binary: path.join(root, 'missing', 'Resolve') }).error.code, 'bundle-not-found');
+    assert.equal(validatePaths({ ...paths, scriptApi: path.join(root, 'no-scripting') }).error.code, 'script-api-not-found');
+    assert.equal(validatePaths({ ...paths, scriptLib: path.join(bundle, 'missing.so') }).error.code, 'script-lib-not-found');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('Windows path validation requires fuscript.exe from the same installation', () => {
+  const paths = {
+    binary: 'D:\\Resolve\\Resolve.exe', scriptApi: 'D:\\Scripting',
+    scriptLib: 'D:\\Resolve\\fusionscript.dll', platform: 'win32',
+  };
+  const files = new Set([paths.binary, paths.scriptLib]);
+  const fs = { existsFn: p => p === paths.scriptApi || files.has(p), isFileFn: p => files.has(p) };
+  assert.deepEqual(validatePaths(paths, fs), {
+    ok: false, error: { code: 'fuscript-not-found', message: 'Resolve scripting helper not found: D:\\Resolve\\fuscript.exe' },
+  });
+  files.add('D:\\Resolve\\fuscript.exe');
+  assert.deepEqual(validatePaths(paths, fs), { ok: true });
 });
