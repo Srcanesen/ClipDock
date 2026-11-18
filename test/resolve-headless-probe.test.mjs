@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { devNull, tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { DEFAULTS } from '../scripts/resolve-smoke/lib/args.mjs';
 import { runProbe } from '../scripts/resolve-smoke/lib/probe.mjs';
 
 /**
- * Deterministic probe.py tests — never a real Resolve. A fake `pgrep` (shell
- * script on PATH) feeds scripted PID sets, a fake DaVinciResolveScript module
+ * Deterministic probe.py tests — never a real Resolve. A fake process listing
+ * feeds scripted PID sets, a fake DaVinciResolveScript module
  * fakes the scripting API (or fails to import / misbehaves), and a quit log
  * proves whether Quit() was actually invoked.
  *
@@ -17,6 +18,7 @@ import { runProbe } from '../scripts/resolve-smoke/lib/probe.mjs';
  */
 
 const PROBE_PATH = fileURLToPath(new URL('../scripts/resolve-smoke/probe.py', import.meta.url));
+const WINDOWS = process.platform === 'win32';
 
 /**
  * Guards every mutating API: writes a sentinel file AND raises if ever
@@ -184,33 +186,48 @@ const EXPECTED_REQUIRED = [
 /** Feature-detected by transfer.ts (markers/color/end-frame): recorded, not red. */
 const EXPECTED_OPTIONAL = ['clip.SetClipColor', 'timeline.AddMarker', 'timeline.GetEndFrame'];
 
-/** Builds a fixture dir with the fake pgrep + fake scripting module. */
+/** Builds the fake scripting module and process listing. */
 function fixture({ pids, pgrepStatus = 0, quitLog, childPid, withChildPid = true, module = FAKE_BMD, mutateLog }) {
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-probe-own-'));
   const bin = path.join(root, 'bin');
   const mods = path.join(root, 'mods');
   mkdirSync(bin, { recursive: true });
   mkdirSync(mods, { recursive: true });
-  writeFileSync(path.join(bin, 'pgrep'), `#!/bin/sh\necho "${pids}"\nexit ${pgrepStatus}\n`);
-  chmodSync(path.join(bin, 'pgrep'), 0o755);
+  if (WINDOWS) {
+    const rows = ['"System Idle Process","0","Services","0","8 K"', ...pids.trim().split(/\s+/).filter(Boolean).map(pid => `"Resolve.exe","${pid}","Console","1","8 K"`)];
+    module += `\nimport subprocess\n
+def fake_tasklist(args, **kwargs):
+    assert args == ["tasklist", "/FO", "CSV", "/NH"]
+    if ${pgrepStatus} > 1:
+        raise subprocess.CalledProcessError(${pgrepStatus}, args)
+    return ${JSON.stringify(rows.join('\r\n') + '\r\n')}.encode("ascii")
+subprocess.check_output = fake_tasklist
+`;
+  } else {
+    writeFileSync(path.join(bin, 'pgrep'), `#!/bin/sh\necho "${pids}"\nexit ${pgrepStatus}\n`);
+    chmodSync(path.join(bin, 'pgrep'), 0o755);
+  }
   writeFileSync(path.join(mods, 'DaVinciResolveScript.py'), module);
   const env = {
-    PATH: `${bin}:${process.env.PATH}`,
+    ...process.env,
     PYTHONPATH: mods,
     FAKE_QUIT_LOG: quitLog,
     FAKE_MUTATE_LOG: mutateLog ?? path.join(root, 'mutate.log'),
   };
+  if (!WINDOWS) env.PATH = `${bin}:${process.env.PATH}`;
   if (withChildPid) {
     env.RESOLVE_SMOKE_CHILD_PID = String(childPid);
+  } else {
+    delete env.RESOLVE_SMOKE_CHILD_PID;
   }
   return { root, env };
 }
 
-async function run(python, env, mode, timeoutMs = 15000) {
-  return runProbe({ python, probeScript: PROBE_PATH, env, timeoutMs, mode });
+async function run(env, mode, timeoutMs = 15000) {
+  return runProbe({ python: DEFAULTS.python, probeScript: PROBE_PATH, env, timeoutMs, mode });
 }
 
-test('probe.py quits only when pgrep -x Resolve is exactly the harness child pid (quit-only)', async () => {
+test('probe.py quits only when the Resolve PID set is exactly the harness child PID (quit-only)', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-probe-own-'));
   try {
     const childPid = 4242;
@@ -218,7 +235,7 @@ test('probe.py quits only when pgrep -x Resolve is exactly the harness child pid
 
     // Exact match: ownership proven, Quit() runs.
     let fx = fixture({ pids: String(childPid), quitLog, childPid });
-    let result = await run('python3', fx.env, 'quit-only');
+    let result = await run(fx.env, 'quit-only');
     assert.equal(result.ok, true);
     assert.equal(result.quitRequested, true);
     assert.equal(result.quitError, null);
@@ -229,7 +246,7 @@ test('probe.py quits only when pgrep -x Resolve is exactly the harness child pid
     // Foreign instance appeared (TOCTOU): Quit skipped, sanitized error.
     rmSync(quitLog, { force: true });
     fx = fixture({ pids: `${childPid} 9001`, quitLog, childPid });
-    result = await run('python3', fx.env, 'quit-only');
+    result = await run(fx.env, 'quit-only');
     assert.equal(result.ok, true);
     assert.equal(result.quitRequested, false);
     assert.equal(result.quitError.code, 'quit-ownership-unproven');
@@ -242,7 +259,7 @@ test('probe.py quits only when pgrep -x Resolve is exactly the harness child pid
   }
 });
 
-test('probe.py skips Quit when pgrep fails or the child pid env is missing', async () => {
+test('probe.py skips Quit when process enumeration fails or the child PID env is missing', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-probe-own-'));
   try {
     const childPid = 5150;
@@ -250,16 +267,16 @@ test('probe.py skips Quit when pgrep fails or the child pid env is missing', asy
 
     // pgrep exits non-zero (other than 1): ownership unprovable.
     let fx = fixture({ pids: '', pgrepStatus: 2, quitLog, childPid });
-    let result = await run('python3', fx.env, 'quit-only');
+    let result = await run(fx.env, 'quit-only');
     assert.equal(result.quitRequested, false);
     assert.equal(result.quitError.code, 'quit-ownership-unproven');
-    assert.equal(result.quitError.message.includes('pgrep'), true);
+    assert.equal(result.quitError.message.includes(WINDOWS ? 'tasklist' : 'pgrep'), true);
     assert.equal(existsSync(quitLog), false);
     rmSync(fx.root, { recursive: true, force: true });
 
     // Harness never passed the child pid: ownership unprovable, fail safe.
     fx = fixture({ pids: String(childPid), quitLog, childPid, withChildPid: false });
-    result = await run('python3', fx.env, 'quit-only');
+    result = await run(fx.env, 'quit-only');
     assert.equal(result.quitRequested, false);
     assert.equal(result.quitError.code, 'quit-ownership-unproven');
     assert.equal(result.quitError.message.includes('RESOLVE_SMOKE_CHILD_PID'), true);
@@ -268,7 +285,7 @@ test('probe.py skips Quit when pgrep fails or the child pid env is missing', asy
 
     // No Resolve process at all: also unprovable (never quit blind).
     fx = fixture({ pids: '', pgrepStatus: 1, quitLog, childPid });
-    result = await run('python3', fx.env, 'quit-only');
+    result = await run(fx.env, 'quit-only');
     assert.equal(result.quitRequested, false);
     assert.equal(result.quitError.code, 'quit-ownership-unproven');
     assert.equal(existsSync(quitLog), false);
@@ -290,7 +307,7 @@ test('probe.py exits 2 with probe-import-failed when DaVinciResolveScript cannot
       childPid: 4242,
       module: 'raise RuntimeError("no DaVinciResolveScript here")\n',
     });
-    const result = await run('python3', fx.env, 'probe');
+    const result = await run(fx.env, 'probe');
     assert.equal(result.exitCode, 2);
     assert.equal(result.ok, false);
     assert.equal(result.error.code, 'probe-import-failed');
@@ -318,7 +335,7 @@ test('probe.py exits 3 with connect-timeout when scriptapp never becomes reachab
         '',
       ].join('\n'),
     });
-    const result = await run('python3', fx.env, 'probe', 1200);
+    const result = await run(fx.env, 'probe', 1200);
     assert.equal(result.exitCode, 3);
     assert.equal(result.ok, false);
     assert.equal(result.error.code, 'connect-timeout');
@@ -360,7 +377,7 @@ test('probe.py exits 4 with probe-failed when a mid-check call raises', async ()
         '',
       ].join('\n'),
     });
-    const result = await run('python3', fx.env, 'probe', 1200);
+    const result = await run(fx.env, 'probe', 1200);
     assert.equal(result.exitCode, 4);
     assert.equal(result.ok, false);
     assert.equal(result.error.code, 'probe-failed');
@@ -406,7 +423,7 @@ test('probe.py exits 5 with checks-failed when read-only checks run but fail', a
         '',
       ].join('\n'),
     });
-    const result = await run('python3', fx.env, 'probe', 1200);
+    const result = await run(fx.env, 'probe', 1200);
     assert.equal(result.exitCode, 5);
     assert.equal(result.ok, false);
     assert.equal(result.error, null); // contract: checks-failed carries no error payload
@@ -429,7 +446,7 @@ test('probe.py applies the same ownership gate in normal mode (checks still run 
     // Owned: checks pass and Quit is requested.
     const quitLogOwned = path.join(root, 'owned.log');
     let fx = fixture({ pids: String(childPid), quitLog: quitLogOwned, childPid });
-    let result = await run('python3', fx.env, 'probe');
+    let result = await run(fx.env, 'probe');
     assert.equal(result.ok, true);
     assert.deepEqual(result.checks.projectManager, true);
     assert.equal(result.quitRequested, true);
@@ -439,7 +456,7 @@ test('probe.py applies the same ownership gate in normal mode (checks still run 
     // Unowned: read-only checks still pass, Quit is skipped with an error.
     const quitLogForeign = path.join(root, 'foreign.log');
     fx = fixture({ pids: `${childPid} 7777`, quitLog: quitLogForeign, childPid });
-    result = await run('python3', fx.env, 'probe');
+    result = await run(fx.env, 'probe');
     assert.equal(result.ok, true); // checks themselves are unaffected
     assert.equal(result.quitRequested, false);
     assert.equal(result.quitError.code, 'quit-ownership-unproven');
@@ -457,7 +474,7 @@ test('probe.py reports a green transferApi covering the full transfer.ts surface
     const quitLog = path.join(root, 'quit.log');
     const mutateLog = path.join(root, 'mutate.log');
     const fx = fixture({ pids: String(childPid), quitLog, childPid, module: FAKE_FULL_BMD, mutateLog });
-    const result = await run('python3', fx.env, 'probe');
+    const result = await run(fx.env, 'probe');
     assert.equal(result.exitCode, 0);
     assert.equal(result.ok, true);
     const api = result.checks.transferApi;
@@ -513,7 +530,7 @@ test('probe.py exits 5 (red) when any required transferApi callable is missing',
       const quitLog = path.join(root, `quit-${c.key.replace(/\W+/g, '-')}.log`);
       const mutateLog = path.join(root, `mutate-${c.key.replace(/\W+/g, '-')}.log`);
       const fx = fixture({ pids: String(childPid), quitLog, childPid, module, mutateLog });
-      const result = await run('python3', fx.env, 'probe');
+      const result = await run(fx.env, 'probe');
       assert.equal(result.exitCode, 5, c.key);
       assert.equal(result.ok, false, c.key);
       assert.equal(result.error, null, c.key); // checks-failed carries no error payload
@@ -539,7 +556,7 @@ test('probe.py keeps no-project and no-timeline valid: object-scoped APIs report
     // No project open: resolve/projectManager/mediaStorage stay checked; all
     // project-scoped groups report unavailable and the probe stays green.
     let fx = fixture({ pids: String(childPid), quitLog, childPid, mutateLog });
-    let result = await run('python3', fx.env, 'probe');
+    let result = await run(fx.env, 'probe');
     assert.equal(result.exitCode, 0);
     assert.equal(result.ok, true);
     assert.equal(result.checks.transferApi.ok, true);
@@ -562,7 +579,7 @@ test('probe.py keeps no-project and no-timeline valid: object-scoped APIs report
     // else still verified (media pool folder + clip exist).
     const noTimeline = FAKE_FULL_BMD.replace('    def GetCurrentTimeline(self):\n        return _Timeline()\n', '    def GetCurrentTimeline(self):\n        return None\n');
     fx = fixture({ pids: String(childPid), quitLog, childPid, module: noTimeline, mutateLog });
-    result = await run('python3', fx.env, 'probe');
+    result = await run(fx.env, 'probe');
     assert.equal(result.exitCode, 0);
     assert.equal(result.checks.currentTimeline.present, false);
     assert.equal(result.checks.transferApi.ok, true);
@@ -576,7 +593,7 @@ test('probe.py keeps no-project and no-timeline valid: object-scoped APIs report
     // Folder with no clips: clip group unavailable, folder itself verified.
     const emptyFolder = FAKE_FULL_BMD.replace('        return [_Clip()]', '        return []');
     fx = fixture({ pids: String(childPid), quitLog, childPid, module: emptyFolder, mutateLog });
-    result = await run('python3', fx.env, 'probe');
+    result = await run(fx.env, 'probe');
     assert.equal(result.exitCode, 0);
     assert.equal(result.checks.transferApi.ok, true);
     assert.equal(result.checks.transferApi.required['folder.GetClipList'], true);
@@ -596,7 +613,7 @@ test('probe.py records missing optional callables (markers/color/end-frame) with
     const quitLog = path.join(root, 'quit.log');
     const mutateLog = path.join(root, 'mutate.log');
     const fx = fixture({ pids: String(childPid), quitLog, childPid, module, mutateLog });
-    const result = await run('python3', fx.env, 'probe');
+    const result = await run(fx.env, 'probe');
     assert.equal(result.exitCode, 0);
     assert.equal(result.checks.transferApi.ok, true);
     assert.equal(result.checks.transferApi.optional['timeline.AddMarker'], false);
@@ -608,9 +625,9 @@ test('probe.py records missing optional callables (markers/color/end-frame) with
 });
 
 test('normal probe clears an inherited quit-only flag and runs the checks', async (t) => {
-  const fx = fixture({ pids: '4242', childPid: 4242, quitLog: '/dev/null', module: FAKE_FULL_BMD });
+  const fx = fixture({ pids: '4242', childPid: 4242, quitLog: devNull, module: FAKE_FULL_BMD });
   t.after(() => rmSync(fx.root, { recursive: true, force: true }));
-  const result = await run('python3', { ...fx.env, RESOLVE_SMOKE_QUIT_ONLY: '1' }, 'probe');
+  const result = await run({ ...fx.env, RESOLVE_SMOKE_QUIT_ONLY: '1' }, 'probe');
   assert.equal(result.ok, true);
   assert.equal(result.checks.transferApi.ok, true);
   assert.equal(result.checks.projectManager, true);
@@ -620,9 +637,9 @@ test('required getter exceptions and invalid answers fail the actual Python prob
   for (const answer of ['raise RuntimeError("getter unavailable")', 'return None', 'return "wrong"']) {
     const module = FAKE_FULL_BMD.replace('    def GetStartFrame(self):\n        return 1000', `    def GetStartFrame(self):\n        ${answer}`);
     assert.notEqual(module, FAKE_FULL_BMD, 'fixture replacement must apply');
-    const fx = fixture({ pids: '4242', childPid: 4242, quitLog: '/dev/null', module });
+    const fx = fixture({ pids: '4242', childPid: 4242, quitLog: devNull, module });
     t.after(() => rmSync(fx.root, { recursive: true, force: true }));
-    const result = await run('python3', fx.env, 'probe');
+    const result = await run(fx.env, 'probe');
     assert.equal(result.exitCode, 5);
     assert.equal(result.ok, false);
     assert.equal(result.checks.transferApi.ok, false);
@@ -637,9 +654,9 @@ for (const scope of ['project', 'timeline', 'folder']) {
       const raises = answer.startsWith('RuntimeError');
       const module = FAKE_FULL_BMD.replace(`    def GetUniqueId(self):\n        return "${scope}-id"`, `    def GetUniqueId(self):\n        ${raises ? 'raise' : 'return'} ${answer}`);
       assert.notEqual(module, FAKE_FULL_BMD);
-      const fx = fixture({pids: '4242', childPid: 4242, quitLog: '/dev/null', module});
+      const fx = fixture({pids: '4242', childPid: 4242, quitLog: devNull, module});
       t.after(() => rmSync(fx.root, {recursive: true, force: true}));
-      const result = await run('python3', fx.env, 'probe');
+      const result = await run(fx.env, 'probe');
       assert.equal(result.exitCode, 5, answer);
       assert.equal(result.checks.transferApi.ok, false);
       assert.equal(result.checks.transferApi.callErrors[`${scope}.GetUniqueId`], raises ? 'id unavailable' : 'invalid required getter result');
@@ -652,18 +669,18 @@ test('probe validates timeline frame rate and observes custom settings without c
   for (const rate of ['None', 'True', '0', '-1', '"wrong"', 'float("nan")', 'float("inf")', '241', '"2.4e1"']) {
     const module = FAKE_FULL_BMD.replace(original, `    def GetSetting(self, setting):\n        return ${rate} if setting == "timelineFrameRate" else "1"`);
     assert.notEqual(module, FAKE_FULL_BMD);
-    const fx = fixture({pids: '4242', childPid: 4242, quitLog: '/dev/null', module});
+    const fx = fixture({pids: '4242', childPid: 4242, quitLog: devNull, module});
     t.after(() => rmSync(fx.root, {recursive: true, force: true}));
-    const result = await run('python3', fx.env, 'probe');
+    const result = await run(fx.env, 'probe');
     assert.equal(result.exitCode, 5, rate);
     assert.equal(result.checks.transferApi.callErrors['timeline.GetSetting.timelineFrameRate'], 'invalid required getter result');
   }
   for (const [answer, observed] of [['"1"', '1'], ['"0"', '0'], ['False', false], ['0', 0], ['None', null], ['"unknown"', 'unknown']]) {
     const module = FAKE_FULL_BMD.replace(original, `    def GetSetting(self, setting):\n        return "29.97" if setting == "timelineFrameRate" else ${answer}`);
     assert.notEqual(module, FAKE_FULL_BMD);
-    const fx = fixture({pids: '4242', childPid: 4242, quitLog: '/dev/null', module});
+    const fx = fixture({pids: '4242', childPid: 4242, quitLog: devNull, module});
     t.after(() => rmSync(fx.root, {recursive: true, force: true}));
-    const result = await run('python3', fx.env, 'probe');
+    const result = await run(fx.env, 'probe');
     assert.equal(result.exitCode, 0, answer);
     assert.equal(result.checks.transferApi.observed['timeline.GetSetting.timelineFrameRate'], '29.97');
     assert.equal(result.checks.transferApi.observed['timeline.GetSetting.useCustomSettings'], observed);
@@ -678,9 +695,9 @@ test('probe reports timeline settings getter exceptions and invalid custom-setti
   ]) {
     const module = FAKE_FULL_BMD.replace(original, `    def GetSetting(self, setting):\n        ${body}`);
     assert.notEqual(module, FAKE_FULL_BMD);
-    const fx = fixture({pids: '4242', childPid: 4242, quitLog: '/dev/null', module});
+    const fx = fixture({pids: '4242', childPid: 4242, quitLog: devNull, module});
     t.after(() => rmSync(fx.root, {recursive: true, force: true}));
-    const result = await run('python3', fx.env, 'probe');
+    const result = await run(fx.env, 'probe');
     assert.equal(result.exitCode, 5);
     assert.deepEqual(result.checks.transferApi.callErrors, errors);
   }

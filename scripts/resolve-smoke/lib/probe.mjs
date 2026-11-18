@@ -8,8 +8,9 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
+import { pythonInvocation } from './locate.mjs';
 import { checksSucceeded, sanitizeMessage } from './report.mjs';
-import { BoundedBuffer, waitForExit } from './spawn.mjs';
+import { BoundedBuffer, killWindowsTree, waitForExit } from './spawn.mjs';
 
 export const PROBE_OUTPUT_LIMIT = 64 * 1024;
 export const PROBE_STDERR_LIMIT = 4096;
@@ -50,7 +51,8 @@ export function parseProbeOutput(text) {
 
 function runPythonVersion(python) {
   try {
-    const res = spawnSync(python, ['--version'], { encoding: 'utf8' });
+    const [command, args] = pythonInvocation(python, ['--version']);
+    const res = spawnSync(command, args, { encoding: 'utf8', windowsHide: true });
     const text = `${res.stdout ?? ''}${res.stderr ?? ''}`.trim();
     return { ok: res.status === 0 && text.length > 0, version: text };
   } catch {
@@ -80,15 +82,17 @@ export function checkPython(python, { run = runPythonVersion } = {}) {
  * and requests Quit (best-effort fallback after a failed probe).
  */
 export async function runProbe({ python, probeScript, env, timeoutMs, mode = 'probe', waitFor = waitForExit }) {
+  const [command, args] = pythonInvocation(python, [probeScript]);
   const child = spawn(
-    python,
-    [probeScript],
+    command,
+    args,
     {
       env: {
         ...env,
         RESOLVE_SMOKE_DEADLINE_MS: String(Math.max(1, Math.floor(timeoutMs))),
         RESOLVE_SMOKE_QUIT_ONLY: mode === 'quit-only' ? '1' : '0',
       },
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -102,7 +106,8 @@ export async function runProbe({ python, probeScript, env, timeoutMs, mode = 'pr
   const output = stdout.toString();
   if (waited.kind !== 'exited') {
     try {
-      child.kill('SIGKILL');
+      if (process.platform === 'win32') killWindowsTree(child);
+      else child.kill('SIGKILL');
     } catch {
       // Already gone.
     }

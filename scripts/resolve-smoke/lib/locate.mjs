@@ -1,37 +1,64 @@
 /**
  * Path resolution for the ClipDock Resolve headless smoke harness.
  *
- * Maps the user-supplied bundle location onto the official macOS layout and
+ * Maps the user-supplied installation path onto the official layout and
  * composes the official scripting environment variables (RESOLVE_SCRIPT_API,
  * RESOLVE_SCRIPT_LIB, PYTHONPATH) exactly as documented in the Resolve
- * Scripting README ("Mac OS X" block). Deterministic unit-test seam
+ * Scripting README. Deterministic unit-test seam
  * (test/resolve-headless-locate.test.mjs); never launches Resolve.
  */
 
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
+const WINDOWS_INSTALL = ['Blackmagic Design', 'DaVinci Resolve'];
+
+export function supportsResolveSmoke(platform) {
+  return platform === 'darwin' || platform === 'win32';
+}
+
+export function resolveDefaults(platform, env) {
+  if (platform === 'win32') {
+    return {
+      bundle: path.win32.join(env.ProgramFiles || 'C:\\Program Files', ...WINDOWS_INSTALL),
+      scriptApi: path.win32.join(env.ProgramData || env.PROGRAMDATA || 'C:\\ProgramData', ...WINDOWS_INSTALL, 'Support', 'Developer', 'Scripting'),
+      python: 'py',
+    };
+  }
+  return {
+    bundle: '/Applications/DaVinci Resolve/DaVinci Resolve.app',
+    scriptApi: '/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting',
+    python: 'python3',
+  };
+}
+
 /** fusionscript.so sits at Contents/Libraries/Fusion/ relative to Contents/MacOS/. */
-const SCRIPT_LIB_REL = path.join('..', 'Libraries', 'Fusion', 'fusionscript.so');
+const SCRIPT_LIB_REL = '../Libraries/Fusion/fusionscript.so';
 
 /**
- * Accepts the .app bundle, its Contents/MacOS folder, or the "Resolve" binary
- * itself, and returns the binary path to spawn with -nogui.
+ * Accepts the .app bundle, its Contents/MacOS folder, or the Resolve binary on
+ * macOS, and the install folder or Resolve.exe on Windows.
  */
-export function resolveBinary(input) {
-  const base = path.basename(input);
+export function resolveBinary(input, platform = process.platform) {
+  if (platform === 'win32') {
+    return path.win32.basename(input).toLowerCase() === 'resolve.exe' ? input : path.win32.join(input, 'Resolve.exe');
+  }
+  const base = path.posix.basename(input);
   if (base === 'Resolve' && !input.endsWith('.app')) {
     return input;
   }
   if (base === 'MacOS') {
-    return path.join(input, 'Resolve');
+    return path.posix.join(input, 'Resolve');
   }
-  return path.join(input, 'Contents', 'MacOS', 'Resolve');
+  return path.posix.join(input, 'Contents', 'MacOS', 'Resolve');
 }
 
-/** Official fusionscript.so location for a resolved Resolve binary. */
-export function scriptLibForBinary(binary) {
-  return path.resolve(path.join(path.dirname(binary), SCRIPT_LIB_REL));
+/** Official scripting library location for a resolved Resolve binary. */
+export function scriptLibForBinary(binary, platform = process.platform) {
+  if (platform === 'win32') {
+    return path.win32.resolve(path.win32.dirname(binary), 'fusionscript.dll');
+  }
+  return path.posix.resolve(path.posix.dirname(binary), SCRIPT_LIB_REL);
 }
 
 /**
@@ -39,15 +66,26 @@ export function scriptLibForBinary(binary) {
  * RESOLVE_SCRIPT_LIB, and PYTHONPATH with $RESOLVE_SCRIPT_API/Modules appended
  * to any existing PYTHONPATH (README: PYTHONPATH="$PYTHONPATH:$RESOLVE_SCRIPT_API/Modules/").
  */
-export function scriptEnv(binary, scriptApi, baseEnv = {}) {
-  const modulesDir = path.join(scriptApi, 'Modules');
-  const pythonPath = [baseEnv.PYTHONPATH, modulesDir].filter(Boolean).join(path.delimiter);
+export function scriptEnv(binary, scriptApi, baseEnv = {}, platform = process.platform) {
+  const systemPath = platform === 'win32' ? path.win32 : path.posix;
+  const modulesDir = systemPath.join(scriptApi, 'Modules');
+  const pythonPath = [baseEnv.PYTHONPATH, modulesDir].filter(Boolean).join(systemPath.delimiter);
   return {
     ...baseEnv,
     RESOLVE_SCRIPT_API: scriptApi,
-    RESOLVE_SCRIPT_LIB: scriptLibForBinary(binary),
+    RESOLVE_SCRIPT_LIB: scriptLibForBinary(binary, platform),
     PYTHONPATH: pythonPath,
   };
+}
+
+export function pythonInvocation(python, args, platform = process.platform) {
+  if (platform === 'win32') {
+    const name = path.win32.basename(python).toLowerCase();
+    // Old callers pass the POSIX default. Avoid the Windows Store alias.
+    if (name === 'python3' || name === 'python3.exe') return ['py', ['-3', ...args]];
+    if (name === 'py' || name === 'py.exe') return [python, ['-3', ...args]];
+  }
+  return [python, args];
 }
 
 function isFile(filePath) {
@@ -68,7 +106,7 @@ export function validatePaths({ binary, scriptApi, scriptLib }, { existsFn = exi
       ok: false,
       error: {
         code: 'bundle-not-found',
-        message: `Resolve binary not found: ${binary} (use --bundle to point at the .app or binary)`,
+        message: `Resolve binary not found: ${binary} (use --bundle to point at the installation or binary)`,
       },
     };
   }

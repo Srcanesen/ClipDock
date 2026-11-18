@@ -2,7 +2,7 @@
 """ClipDock Resolve -nogui read-only smoke probe.
 
 Connects to the Resolve instance the harness launched with -nogui, through the
-official scripting module (DaVinciResolveScript + fusionscript.so), performs
+official scripting module (DaVinciResolveScript + fusionscript), performs
 READ-ONLY checks only (version, project manager / project-list readiness,
 current project presence/name, media pool and current timeline presence when
 available, plus the transferApi shape src/transfer.ts depends on), requests
@@ -23,7 +23,7 @@ is unreachable (no project / no timeline / no clip) its entries are reported as
 a reachable object fails the probe (exit 5).
 
 Quit is ownership-gated: the probe may call Resolve.Quit() only when the
-running `pgrep -x Resolve` PID set is exactly the harness child PID passed via
+running Resolve PID set is exactly the harness child PID passed via
 RESOLVE_SMOKE_CHILD_PID (closes the preflight/connect TOCTOU). When ownership
 cannot be proven, Quit is skipped and a sanitized ownership error is reported
 (quitError). This applies to the normal probe and the quit-only fallback
@@ -118,13 +118,35 @@ def request_quit(resolve):
         return False
 
 
+def windows_resolve_pids():
+    out = subprocess.check_output(
+        ["tasklist", "/FO", "CSV", "/NH"], stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW, timeout=5,
+    )
+    lines = [line for line in out.decode("utf-8", "replace").splitlines() if line.strip()]
+    if not lines:
+        return None
+    pids = set()
+    for line in lines:
+        row = re.fullmatch(r'"((?:[^"]|"")*)","([0-9]+)"(?:,"(?:[^"]|"")*"){3}', line)
+        if not row:
+            return None
+        if row[1].lower() == "resolve.exe":
+            pid = int(row[2])
+            if pid <= 0 or pid > 0xFFFFFFFF or pid in pids:
+                return None
+            pids.add(pid)
+    return pids
+
+
 def resolve_pids():
-    """Exact-comm `pgrep -x Resolve` PID set; None when pgrep itself fails
-    (fail safe: unknown process state can never prove ownership)."""
+    """Get the exact Resolve PID set. Unknown process state cannot prove ownership."""
     try:
+        if sys.platform == "win32":
+            return windows_resolve_pids()
         out = subprocess.check_output(["pgrep", "-x", "Resolve"], stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError as exc:
-        if exc.returncode == 1:
+        if sys.platform != "win32" and exc.returncode == 1:
             return set()  # pgrep exit 1 = no match
         return None
     except Exception:
@@ -140,7 +162,7 @@ def resolve_pids():
 def quit_state(resolve):
     """Ownership-gated Quit.
 
-    Quits only when the running `pgrep -x Resolve` PID set is exactly the
+    Quits only when the running Resolve PID set is exactly the
     harness child PID from RESOLVE_SMOKE_CHILD_PID. Otherwise skips Quit and
     returns a sanitized ownership error so the harness reports it; parent
     cleanup may signal only its own child.
@@ -157,11 +179,12 @@ def quit_state(resolve):
         }
     pids = resolve_pids()
     if pids is None:
+        command = "tasklist" if sys.platform == "win32" else "pgrep -x Resolve"
         return {
             "requested": False,
             "error": {
                 "code": "quit-ownership-unproven",
-                "message": "pgrep -x Resolve failed; cannot prove this Resolve instance belongs to the harness",
+                "message": "%s failed; cannot prove this Resolve instance belongs to the harness" % command,
             },
         }
     if pids != {child_pid}:

@@ -1,9 +1,10 @@
 /**
  * Pure CLI argument parsing for the ClipDock Resolve headless smoke harness.
  *
- * No Node runtime access on purpose: this is a fully deterministic unit-test
- * seam (test/resolve-headless-args.test.mjs) and must never launch Resolve.
+ * Platform and environment defaults are injectable for deterministic tests.
  */
+
+import { resolveDefaults } from './locate.mjs';
 
 export class ArgError extends Error {
   constructor(message) {
@@ -15,11 +16,11 @@ export class ArgError extends Error {
 export const USAGE = `ClipDock Resolve headless smoke harness (read-only, opt-in).
 
 Starts the official Resolve Studio binary directly with -nogui (never via
-"open -a"), connects through the official scripting API (DaVinciResolveScript +
-fusionscript.so), performs READ-ONLY checks (version, project manager /
+"open -a"), connects through the official scripting API, performs READ-ONLY
+checks (version, project manager /
 project-list readiness, current project presence/name, media pool and current
 timeline presence when available), requests Quit(), and enforces bounded
-SIGTERM -> SIGKILL cleanup. Emits one bounded machine-readable JSON report
+cleanup. Emits one bounded machine-readable JSON report
 with sanitized errors to stdout.
 
 Refuses to run when Resolve or fuscript is already active. Never creates,
@@ -29,18 +30,14 @@ Usage:
   node scripts/resolve-smoke/run.mjs [options]
 
 Options:
-  --bundle <path>      Resolve .app bundle, Contents/MacOS folder, or the
-                       "Resolve" binary itself
-                       (default: /Applications/DaVinci Resolve/DaVinci Resolve.app)
-  --script-api <path>  Developer/Scripting folder
-                       (default: /Library/Application Support/Blackmagic Design/
-                        DaVinci Resolve/Developer/Scripting)
-  --python <path>      python3 executable (default: python3)
+  --bundle <path>      Resolve installation or binary (default: official layout)
+  --script-api <path>  Developer/Scripting folder (default: official layout)
+  --python <path>      Python executable (default: python3 on macOS, py -3 on Windows)
   --probe <path>       probe.py override (default: scripts/resolve-smoke/probe.py)
   --timeout-ms <n>     overall launch+connect deadline for the probe (default: 120000)
   --quit-grace-ms <n>  bounded wait for graceful exit after Quit() (default: 15000)
-  --term-wait-ms <n>   bounded wait after SIGTERM before SIGKILL (default: 10000)
-  --kill-wait-ms <n>   bounded wait after SIGKILL (default: 5000)
+  --term-wait-ms <n>   macOS wait after SIGTERM before SIGKILL (default: 10000)
+  --kill-wait-ms <n>   bounded wait after forced termination (default: 5000)
   --pretty             pretty-print the JSON report
   --help               show this help and exit
 
@@ -53,11 +50,7 @@ Exit codes:
   5  probe failed (connect timeout, import failure, or checks failed)
   6  cleanup incomplete (Resolve or fuscript process residue)`;
 
-export const DEFAULTS = Object.freeze({
-  bundle: '/Applications/DaVinci Resolve/DaVinci Resolve.app',
-  scriptApi:
-    '/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting',
-  python: 'python3',
+const COMMON_DEFAULTS = {
   probe: null,
   timeoutMs: 120000,
   quitGraceMs: 15000,
@@ -65,7 +58,9 @@ export const DEFAULTS = Object.freeze({
   killWaitMs: 5000,
   pretty: false,
   help: false,
-});
+};
+
+export const DEFAULTS = Object.freeze({ ...COMMON_DEFAULTS, ...resolveDefaults(process.platform, process.env) });
 
 const NUMERIC_OPTIONS = new Set(['timeout-ms', 'quit-grace-ms', 'term-wait-ms', 'kill-wait-ms']);
 const STRING_OPTIONS = new Set(['bundle', 'script-api', 'python', 'probe']);
@@ -84,11 +79,11 @@ const PROP = {
   pretty: 'pretty',
 };
 
-export function parseArgs(argv) {
+export function parseArgs(argv, { platform = process.platform, env = process.env } = {}) {
+  const out = { ...COMMON_DEFAULTS, ...resolveDefaults(platform, env) };
   if (argv.includes('--help')) {
-    return { ...DEFAULTS, help: true };
+    return { ...out, help: true };
   }
-  const out = { ...DEFAULTS };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--') {

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { DEFAULTS } from '../scripts/resolve-smoke/lib/args.mjs';
+import { pythonInvocation } from '../scripts/resolve-smoke/lib/locate.mjs';
 import { fakeBridge, fakeEnvironment } from './helpers/resolve-e2e-fake.mjs';
 
 for (const markers of ['0', '1']) {
@@ -77,7 +79,8 @@ test('Python release frees only the requested handles and stdout remains NDJSON'
     { id: 2, op: 'release', handles: [1] },
     { id: 3, op: 'call', handle: 1, method: 'GetVersionString', args: [] },
   ].map(request => JSON.stringify(request)).join('\n') + '\n';
-  const result = spawnSync('python3', [script], { env, input, encoding: 'utf8', timeout: 3000 });
+  const [command, args] = pythonInvocation(DEFAULTS.python, [script]);
+  const result = spawnSync(command, args, { env, input, encoding: 'utf8', timeout: 3000 });
   assert.equal(result.status, 0);
   const responses = result.stdout.trim().split('\n').map(line => JSON.parse(line));
   assert.equal(responses.length, 3);

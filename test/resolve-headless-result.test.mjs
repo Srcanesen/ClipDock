@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { DEFAULTS } from '../scripts/resolve-smoke/lib/args.mjs';
 import { checkPython, parseProbeOutput, runProbe } from '../scripts/resolve-smoke/lib/probe.mjs';
 import { EXIT, buildReport, classifyExit, renderReport, sanitizeError, sanitizeMessage } from '../scripts/resolve-smoke/lib/report.mjs';
 
@@ -53,7 +54,7 @@ test('runProbe spawns a fake probe, captures output, and parses the result', asy
       'import json, sys\n'
       + 'sys.stdout.write("CLIPDOCK_SMOKE_JSON:" + json.dumps({"ok": True, "checks": {"projectManager": True, "projectList": {"ready": True}, "transferApi": {"ok": True}}}) + "\\n")\n',
     );
-    const result = await runProbe({ python: 'python3', probeScript: script, env: {}, timeoutMs: 15000, mode: 'probe' });
+    const result = await runProbe({ python: DEFAULTS.python, probeScript: script, env: process.env, timeoutMs: 15000, mode: 'probe' });
     assert.equal(result.ok, true);
     assert.equal(result.exitCode, 0);
     assert.deepEqual(result.checks, { projectManager: true, projectList: { ready: true }, transferApi: { ok: true } });
@@ -74,7 +75,7 @@ test('runProbe wires the official env (deadline + quit-only flag) into the probe
       + '"ok": True, "deadline": os.environ.get("RESOLVE_SMOKE_DEADLINE_MS"),'
       + '"quitOnly": os.environ.get("RESOLVE_SMOKE_QUIT_ONLY")}) + "\\n")\n',
     );
-    const result = await runProbe({ python: 'python3', probeScript: script, env: { RESOLVE_SCRIPT_API: '/s' }, timeoutMs: 9000, mode: 'quit-only' });
+    const result = await runProbe({ python: DEFAULTS.python, probeScript: script, env: { ...process.env, RESOLVE_SCRIPT_API: '/s' }, timeoutMs: 9000, mode: 'quit-only' });
     assert.equal(result.ok, true);
     assert.equal(result.output.includes('"deadline": "9000"'), true);
     assert.equal(result.output.includes('"quitOnly": "1"'), true);
@@ -89,7 +90,7 @@ test('runProbe kills a hung probe and reports probe-timeout', async () => {
     const script = path.join(root, 'hung-probe.py');
     writeFileSync(script, 'import time\ntime.sleep(60)\n');
     const fakeWaitFor = () => Promise.resolve({ kind: 'timeout' });
-    const result = await runProbe({ python: 'python3', probeScript: script, env: {}, timeoutMs: 5000, mode: 'probe', waitFor: fakeWaitFor });
+    const result = await runProbe({ python: DEFAULTS.python, probeScript: script, env: process.env, timeoutMs: 5000, mode: 'probe', waitFor: fakeWaitFor });
     assert.equal(result.ok, false);
     assert.equal(result.error.code, 'probe-timeout');
   } finally {

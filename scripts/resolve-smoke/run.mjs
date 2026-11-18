@@ -5,7 +5,7 @@
  * Orchestrates: pre-flight refusal when Resolve or fuscript is active ->
  * direct bundle-binary spawn with -nogui (never `open -a`) under the official
  * scripting env -> bounded probe (scriptapp + ProjectManager readiness,
- * read-only checks, Quit request) -> bounded graceful/SIGTERM/SIGKILL
+ * read-only checks, Quit request) -> bounded
  * cleanup -> residue check -> one bounded machine-readable JSON report.
  *
  * Never creates, saves, closes, renames, or deletes projects, timelines, bins,
@@ -15,7 +15,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ArgError, USAGE, parseArgs } from './lib/args.mjs';
-import { resolveBinary, scriptEnv, scriptLibForBinary, validatePaths } from './lib/locate.mjs';
+import { resolveBinary, scriptEnv, scriptLibForBinary, supportsResolveSmoke, validatePaths } from './lib/locate.mjs';
 import { BoundedBuffer, activeProcessMessage, assertNoResolveRunning, collectResidue, shutdown, spawnResolve } from './lib/spawn.mjs';
 import { checkPython, runProbe } from './lib/probe.mjs';
 import { EXIT, buildReport, classifyExit, renderReport, sanitizeMessage } from './lib/report.mjs';
@@ -63,11 +63,10 @@ async function main() {
     process.exitCode = exitCode;
   };
 
-  // First supported environment: macOS + Resolve Studio 21. Fail clearly elsewhere.
-  if (process.platform !== 'darwin') {
+  if (!supportsResolveSmoke(process.platform)) {
     return finish(EXIT.ENVIRONMENT, {
       code: 'unsupported-platform',
-      message: `harness supports macOS only, found ${process.platform}`,
+      message: `harness supports macOS and Windows, found ${process.platform}`,
     });
   }
 
@@ -123,7 +122,7 @@ async function main() {
   child.stderr.on('data', (chunk) => childErr.push(chunk));
 
   // Close the preflight/connect Quit TOCTOU: the probe may call Resolve.Quit
-  // only when `pgrep -x Resolve` is exactly this child pid. Pass the pid
+  // only when the Resolve PID set is exactly this child PID. Pass the PID
   // through env; probe.py verifies ownership before both normal and quit-only
   // Quit and skips Quit with a sanitized ownership error otherwise. Parent
   // cleanup below signals only this own child.
@@ -165,7 +164,7 @@ async function main() {
     }
   }
 
-  // Bounded shutdown: Quit() grace -> SIGTERM -> SIGKILL.
+  // Bounded shutdown after the ownership-gated Quit().
   const cleanup = await shutdown(child, {
     graceMs: cfg.quitGraceMs,
     termMs: cfg.termWaitMs,
@@ -178,7 +177,7 @@ async function main() {
     signal: cleanup.signal ?? null,
   };
 
-  // Residue evidence: no Resolve and no fuscript process may remain. pgrep
+  // Residue evidence: no Resolve and no fuscript process may remain. Enumeration
   // failure is fail-safe: unknown residue exits cleanup-failed, never 0.
   await sleep(RESIDUE_SETTLE_MS);
   const residueResult = collectResidue();

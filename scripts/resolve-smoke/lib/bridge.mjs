@@ -1,10 +1,16 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { pythonInvocation } from './locate.mjs';
 import { BoundedBuffer, shutdown } from './spawn.mjs';
 
 /** Serialized RPC. A timed-out stream is poisoned: later mutations cannot run. */
 export function createPythonBridge({ python, env, script, timeoutMs = 30000 }) {
-  const child = spawn(python, ['-u', script], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const [command, args] = pythonInvocation(python, ['-u', script]);
+  const child = spawn(command, args, {
+    env: process.platform === 'win32' ? { ...env, PYTHONIOENCODING: 'utf-8' } : env,
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   const stderr = new BoundedBuffer(4096);
   child.stderr.on('data', chunk => stderr.push(chunk));
   const lines = createInterface({ input: child.stdout });

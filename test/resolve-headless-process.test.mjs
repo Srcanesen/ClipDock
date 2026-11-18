@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { test } from 'node:test';
 import {
   BoundedBuffer,
   assertNoResolveRunning,
   collectProcesses,
   collectResidue,
+  parseTasklist,
   shutdown,
   spawnResolve,
   waitForExit,
@@ -52,7 +54,7 @@ test('waitForExit resolves with the exit code or a bounded timeout', async () =>
   }
 });
 
-test('shutdown escalates graceful -> TERM -> KILL and reports the winning stage', async (t) => {
+test('shutdown escalates graceful -> TERM -> KILL and reports the winning stage', { skip: process.platform === 'win32' }, async (t) => {
   // Graceful: the process exits on its own within the grace window.
   const a = childProcess('setTimeout(() => {}, 80)');
   t.after(() => killAndReap(a));
@@ -90,20 +92,45 @@ test('shutdown escalates graceful -> TERM -> KILL and reports the winning stage'
   assert.deepEqual(syntheticSignals, ['SIGTERM', 'SIGKILL']);
 });
 
+test('Windows shutdown uses taskkill for its live child', { skip: process.platform !== 'win32' }, async t => {
+  const child = childProcess('setInterval(() => {}, 1000)');
+  t.after(() => killAndReap(child));
+  const result = await shutdown(child, { graceMs: 150, killMs: 5000 });
+  assert.equal(result.kind, 'killed');
+  assert.notEqual(child.exitCode, null);
+});
+
 test('assertNoResolveRunning refuses when a Resolve-named process exists', () => {
   assert.deepEqual(assertNoResolveRunning(() => []), { ok: true, pids: [], fuscriptPids: [] });
   assert.deepEqual(assertNoResolveRunning(comm => comm === 'Resolve' ? [42] : []), { ok: false, pids: [42], fuscriptPids: [] });
 });
 
 test('collectProcesses finds a live child by exact comm name', async () => {
-  const sleeper = spawn('/bin/sleep', ['30'], { stdio: 'ignore' });
+  const windows = process.platform === 'win32';
+  const sleeper = windows ? childProcess('setInterval(() => {}, 1000)') : spawn('/bin/sleep', ['30'], { stdio: 'ignore' });
   try {
-    const pids = collectProcesses('sleep');
+    const pids = collectProcesses(windows ? path.basename(NODE, '.exe') : 'sleep');
     assert.equal(Array.isArray(pids), true);
     assert.equal(pids.includes(sleeper.pid), true);
   } finally {
     await killAndReap(sleeper);
   }
+});
+
+test('tasklist parsing matches exact executable names and fails closed on malformed output', () => {
+  const output = [
+    '"System Idle Process","0","Services","0","8 K"',
+    '"Resolve helper.exe","32","Console","1","1,728 K"',
+    '"RESOLVE.EXE","42","Console","1","30,000 K"',
+    '"Resolve.exe","43","Services","0","30,000 K"',
+    '"fuscript.exe","52","Console","1","4,200 K"',
+  ].join('\r\n') + '\r\n';
+  assert.deepEqual(parseTasklist(output, 'Resolve.exe'), [42, 43]);
+  assert.deepEqual(parseTasklist(output, 'fuscript.exe'), [52]);
+  assert.deepEqual(parseTasklist(output, 'other.exe'), []);
+  assert.throws(() => parseTasklist('', 'Resolve.exe'), /no process rows/);
+  assert.throws(() => parseTasklist(output + '"Resolve.exe","oops"', 'Resolve.exe'), /invalid process data/);
+  assert.throws(() => parseTasklist(output.replace('"42"', '"0"'), 'Resolve.exe'), /invalid process IDs/);
 });
 
 test('collectResidue reports live Resolve/fuscript counts or a fail-safe error', () => {

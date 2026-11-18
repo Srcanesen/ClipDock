@@ -2,9 +2,8 @@
  * Process primitives for the ClipDock Resolve headless smoke harness.
  *
  * Direct-binary spawn with -nogui (never `open -a`), bounded output capture,
- * bounded graceful/TERM/KILL shutdown, and exact-comm process accounting via
- * pgrep. Deterministic unit-test seam (test/resolve-headless-process.test.mjs):
- * tests use plain `node -e` / `sleep` children, never Resolve.
+ * bounded shutdown, and exact-name process accounting via pgrep or tasklist.
+ * Tests use plain `node -e` / `sleep` children, never Resolve.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -53,7 +52,7 @@ export class BoundedBuffer {
 
 /** Spawns the Resolve binary directly with -nogui. Never uses `open -a`. */
 export function spawnResolve(binary, { env }) {
-  const child = spawn(binary, ['-nogui'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(binary, ['-nogui'], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   child.launch = new Promise((resolve) => {
     child.once('spawn', () => resolve({ ok: true }));
     child.once('error', (error) => { child.launchError = error; resolve({ ok: false, error }); });
@@ -67,6 +66,12 @@ function sendSignal(child, signal) {
   } catch {
     // Process already gone; treat as delivered.
   }
+}
+
+export function killWindowsTree(child) {
+  // Use only our live ChildProcess, never a PID found in a process listing.
+  if (!Number.isSafeInteger(child.pid) || child.pid <= 0 || child.exitCode !== null || child.signalCode !== null) return;
+  spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5000 });
 }
 
 /**
@@ -108,13 +113,14 @@ export function waitForExit(child, ms) {
 
 /**
  * Bounded shutdown ladder: wait `graceMs` for the app to honor Quit(), then
- * SIGTERM and wait `termMs`, then SIGKILL and wait `killMs`.
+ * SIGTERM and wait `termMs` on macOS, then force termination and wait
+ * `killMs`. Windows force-terminates only the owned process tree.
  *
  * Resolves with {kind, ms, ...}: 'graceful' | 'terminated' | 'killed' when the
  * process exited, 'error' when the child never spawned, 'still-running' when
  * the process survived the whole ladder.
  */
-export async function shutdown(child, { graceMs, termMs, killMs, waitFor = waitForExit, signal = sendSignal }) {
+export async function shutdown(child, { graceMs, termMs, killMs, waitFor = waitForExit, signal = sendSignal, platform = process.platform, killTree = killWindowsTree }) {
   const startedAt = Date.now();
   const first = await waitFor(child, graceMs);
   if (first.kind === 'exited') {
@@ -123,15 +129,19 @@ export async function shutdown(child, { graceMs, termMs, killMs, waitFor = waitF
   if (first.kind === 'error') {
     return { kind: 'error', ms: Date.now() - startedAt, error: first.error };
   }
-  signal(child, 'SIGTERM');
-  const second = await waitFor(child, termMs);
-  if (second.kind === 'exited') {
-    return { kind: 'terminated', ms: Date.now() - startedAt, exitCode: second.exitCode, signal: second.signal };
+  if (platform === 'win32') {
+    killTree(child);
+  } else {
+    signal(child, 'SIGTERM');
+    const second = await waitFor(child, termMs);
+    if (second.kind === 'exited') {
+      return { kind: 'terminated', ms: Date.now() - startedAt, exitCode: second.exitCode, signal: second.signal };
+    }
+    if (second.kind === 'error') {
+      return { kind: 'error', ms: Date.now() - startedAt, error: second.error };
+    }
+    signal(child, 'SIGKILL');
   }
-  if (second.kind === 'error') {
-    return { kind: 'error', ms: Date.now() - startedAt, error: second.error };
-  }
-  signal(child, 'SIGKILL');
   const third = await waitFor(child, killMs);
   if (third.kind === 'exited') {
     return { kind: 'killed', ms: Date.now() - startedAt, exitCode: third.exitCode, signal: third.signal };
@@ -139,11 +149,32 @@ export async function shutdown(child, { graceMs, termMs, killMs, waitFor = waitF
   return { kind: 'still-running', ms: Date.now() - startedAt };
 }
 
+export function parseTasklist(output, image) {
+  const lines = output.trim().split(/\r?\n/).filter(line => line.trim() !== '');
+  if (!lines.length) throw new Error('tasklist returned no process rows');
+  const pids = [];
+  for (const line of lines) {
+    const row = /^"((?:[^"]|"")*)","(\d+)"(?:,"(?:[^"]|"")*"){3}$/.exec(line);
+    if (!row) throw new Error('tasklist returned invalid process data');
+    if (row[1].toLowerCase() !== image.toLowerCase()) continue;
+    const pid = Number(row[2]);
+    if (!Number.isInteger(pid) || pid <= 0 || pid > 0xffffffff || pids.includes(pid)) throw new Error('tasklist returned invalid process IDs');
+    pids.push(pid);
+  }
+  return pids;
+}
+
 /**
- * Exact-comm process accounting via `pgrep -x`. Returns a list of pids;
- * throws when pgrep itself fails so callers can fail safe (never assume zero).
+ * Exact-name process accounting. Throws when enumeration fails so callers
+ * can fail safe.
  */
-export function collectProcesses(comm) {
+export function collectProcesses(comm, platform = process.platform) {
+  if (platform === 'win32') {
+    const res = spawnSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+    if (res.error) throw new Error(`tasklist failed: ${res.error.message}`);
+    if (res.status !== 0) throw new Error(`tasklist exited with status ${res.status}`);
+    return parseTasklist(res.stdout, `${comm}.exe`);
+  }
   let res;
   try {
     res = spawnSync('pgrep', ['-x', comm], { encoding: 'utf8' });
@@ -183,8 +214,8 @@ export function activeProcessMessage({pids, fuscriptPids = []}) {
 }
 
 /**
- * Residue evidence: live `Resolve` and `fuscript` process counts. When pgrep
- * itself fails the result is {ok:false, residue:{resolve:-1,fuscript:-1}, error}
+ * Residue evidence: live `Resolve` and `fuscript` process counts. When enumeration
+ * fails the result is {ok:false, residue:{resolve:-1,fuscript:-1}, error}
  * so callers fail safe and can never treat unknown residue as success (the
  * harness must exit cleanup-failed, never 0). The collector is injectable for
  * deterministic tests (test/resolve-headless-process.test.mjs).

@@ -7,7 +7,8 @@ Workflow Integration plugin.
 ## Exact scope
 
 This harness verifies the **Resolve scripting API shape only** over the official
-scripting path (`DaVinciResolveScript` module + `fusionscript.so`, env vars
+scripting path (`DaVinciResolveScript` module + `fusionscript.so` on macOS
+or `fusionscript.dll` on Windows, env vars
 `RESOLVE_SCRIPT_API` / `RESOLVE_SCRIPT_LIB` / `PYTHONPATH` exactly as the
 Resolve Scripting README documents):
 
@@ -50,8 +51,9 @@ the WI plugin (no menu, undocumented behavior).
 ## Safety invariants
 
 - Refuses to run when **any Resolve or fuscript process is already active**
-  (pre-flight `pgrep -x Resolve` / `pgrep -x fuscript` check).
-- Launches the **bundle binary directly with `-nogui`** — never `open -a`
+  (`pgrep -x Resolve` / `pgrep -x fuscript` on macOS, exact executable
+  names `Resolve.exe` / `fuscript.exe` in `tasklist /FO CSV /NH` on Windows).
+- Launches the **Resolve binary directly with `-nogui`** — never `open -a`
   (LaunchServices silently drops `-nogui`).
 - Configures the **official scripting env paths** for both spawned processes.
 - Waits **bounded** for `scriptapp` and ProjectManager readiness
@@ -65,30 +67,32 @@ the WI plugin (no menu, undocumented behavior).
   presence only, and the deterministic unit tests guard every one of them with
   methods that raise and write a sentinel if ever invoked.
 - **Ownership-gated `Quit()`** (closes the preflight/connect TOCTOU): the probe
-  may call `Quit()` only when the running `pgrep -x Resolve` PID set is exactly
+  may call `Quit()` only when the running Resolve PID set is exactly
   the child PID this harness spawned (passed via `RESOLVE_SMOKE_CHILD_PID`),
   for both the normal probe and the quit-only fallback. When ownership cannot
   be proven, Quit is skipped and a sanitized `quit-ownership-unproven` error is
   reported (exit 5). Parent cleanup signals **only its own child**.
-- Requests `Quit()` from the probe and enforces a **bounded TERM → KILL**
-  ladder (`--quit-grace-ms` / `--term-wait-ms` / `--kill-wait-ms`).
+- Requests `Quit()` from the probe, waits `--quit-grace-ms`, then enforces
+  **bounded forced shutdown**. macOS uses TERM → KILL with `--term-wait-ms`
+  and `--kill-wait-ms`. Windows uses `taskkill /PID <child-pid> /T /F` and
+  `--kill-wait-ms`.
 - Verifies **no `Resolve` or `fuscript` process remains** (residue evidence in
-  the report) and fails the run otherwise; a failed residue check (pgrep
-  failure) exits `cleanup-failed`, never 0.
+  the report) and fails the run otherwise. A failed process enumeration
+  exits `cleanup-failed`.
 - Emits **one bounded machine-readable JSON report** with sanitized, capped
   error messages; child stderr is captured through a bounded ring buffer.
 
-## Requirements (first supported environment)
+## Requirements
 
-- macOS (Resolve Studio 21; anything else fails with `unsupported-platform`).
+- macOS or Windows with Resolve Studio 21.
 - Resolve Studio with external scripting enabled (System → "External scripting
   using": Local or Network) — Free Resolve does not support external scripts.
-- Python >= 3.6 64-bit on `PATH` (or `--python`).
+- Python >= 3.6 64-bit on `PATH` (or `--python`). Windows uses `py -3`.
 
 ## Usage
 
 ```sh
-node scripts/resolve-smoke/run.mjs              # defaults: official macOS layout
+node scripts/resolve-smoke/run.mjs              # defaults: official installation
 node scripts/resolve-smoke/run.mjs --help       # options + exit codes
 node scripts/resolve-smoke/run.mjs --pretty     # pretty JSON report
 npm run test:resolve:headless                   # equivalent npm entry (opt-in)
@@ -98,13 +102,13 @@ Options (all bounded):
 
 | Option | Default |
 |---|---|
-| `--bundle <path>` | `/Applications/DaVinci Resolve/DaVinci Resolve.app` |
-| `--script-api <path>` | `/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting` |
-| `--python <path>` | `python3` |
+| `--bundle <path>` | macOS: `/Applications/DaVinci Resolve/DaVinci Resolve.app`. Windows: `%ProgramFiles%\Blackmagic Design\DaVinci Resolve`. |
+| `--script-api <path>` | macOS: `/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting`. Windows: `%PROGRAMDATA%\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting`. |
+| `--python <path>` | macOS: `python3`. Windows: `py` with `-3`. |
 | `--probe <path>` | `scripts/resolve-smoke/probe.py` |
 | `--timeout-ms <n>` | `120000` |
 | `--quit-grace-ms <n>` | `15000` |
-| `--term-wait-ms <n>` | `10000` |
+| `--term-wait-ms <n>` | `10000` (macOS only) |
 | `--kill-wait-ms <n>` | `5000` |
 | `--pretty` | off |
 
@@ -116,15 +120,15 @@ unavailable).
 
 ## Files
 
-- `run.mjs` — orchestration: pre-flight → spawn → probe → Quit → TERM/KILL → residue → JSON.
+- `run.mjs` — orchestration: pre-flight → spawn → probe → Quit → shutdown → residue → JSON.
 - `probe.py` — the read-only Python probe (stdlib + official module only);
   reports the `transferApi` shape `src/transfer.ts` depends on (required
   callables fail exit 5 when missing on a reachable object; mutating APIs are
-  presence-checked and never invoked); Quit is ownership-gated on
-  `pgrep -x Resolve` == harness child PID.
+  presence-checked and never invoked). Quit requires an exact Resolve PID
+  match to the child this harness started.
 - `lib/args.mjs` — pure CLI parsing seam.
 - `lib/locate.mjs` — bundle/scripting path + official env composition seam.
-- `lib/spawn.mjs` — bounded buffers, wait/TERM/KILL ladder, pgrep accounting seam.
+- `lib/spawn.mjs` — bounded buffers, platform shutdown and process accounting.
 - `lib/probe.mjs` — probe execution + marked-JSON parsing seam.
 - `lib/report.mjs` — sanitized bounded JSON report seam.
 

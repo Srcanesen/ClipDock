@@ -56,7 +56,6 @@ async function runInjected(t, markers = '1', extra = {}, overrides = {}) {
   env.FAKE_LOG = path.join(root, 'calls.log');
   let fixtureRoot;
   const result = await runE2e(parseE2eArgs([]), {
-    platform: 'darwin',
     assertNoResolveRunning: () => ({ ok: true, pids: [] }),
     collectProcesses: () => [123],
     validatePaths: () => ({ ok: true }),
@@ -93,7 +92,7 @@ for (const markers of ['0', '1']) {
     assert.deepEqual(result.report.checks['timeline-playhead'].actual, {kind: 'timeline-inserted', count: 3, recordFrame: 25});
     assert.equal(result.report.checks['media-prep-fast'].actual.kind, 'imported');
     assert.equal(existsSync(fixtureRoot), false);
-    const calls = readFileSync(env.FAKE_LOG, 'utf8').trim().split('\n');
+    const calls = readFileSync(env.FAKE_LOG, 'utf8').trim().split(/\r?\n/);
     assert.deepEqual(calls.slice(-2), ['CloseProject', 'DeleteProject']);
     assert.deepEqual(log, ['bridge-close', 'quit', 'shutdown', 'residue']);
   });
@@ -139,7 +138,7 @@ test('failed checks exit 5 and still close/delete the project and remove fixture
   assert.equal(result.report.ok, false);
   assert.equal(result.report.checks['import-active'].status, 'fail');
   assert.equal(result.report.checks['import-active'].actual.count, 0);
-  assert.deepEqual(readFileSync(env.FAKE_LOG, 'utf8').trim().split('\n').slice(-2), ['CloseProject', 'DeleteProject']);
+  assert.deepEqual(readFileSync(env.FAKE_LOG, 'utf8').trim().split(/\r?\n/).slice(-2), ['CloseProject', 'DeleteProject']);
   assert.equal(existsSync(fixtureRoot), false);
   assert.deepEqual(log, ['bridge-close', 'quit', 'shutdown', 'residue']);
 });
@@ -182,6 +181,6 @@ test('a rejected project creation exits setup-failed without attempting close/de
   assert.equal(result.report.errors[0].code, 'setup-failed');
   assert.match(result.report.errors[0].message, /CreateProject returned no project/);
   assert.equal(existsSync(fixtureRoot), false);
-  assert.deepEqual(readFileSync(env.FAKE_LOG, 'utf8').trim().split('\n'), ['CreateProject']);
+  assert.deepEqual(readFileSync(env.FAKE_LOG, 'utf8').trim().split(/\r?\n/), ['CreateProject']);
   assert.deepEqual(log, ['bridge-close', 'quit', 'shutdown', 'residue']);
 });

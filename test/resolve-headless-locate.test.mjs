@@ -17,46 +17,39 @@ function fakeBundle(root) {
 }
 
 test('resolveBinary accepts the .app bundle, Contents/MacOS, or the binary itself', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'clipdock-locate-'));
-  try {
-    const { bundle, binary } = fakeBundle(root);
-    assert.equal(resolveBinary(bundle), binary);
-    assert.equal(resolveBinary(path.join(bundle, 'Contents', 'MacOS')), binary); // Contents/MacOS
-    assert.equal(resolveBinary(binary), binary);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  const bundle = '/tmp/DaVinci Resolve.app';
+  const binary = `${bundle}/Contents/MacOS/Resolve`;
+  assert.equal(resolveBinary(bundle, 'darwin'), binary);
+  assert.equal(resolveBinary(`${bundle}/Contents/MacOS`, 'darwin'), binary);
+  assert.equal(resolveBinary(binary, 'darwin'), binary);
 });
 
 test('scriptLibForBinary and scriptEnv follow the official macOS scripting layout', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'clipdock-locate-'));
-  try {
-    const { bundle, binary } = fakeBundle(root);
-    const scriptApi = path.join(root, 'Scripting');
-    mkdirSync(scriptApi, { recursive: true });
-    assert.equal(scriptLibForBinary(binary), path.join(bundle, 'Contents', 'Libraries', 'Fusion', 'fusionscript.so'));
-    const env = scriptEnv(binary, scriptApi, { PYTHONPATH: '/existing', HOME: '/tmp' });
-    assert.equal(env.RESOLVE_SCRIPT_API, scriptApi);
-    assert.equal(env.RESOLVE_SCRIPT_LIB, path.join(bundle, 'Contents', 'Libraries', 'Fusion', 'fusionscript.so'));
-    const parts = env.PYTHONPATH.split(path.delimiter);
-    assert.equal(parts[0], '/existing'); // existing PYTHONPATH preserved first
-    assert.equal(parts.includes(path.join(scriptApi, 'Modules')), true); // official Modules dir appended
-    assert.equal(env.HOME, '/tmp'); // base env preserved
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  const binary = '/tmp/DaVinci Resolve.app/Contents/MacOS/Resolve';
+  const lib = '/tmp/DaVinci Resolve.app/Contents/Libraries/Fusion/fusionscript.so';
+  assert.equal(scriptLibForBinary(binary, 'darwin'), lib);
+  assert.deepEqual(scriptEnv(binary, '/tmp/Scripting', { PYTHONPATH: '/existing', HOME: '/tmp' }, 'darwin'), {
+    PYTHONPATH: '/existing:/tmp/Scripting/Modules',
+    HOME: '/tmp',
+    RESOLVE_SCRIPT_API: '/tmp/Scripting',
+    RESOLVE_SCRIPT_LIB: lib,
+  });
 });
 
-test('scriptEnv works with no pre-existing PYTHONPATH', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'clipdock-locate-'));
-  try {
-    const { binary } = fakeBundle(root);
-    const scriptApi = path.join(root, 'Scripting');
-    const env = scriptEnv(binary, scriptApi, {});
-    assert.equal(env.PYTHONPATH, path.join(scriptApi, 'Modules'));
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+test('resolveBinary, scriptLibForBinary and scriptEnv follow the official Windows layout', () => {
+  const install = 'C:\\Program Files\\Blackmagic Design\\DaVinci Resolve';
+  const binary = `${install}\\Resolve.exe`;
+  const scriptApi = 'C:\\ProgramData\\Blackmagic Design\\DaVinci Resolve\\Support\\Developer\\Scripting';
+  const lib = `${install}\\fusionscript.dll`;
+  assert.equal(resolveBinary(install, 'win32'), binary);
+  assert.equal(resolveBinary(binary, 'win32'), binary);
+  assert.equal(scriptLibForBinary(binary, 'win32'), lib);
+  assert.deepEqual(scriptEnv(binary, scriptApi, { PYTHONPATH: 'D:\\Existing' }, 'win32'), {
+    PYTHONPATH: `D:\\Existing;${scriptApi}\\Modules`,
+    RESOLVE_SCRIPT_API: scriptApi,
+    RESOLVE_SCRIPT_LIB: lib,
+  });
+  assert.equal(scriptEnv(binary, scriptApi, {}, 'win32').PYTHONPATH, `${scriptApi}\\Modules`);
 });
 
 test('validatePaths accepts a complete environment and reports each missing piece', () => {

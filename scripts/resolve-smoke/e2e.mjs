@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { ArgError, parseArgs } from './lib/args.mjs';
-import { resolveBinary, scriptEnv, scriptLibForBinary, validatePaths } from './lib/locate.mjs';
+import { resolveBinary, scriptEnv, scriptLibForBinary, supportsResolveSmoke, validatePaths } from './lib/locate.mjs';
 import { BoundedBuffer, activeProcessMessage, assertNoResolveRunning, collectProcesses, collectResidue, shutdown, spawnResolve } from './lib/spawn.mjs';
 import { checkPython, runProbe } from './lib/probe.mjs';
 import { EXIT, renderReport, sanitizeError, sanitizeMessage } from './lib/report.mjs';
@@ -24,13 +24,13 @@ Usage: node scripts/resolve-smoke/e2e.mjs [options]
 Run npm run build first. Refuses when Resolve or fuscript is running. Creates and deletes
 only its own ClipDock-E2E- project; exercises real transfer/status/media prep.
 Options (same defaults as run.mjs):
-  --bundle <path>       Resolve bundle or binary
+  --bundle <path>       Resolve installation or binary
   --script-api <path>   official Developer/Scripting folder
-  --python <path>       Python executable (default: python3)
+  --python <path>       Python executable (default: python3 on macOS, py -3 on Windows)
   --timeout-ms <n>      readiness deadline (default: 120000)
   --quit-grace-ms <n>   graceful shutdown wait (default: 15000)
-  --term-wait-ms <n>    TERM wait (default: 10000)
-  --kill-wait-ms <n>    KILL wait (default: 5000)
+  --term-wait-ms <n>    macOS TERM wait (default: 10000)
+  --kill-wait-ms <n>    forced termination wait (default: 5000)
   --download-url=<url>  optional yt-dlp download (YouTube or supported social URL)
   --pretty              pretty JSON
   --help                show usage
@@ -67,7 +67,7 @@ export function generateFixtures(root, ffmpeg) {
   const fixture = path.join(root, 'clip één.mp4');
   const oddFixture = path.join(root, 'odd 161x97.mkv');
   function generate(args) {
-    const result = spawnSync(ffmpeg, ['-hide_banner', '-nostdin', '-y', ...args], { encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 });
+    const result = spawnSync(ffmpeg, ['-hide_banner', '-nostdin', '-y', ...args], { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 64 * 1024 });
     if (result.error || result.status !== 0) throw new Error(`Fixture generation failed: ${sanitizeMessage(result.error?.message ?? result.stderr)}`);
   }
   generate(['-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '3', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart', fixture]);
@@ -258,7 +258,7 @@ export async function waitForProjectManager(bridge, timeoutMs) {
 export async function runE2e(cfg, injected = {}) {
   const deps = { assertNoResolveRunning, collectProcesses, collectResidue, spawnResolve, shutdown, runProbe, createPythonBridge, validatePaths, checkPython, loadClipDock, generateFixtures, platform: process.platform, ...injected };
   const startedAt = Date.now();
-  const report = { harness: 'clipdock-resolve-e2e', ok: false, platform: deps.platform, bundle: { binary: resolveBinary(cfg.bundle), scriptApi: cfg.scriptApi, python: cfg.python }, refusal: { resolveRunningBefore: null, fuscriptRunningBefore: null, resolvePids: null, fuscriptPids: null }, projectName: null, checks: null, phases: {}, residue: null, errors: [] };
+  const report = { harness: 'clipdock-resolve-e2e', ok: false, platform: deps.platform, bundle: { binary: resolveBinary(cfg.bundle, deps.platform), scriptApi: cfg.scriptApi, python: cfg.python }, refusal: { resolveRunningBefore: null, fuscriptRunningBefore: null, resolvePids: null, fuscriptPids: null }, projectName: null, checks: null, phases: {}, residue: null, errors: [] };
   let exitCode = EXIT.OK;
   let fixtureRoot, child, bridge, pm, project, created = false, creationAttempted = false, creationResponded = false, projectClosed = false;
   const childErr = new BoundedBuffer(4096);
@@ -268,15 +268,15 @@ export async function runE2e(cfg, injected = {}) {
     if (!child?.pid || pids.length !== 1 || pids[0] !== child.pid) throw new Error('Resolve process ownership is unproven; refusing mutation');
   }
   try {
+    if (!supportsResolveSmoke(deps.platform)) throw new Error(`Harness supports macOS and Windows, found ${deps.platform}`);
     const pre = deps.assertNoResolveRunning();
     report.refusal.resolveRunningBefore = pre.pids.length;
     report.refusal.fuscriptRunningBefore = (pre.fuscriptPids ?? []).length;
     report.refusal.resolvePids = pre.pids;
     report.refusal.fuscriptPids = pre.fuscriptPids ?? [];
     if (!pre.ok) { exitCode = EXIT.REFUSED; throw new Error(activeProcessMessage(pre)); }
-    if (deps.platform !== 'darwin') throw new Error(`Unsupported platform: ${deps.platform}`);
     const binary = report.bundle.binary;
-    const paths = deps.validatePaths({ binary, scriptApi: cfg.scriptApi, scriptLib: scriptLibForBinary(binary) });
+    const paths = deps.validatePaths({ binary, scriptApi: cfg.scriptApi, scriptLib: scriptLibForBinary(binary, deps.platform) });
     if (!paths.ok) throw new Error(paths.error.message);
     const python = deps.checkPython(cfg.python);
     if (!python.ok) throw new Error(python.error.message);
@@ -284,7 +284,7 @@ export async function runE2e(cfg, injected = {}) {
     fixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), 'clipdock-e2e-')));
     const ffmpeg = api.discoverFfmpeg();
     const fixtures = deps.generateFixtures(fixtureRoot, ffmpeg);
-    const env = scriptEnv(binary, cfg.scriptApi, process.env);
+    const env = scriptEnv(binary, cfg.scriptApi, process.env, deps.platform);
     child = deps.spawnResolve(binary, { env });
     child.stdout.on('data', () => {});
     child.stderr.on('data', chunk => childErr.push(chunk));
@@ -353,7 +353,7 @@ export async function runE2e(cfg, injected = {}) {
     if (child) {
       await cleanup('resolve-shutdown-failed', async () => {
         // Reuse the smoke probe's ownership-gated Quit; never signal another process.
-        if ((await child.launch).ok) await deps.runProbe({ python: cfg.python, probeScript: path.join(DIR, 'probe.py'), env: { ...scriptEnv(report.bundle.binary, cfg.scriptApi, process.env), RESOLVE_SMOKE_CHILD_PID: String(child.pid) }, timeoutMs: Math.min(10000, cfg.timeoutMs), mode: 'quit-only' });
+        if ((await child.launch).ok) await deps.runProbe({ python: cfg.python, probeScript: path.join(DIR, 'probe.py'), env: { ...scriptEnv(report.bundle.binary, cfg.scriptApi, process.env, deps.platform), RESOLVE_SMOKE_CHILD_PID: String(child.pid) }, timeoutMs: Math.min(10000, cfg.timeoutMs), mode: 'quit-only' });
       });
       await cleanup('resolve-cleanup-failed', async () => {
         report.phases.cleanup = await deps.shutdown(child, { graceMs: cfg.quitGraceMs, termMs: cfg.termWaitMs, killMs: cfg.killWaitMs });
