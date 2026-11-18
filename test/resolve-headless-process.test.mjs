@@ -20,7 +20,6 @@ test('Windows scripting readiness requires a loopback connection owned by the Re
   const rows = [
     'TCP  0.0.0.0:1144       0.0.0.0:0       LISTENING    40',
     'TCP  127.0.0.1:29125   127.0.0.1:1144  ESTABLISHED  41',
-    'TCP  127.0.0.1:29126   127.0.0.1:1144  SYN_SENT     42',
     'TCP  192.0.2.1:29127   192.0.2.2:1144  ESTABLISHED  42',
   ].join('\r\n');
   const ready = rows + '\r\nTCP  127.0.0.1:29126  127.0.0.1:1144  ESTABLISHED  42';
@@ -35,6 +34,12 @@ test('Windows scripting readiness requires a loopback connection owned by the Re
   assert.ok(remaining > 0 && remaining < 5000);
   await assert.rejects(waitForWindowsScriptingServer(child, 5, { connected: () => false }),
     /did not connect to its Windows scripting server within 5 ms/);
+});
+
+test('Windows scripting readiness ignores localized netstat states', () => {
+  assert.equal(hasWindowsScriptingConnection('TCP  127.0.0.1:29126  127.0.0.1:1144  HERGESTELLT  42', 42), true);
+  assert.equal(hasWindowsScriptingConnection('TCP  127.0.0.1:1144   0.0.0.0:0       LISTENING    42', 42), false);
+  assert.equal(hasWindowsScriptingConnection('TCP  127.0.0.1:29126  127.0.0.1:1144  TIME_WAIT     0', 42), false);
 });
 
 function childProcess(code) {
