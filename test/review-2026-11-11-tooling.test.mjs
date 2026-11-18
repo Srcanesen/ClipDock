@@ -1,4 +1,4 @@
-import {testPython} from './helpers/python.mjs';
+import {pythonExecutablePath} from './helpers/python.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -167,7 +167,7 @@ class Resolve(Handle):
     def GetMediaPool(self): return Optional()
 def scriptapp(name): return Resolve('resolve-id')
 `);
-  const bridge = createPythonBridge({ python: testPython(), env: { ...process.env, PYTHONPATH: root }, script: path.join(repo, 'scripts/resolve-smoke/bridge.py'), timeoutMs: 3000 });
+  const bridge = createPythonBridge({ python: pythonExecutablePath(), env: { ...process.env, PYTHONPATH: root }, script: path.join(repo, 'scripts/resolve-smoke/bridge.py'), timeoutMs: 3000 });
   t.after(() => bridge.close());
   const resolve = await bridge.workflowIntegration.GetResolve();
   for (const [method, expected] of [['GetCurrentProject', 'project-id'], ['GetCurrentTimeline', 'timeline-id'], ['GetCurrentFolder', 'folder-id']]) {
