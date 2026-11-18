@@ -1,17 +1,4 @@
 #!/usr/bin/env node
-/**
- * ClipDock Resolve headless smoke harness (read-only, opt-in).
- *
- * Orchestrates: pre-flight refusal when Resolve or fuscript is active ->
- * direct bundle-binary spawn with -nogui (never `open -a`) under the official
- * scripting env -> bounded probe (scriptapp + ProjectManager readiness,
- * read-only checks, Quit request) -> bounded
- * cleanup -> residue check -> one bounded machine-readable JSON report.
- *
- * Never creates, saves, closes, renames, or deletes projects, timelines, bins,
- * or clips. Stdlib only. See scripts/resolve-smoke/README.md.
- */
-
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ArgError, USAGE, parseArgs } from './lib/args.mjs';
@@ -134,11 +121,6 @@ async function main() {
   child.stdout.on('data', (chunk) => childOut.push(chunk));
   child.stderr.on('data', (chunk) => childErr.push(chunk));
 
-  // Close the preflight/connect Quit TOCTOU: the probe may call Resolve.Quit
-  // only when the Resolve PID set is exactly this child PID. Pass the PID
-  // through env; probe.py verifies ownership before both normal and quit-only
-  // Quit and skips Quit with a sanitized ownership error otherwise. Parent
-  // cleanup below signals only this own child.
   if (child.pid !== undefined) {
     env.RESOLVE_SMOKE_CHILD_PID = String(child.pid);
   }
@@ -177,7 +159,6 @@ async function main() {
     }
   }
 
-  // Bounded shutdown after the ownership-gated Quit().
   const cleanup = await shutdown(child, {
     graceMs: cfg.quitGraceMs,
     termMs: cfg.termWaitMs,
@@ -190,8 +171,6 @@ async function main() {
     signal: cleanup.signal ?? null,
   };
 
-  // Residue evidence: no Resolve and no fuscript process may remain. Enumeration
-  // failure is fail-safe: unknown residue exits cleanup-failed, never 0.
   await sleep(RESIDUE_SETTLE_MS);
   const residueResult = collectResidue();
   base.residue = residueResult.residue;

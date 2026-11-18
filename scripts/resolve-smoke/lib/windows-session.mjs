@@ -57,7 +57,6 @@ export async function runInWindowsSession(entry, args, { task = taskCommand, sta
     try {
       if (registered) task(['/Delete', '/TN', name, '/F']);
     } finally {
-      // Leave the files available to a worker that is still cleaning up.
       if (!existsSync(started) || existsSync(returned)) rmSync(directory, { recursive: true, force: true });
     }
   }

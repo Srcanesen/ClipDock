@@ -1,11 +1,3 @@
-/**
- * Process primitives for the ClipDock Resolve headless smoke harness.
- *
- * Direct-binary spawn with -nogui (never `open -a`), bounded output capture,
- * bounded shutdown, and exact-name process accounting via pgrep or tasklist.
- * Tests use plain `node -e` / `sleep` children, never Resolve.
- */
-
 import { spawn, spawnSync } from 'node:child_process';
 import { sanitizeMessage } from './report.mjs';
 
@@ -69,7 +61,6 @@ function sendSignal(child, signal) {
 }
 
 export function killWindowsTree(child) {
-  // Use only our live ChildProcess, never a PID found in a process listing.
   if (!Number.isSafeInteger(child.pid) || child.pid <= 0 || child.exitCode !== null || child.signalCode !== null) return;
   spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5000 });
 }
@@ -111,15 +102,6 @@ export function waitForExit(child, ms) {
   });
 }
 
-/**
- * Bounded shutdown ladder: wait `graceMs` for the app to honor Quit(), then
- * SIGTERM and wait `termMs` on macOS, then force termination and wait
- * `killMs`. Windows force-terminates only the owned process tree.
- *
- * Resolves with {kind, ms, ...}: 'graceful' | 'terminated' | 'killed' when the
- * process exited, 'error' when the child never spawned, 'still-running' when
- * the process survived the whole ladder.
- */
 export async function shutdown(child, { graceMs, termMs, killMs, waitFor = waitForExit, signal = sendSignal, platform = process.platform, killTree = killWindowsTree }) {
   const startedAt = Date.now();
   const first = await waitFor(child, graceMs);
@@ -164,10 +146,6 @@ export function parseTasklist(output, image) {
   return pids;
 }
 
-/**
- * Exact-name process accounting. Throws when enumeration fails so callers
- * can fail safe.
- */
 export function collectProcesses(comm, platform = process.platform) {
   if (platform === 'win32') {
     const res = spawnSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
@@ -213,13 +191,6 @@ export function activeProcessMessage({pids, fuscriptPids = []}) {
   return `refusing to run: Resolve pids: ${pids.join(', ') || 'none'}; fuscript pids: ${fuscriptPids.join(', ') || 'none'}`;
 }
 
-/**
- * Residue evidence: live `Resolve` and `fuscript` process counts. When enumeration
- * fails the result is {ok:false, residue:{resolve:-1,fuscript:-1}, error}
- * so callers fail safe and can never treat unknown residue as success (the
- * harness must exit cleanup-failed, never 0). The collector is injectable for
- * deterministic tests (test/resolve-headless-process.test.mjs).
- */
 export function collectResidue({ collect = collectProcesses } = {}) {
   try {
     return {

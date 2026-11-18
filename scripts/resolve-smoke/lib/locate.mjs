@@ -1,13 +1,3 @@
-/**
- * Path resolution for the ClipDock Resolve headless smoke harness.
- *
- * Maps the user-supplied installation path onto the official layout and
- * composes the official scripting environment variables (RESOLVE_SCRIPT_API,
- * RESOLVE_SCRIPT_LIB, PYTHONPATH) exactly as documented in the Resolve
- * Scripting README. Deterministic unit-test seam
- * (test/resolve-headless-locate.test.mjs); never launches Resolve.
- */
-
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
@@ -35,10 +25,6 @@ export function resolveDefaults(platform, env) {
 /** fusionscript.so sits at Contents/Libraries/Fusion/ relative to Contents/MacOS/. */
 const SCRIPT_LIB_REL = '../Libraries/Fusion/fusionscript.so';
 
-/**
- * Accepts the .app bundle, its Contents/MacOS folder, or the Resolve binary on
- * macOS, and the install folder or Resolve.exe on Windows.
- */
 export function resolveBinary(input, platform = process.platform) {
   if (platform === 'win32') {
     return path.win32.basename(input).toLowerCase() === 'resolve.exe' ? input : path.win32.join(input, 'Resolve.exe');
@@ -53,7 +39,6 @@ export function resolveBinary(input, platform = process.platform) {
   return path.posix.join(input, 'Contents', 'MacOS', 'Resolve');
 }
 
-/** Official scripting library location for a resolved Resolve binary. */
 export function scriptLibForBinary(binary, platform = process.platform) {
   if (platform === 'win32') {
     return path.win32.resolve(path.win32.dirname(binary), 'fusionscript.dll');

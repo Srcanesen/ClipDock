@@ -356,7 +356,6 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   const ffmpegDiscoveryFixture = writeVersionFixture(path.join(phase3Root, 'ffmpeg-version-fixture'), 'ffmpeg');
   expect('ffmpeg discovery accepts executable env path', discoverFfmpeg({ CLIPDOCK_FFMPEG_PATH: ffmpegDiscoveryFixture, PATH: '' }, process.platform), ffmpegDiscoveryFixture);
 
-  // These fake children cover rejection and cleanup without installed engines.
   const fakeTools = { ffmpegPath: '/fake/ffmpeg', ffprobePath: null };
   // Controlled parser/process failures and safe final-path enforcement.
   {

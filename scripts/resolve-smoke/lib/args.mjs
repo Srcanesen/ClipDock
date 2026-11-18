@@ -1,9 +1,3 @@
-/**
- * Pure CLI argument parsing for the ClipDock Resolve headless smoke harness.
- *
- * Platform and environment defaults are injectable for deterministic tests.
- */
-
 import { resolveDefaults } from './locate.mjs';
 
 export class ArgError extends Error {

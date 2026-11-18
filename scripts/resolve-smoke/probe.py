@@ -1,43 +1,4 @@
 #!/usr/bin/env python3
-"""ClipDock Resolve -nogui read-only smoke probe.
-
-Connects to the Resolve instance the harness launched with -nogui, through the
-official scripting module (DaVinciResolveScript + fusionscript), performs
-READ-ONLY checks only (version, project manager / project-list readiness,
-current project presence/name, media pool and current timeline presence when
-available, plus the transferApi shape src/transfer.ts depends on), requests
-Quit(), and emits exactly one bounded JSON line prefixed with
-CLIPDOCK_SMOKE_JSON:.
-
-transferApi: verifies the read-only Resolve API shape required by
-src/transfer.ts. Every callable transfer.ts depends on is reported (required /
-optional). Mutating APIs (AddItemListToMediaPool, AppendToTimeline,
-AddSubFolder, SetCurrentFolder, OpenPage, AddMarker, SetClipColor) are checked
-by CALLABLE PRESENCE ONLY and are never invoked. Safe read-only calls
-(GetMediaStorage, GetProjectManager/GetCurrentProject, GetMediaPool,
-GetCurrentFolder/GetRootFolder/GetSubFolderList/GetClipList, GetCurrentTimeline,
-GetUniqueId, GetSetting, GetStartFrame/GetStartTimecode/GetCurrentTimecode, GetClipProperty
-on an existing clip) verify the getters actually answer. When an owning object
-is unreachable (no project / no timeline / no clip) its entries are reported as
-"unavailable" and the probe stays valid (green); a required callable MISSING on
-a reachable object fails the probe (exit 5).
-
-Quit is ownership-gated: the probe may call Resolve.Quit() only when the
-running Resolve PID set is exactly the harness child PID passed via
-RESOLVE_SMOKE_CHILD_PID (closes the preflight/connect TOCTOU). When ownership
-cannot be proven, Quit is skipped and a sanitized ownership error is reported
-(quitError). This applies to the normal probe and the quit-only fallback
-(RESOLVE_SMOKE_QUIT_ONLY=1).
-
-Never creates, saves, closes, renames, or deletes projects, timelines, bins,
-or clips. Python >= 3.6, stdlib only.
-
-Exit codes (also mirrored in the JSON):
-  0 ok; 2 DaVinciResolveScript import failed; 3 connect timeout;
-  4 probe failed mid-checks; 5 checks failed (readiness or a required
-  transferApi callable missing on a reachable object).
-"""
-
 import json
 import os
 import re
@@ -140,7 +101,6 @@ def windows_resolve_pids():
 
 
 def resolve_pids():
-    """Get the exact Resolve PID set. Unknown process state cannot prove ownership."""
     try:
         if sys.platform == "win32":
             return windows_resolve_pids()
@@ -160,13 +120,6 @@ def resolve_pids():
 
 
 def quit_state(resolve):
-    """Ownership-gated Quit.
-
-    Quits only when the running Resolve PID set is exactly the
-    harness child PID from RESOLVE_SMOKE_CHILD_PID. Otherwise skips Quit and
-    returns a sanitized ownership error so the harness reports it; parent
-    cleanup may signal only its own child.
-    """
     raw = os.environ.get("RESOLVE_SMOKE_CHILD_PID", "")
     child_pid = int(raw) if raw.isdigit() else None
     if child_pid is None:

@@ -7,16 +7,6 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULTS } from '../scripts/resolve-smoke/lib/args.mjs';
 import { runProbe } from '../scripts/resolve-smoke/lib/probe.mjs';
 
-/**
- * Deterministic probe.py tests — never a real Resolve. A fake process listing
- * feeds scripted PID sets, a fake DaVinciResolveScript module
- * fakes the scripting API (or fails to import / misbehaves), and a quit log
- * proves whether Quit() was actually invoked.
- *
- * Covers the ownership gate plus the documented exit contract:
- *   2 probe-import-failed, 3 connect-timeout, 4 probe-failed, 5 checks-failed.
- */
-
 const PROBE_PATH = fileURLToPath(new URL('../scripts/resolve-smoke/probe.py', import.meta.url));
 const WINDOWS = process.platform === 'win32';
 
@@ -186,7 +176,6 @@ const EXPECTED_REQUIRED = [
 /** Feature-detected by transfer.ts (markers/color/end-frame): recorded, not red. */
 const EXPECTED_OPTIONAL = ['clip.SetClipColor', 'timeline.AddMarker', 'timeline.GetEndFrame'];
 
-/** Builds the fake scripting module and process listing. */
 function fixture({ pids, pgrepStatus = 0, quitLog, childPid, withChildPid = true, module = FAKE_BMD, mutateLog }) {
   const root = mkdtempSync(path.join(tmpdir(), 'clipdock-probe-own-'));
   const bin = path.join(root, 'bin');
