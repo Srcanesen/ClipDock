@@ -30,7 +30,11 @@ test('package zip holds the exact built plugin and install notes, without the Re
   assert.deepEqual(fs.readdirSync(out), [`ClipDock-${version}.zip`]);
 
   const extracted = path.join(root, 'extracted');
-  const unzip = spawnSync('unzip', ['-q', path.join(out, `ClipDock-${version}.zip`), '-d', extracted], { encoding: 'utf8' });
+  const archive = path.join(out, `ClipDock-${version}.zip`);
+  fs.mkdirSync(extracted);
+  const unzip = process.platform === 'win32'
+    ? spawnSync('tar.exe', ['-x', '-f', archive, '-C', extracted], { encoding: 'utf8', windowsHide: true })
+    : spawnSync('unzip', ['-q', archive, '-d', extracted], { encoding: 'utf8' });
   assert.equal(unzip.status, 0, unzip.stderr);
   assert.deepEqual(fs.readdirSync(extracted), [`ClipDock-${version}`]);
   const top = path.join(extracted, `ClipDock-${version}`);

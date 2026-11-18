@@ -22,7 +22,11 @@ try {
   mkdirSync(outDir, { recursive: true });
   // zip updates an existing archive in place; start from nothing so removed files do not survive.
   rmSync(zip, { force: true });
-  execFileSync('zip', ['-X', '-r', '-q', zip, name], { cwd: stage, stdio: 'inherit' });
+  if (process.platform === 'win32') {
+    execFileSync('tar.exe', ['-a', '-c', '-f', zip, name], { cwd: stage, stdio: 'inherit', windowsHide: true });
+  } else {
+    execFileSync('zip', ['-X', '-r', '-q', zip, name], { cwd: stage, stdio: 'inherit' });
+  }
 } finally {
   rmSync(stage, { recursive: true, force: true });
 }

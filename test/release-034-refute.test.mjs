@@ -99,7 +99,7 @@ test('A: a root absent at startup stays external until a later session after it 
   assert.equal(h.resolve(r.id)?.trustedRoot, undefined); h.reuse(r.id);
   assert.equal(f.disk().records[0].trustedRoot, folder, 'an unrelated save retains stored provenance');
   const restarted = f.open(); assert.equal(restarted.resolve(r.id)?.trustedRoot?.verify(), folder);
-  assert.ok(before.includes(folder)); assert.equal(h.delete(r.id, []).deleted, false); assert.equal(fs.existsSync(media), true);
+  assert.equal(JSON.parse(before).records[0].trustedRoot, folder); assert.equal(h.delete(r.id, []).deleted, false); assert.equal(fs.existsSync(media), true);
 });
 test('A: a captured root that vanishes and returns with the same identity remains usable', t => {
   const f = fixture(t), media = f.file('clip.mp4'), r = f.history.add(historyInput(media));

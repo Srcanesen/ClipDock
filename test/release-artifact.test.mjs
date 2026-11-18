@@ -40,14 +40,16 @@ test('verifyArtifact accepts an exact artifact and reports source drift', () => 
 test('artifact inventory rejects symlinks and packaging hazards', () => {
   withTempDir((root) => {
     writeFiles(root, ['main.js', 'renderer.js', 'bin/native.node', 'output/debug.txt']);
-    chmodSync(path.join(root, 'renderer.js'), 0o755);
+    if (process.platform !== 'win32') chmodSync(path.join(root, 'renderer.js'), 0o755);
     symlinkSync(path.join(root, 'main.js'), path.join(root, 'link.js'));
     const {files, problems} = inventory(root);
     assert.ok(problems.some((problem) => problem.includes('symbolic link') && problem.includes('link.js')));
     const artifactProblems = scanArtifactProblems(root, files);
     assert.ok(artifactProblems.some((problem) => problem.includes('native/binary') && problem.includes('native.node')));
     assert.ok(artifactProblems.some((problem) => problem.includes('packaging debris') && problem.includes('output/debug.txt')));
-    assert.ok(artifactProblems.some((problem) => problem.includes('executable permission bits') && problem.includes('renderer.js')));
+    if (process.platform !== 'win32') {
+      assert.ok(artifactProblems.some((problem) => problem.includes('executable permission bits') && problem.includes('renderer.js')));
+    }
   });
 });
 
