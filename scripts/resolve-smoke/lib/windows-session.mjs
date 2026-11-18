@@ -17,16 +17,49 @@ function taskCommand(args) {
   }
 }
 
+function killWorkerTree(pid) {
+  return spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+    windowsHide: true, stdio: 'ignore', timeout: 5000,
+  }).status === 0;
+}
+
+function readWorkerPid(started) {
+  try {
+    const marker = readFileSync(started, 'utf8');
+    const pid = Number(marker);
+    return /^[1-9][0-9]*$/.test(marker) && pid <= 0xffffffff ? pid : null;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return null;
+  }
+}
+
+function canRemoveDirectory(started, finished, returned, workerStopped) {
+  return workerStopped || existsSync(returned) || existsSync(finished) || !existsSync(started);
+}
+
 // Schedule the entire runner so Node owns the Resolve child and scripting
 // clients run in the same Windows session.
-export async function runInWindowsSession(entry, args, { task = taskCommand, startupMs = START_TIMEOUT_MS } = {}) {
+export async function runInWindowsSession(entry, args, {
+  task = taskCommand, killTree = killWorkerTree, startupMs = START_TIMEOUT_MS, runMs = RUN_TIMEOUT_MS,
+} = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'clipdock-resolve-task-'));
   const name = `ClipDock-Resolve-${randomUUID()}`;
   const launcher = path.join(directory, 'launch.js');
   const started = path.join(directory, 'started');
   const finished = path.join(directory, 'result.json');
   const returned = path.join(directory, 'launcher-exit');
+  const cancelled = path.join(directory, 'cancelled');
   let registered = false;
+  let workerStopped = false;
+  let attemptedPid = null;
+  const stopWorker = () => {
+    if (existsSync(finished) || existsSync(returned)) return;
+    const pid = readWorkerPid(started);
+    if (!pid || pid === attemptedPid) return;
+    attemptedPid = pid;
+    workerStopped = killTree(pid);
+  };
   try {
     writeFileSync(path.join(directory, 'request.json'), JSON.stringify({ entry, args, cwd: process.cwd() }));
     const command = [process.execPath, WORKER, directory].map(arg => `"${arg}"`).join(' ');
@@ -43,10 +76,10 @@ export async function runInWindowsSession(entry, args, { task = taskCommand, sta
     registered = true;
     task(['/Run', '/TN', name]);
     const startDeadline = Date.now() + startupMs;
-    const runDeadline = Date.now() + RUN_TIMEOUT_MS;
+    const runDeadline = Date.now() + runMs;
     while (!existsSync(returned)) {
       if (!existsSync(started) && Date.now() >= startDeadline) throw new Error('Scheduled Resolve runner did not start in the logged-in Windows session');
-      if (Date.now() >= runDeadline) throw new Error(`Scheduled Resolve runner did not finish within 30 minutes. Its result directory is ${directory}`);
+      if (Date.now() >= runDeadline) throw new Error(`Scheduled Resolve runner did not finish within ${runMs} ms`);
       await sleep(200);
     }
     if (!existsSync(finished)) throw new Error(`Scheduled Resolve launcher exited without a report (exit ${readFileSync(returned, 'utf8').trim()})`);
@@ -55,16 +88,42 @@ export async function runInWindowsSession(entry, args, { task = taskCommand, sta
     return result;
   } finally {
     try {
-      if (registered) task(['/Delete', '/TN', name, '/F']);
+      if (registered) {
+        const unfinished = !existsSync(returned);
+        try {
+          if (unfinished) {
+            writeFileSync(cancelled, '');
+            // Stop the tree before ending the launcher, which may release the worker PID.
+            try {
+              stopWorker();
+            } finally {
+              try { task(['/End', '/TN', name]); }
+              catch { /* The task may have exited or never started. */ }
+              stopWorker();
+            }
+          }
+        } finally {
+          try {
+            task(['/Delete', '/TN', name, '/F']);
+          } finally {
+            if (unfinished) stopWorker();
+          }
+        }
+        if (!canRemoveDirectory(started, finished, returned, workerStopped)) {
+          throw new Error(`Scheduled Resolve worker cleanup could not be confirmed. Its result directory is ${directory}`);
+        }
+      }
     } finally {
-      if (!existsSync(started) || existsSync(returned)) rmSync(directory, { recursive: true, force: true });
+      if (canRemoveDirectory(started, finished, returned, workerStopped)) rmSync(directory, { recursive: true, force: true });
     }
   }
 }
 
 function runWorker(directory) {
   const { entry, args, cwd } = JSON.parse(readFileSync(path.join(directory, 'request.json'), 'utf8'));
-  writeFileSync(path.join(directory, 'started'), '');
+  writeFileSync(path.join(directory, 'started.tmp'), String(process.pid));
+  renameSync(path.join(directory, 'started.tmp'), path.join(directory, 'started'));
+  if (existsSync(path.join(directory, 'cancelled'))) return;
   const { stdout, stderr, status, error } = spawnSync(process.execPath, [entry, ...args], {
     cwd, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });

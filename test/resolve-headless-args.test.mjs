@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -86,6 +86,7 @@ test('Windows session launcher forwards arguments, output and status and deletes
     } else if (args[0] === '/Run') {
       const proc = spawnSync(process.execPath, [worker, directory], { encoding: 'utf8', timeout: 5000 });
       assert.equal(proc.status, 0, proc.stderr);
+      assert.equal(readFileSync(path.join(directory, 'started'), 'utf8'), String(proc.pid));
       writeFileSync(path.join(directory, 'launcher-exit'), '0');
     }
   };
@@ -100,3 +101,26 @@ test('Windows session launcher forwards arguments, output and status and deletes
   assert.equal(existsSync(directory), false);
   assert.equal(parseArgs(['--windows-interactive']).windowsInteractive, true);
 });
+
+for (const markerAt of ['/Run', '/End']) {
+  test(`Windows session deadline stops the scheduler instance and worker marked during ${markerAt}`, async () => {
+    const calls = [];
+    let directory;
+    const task = args => {
+      calls.push(args[0]);
+      if (args[0] === '/Create') directory = path.dirname(args.at(-1).match(/"([^"]+)"$/)[1]);
+      if (args[0] === markerAt) writeFileSync(path.join(directory, 'started'), '7654');
+    };
+    const killTree = pid => {
+      calls.push(pid);
+      assert.equal(existsSync(path.join(directory, 'cancelled')), true);
+      return true;
+    };
+    await assert.rejects(runInWindowsSession('unused', [], { task, killTree, startupMs: 0, runMs: 0 }),
+      markerAt === '/Run' ? /did not finish within 0 ms/ : /did not start in the logged-in Windows session/);
+    assert.deepEqual(calls, markerAt === '/Run'
+      ? ['/Create', '/Run', 7654, '/End', '/Delete']
+      : ['/Create', '/Run', '/End', 7654, '/Delete']);
+    assert.equal(existsSync(directory), false);
+  });
+}
