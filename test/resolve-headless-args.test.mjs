@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { ArgError, DEFAULTS, parseArgs } from '../scripts/resolve-smoke/lib/args.mjs';
 import { pythonInvocation, supportsResolveSmoke } from '../scripts/resolve-smoke/lib/locate.mjs';
+import { runInWindowsSession } from '../scripts/resolve-smoke/lib/windows-session.mjs';
 
 test('parseArgs applies documented defaults', () => {
   const cfg = parseArgs([], { platform: 'darwin', env: {} });
@@ -61,4 +67,34 @@ test('parseArgs --help short-circuits and -- ends option parsing', () => {
   const cfg = parseArgs(['--pretty', '--', '--bundle=y']);
   assert.equal(cfg.pretty, true);
   assert.equal(cfg.bundle, DEFAULTS.bundle); // tokens after -- are not parsed
+});
+
+test('Windows session launcher forwards arguments, output and status and deletes its task', async t => {
+  const root = mkdtempSync(path.join(tmpdir(), 'clipdock-task-test-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const entry = path.join(root, 'fake runner.cjs');
+  writeFileSync(entry, 'console.log(process.argv[2]); console.error("diagnostic"); process.exitCode = 5;');
+  const worker = fileURLToPath(new URL('../scripts/resolve-smoke/lib/windows-session.mjs', import.meta.url));
+  const calls = [];
+  let directory;
+  const task = args => {
+    calls.push(args);
+    if (args[0] === '/Create') {
+      directory = path.dirname(args.at(-1).match(/"([^"]+)"$/)[1]);
+    } else if (args[0] === '/Run') {
+      const proc = spawnSync(process.execPath, [worker, directory], { encoding: 'utf8', timeout: 5000 });
+      assert.equal(proc.status, 0, proc.stderr);
+      writeFileSync(path.join(directory, 'launcher-exit'), '0');
+    }
+  };
+  const result = await runInWindowsSession(entry, ['Unicode argument é'], { task });
+  assert.equal(result.stdout.trim(), 'Unicode argument é');
+  assert.equal(result.stderr.trim(), 'diagnostic');
+  assert.equal(result.status, 5);
+  assert.equal(calls[0].includes('/IT'), true);
+  assert.deepEqual(calls.map(args => [args[0], args[2]]), [
+    ['/Create', calls[0][2]], ['/Run', calls[0][2]], ['/Delete', calls[0][2]],
+  ]);
+  assert.equal(existsSync(directory), false);
+  assert.equal(parseArgs(['--windows-interactive']).windowsInteractive, true);
 });

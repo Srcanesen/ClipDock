@@ -19,6 +19,7 @@ import { resolveBinary, scriptEnv, scriptLibForBinary, supportsResolveSmoke, val
 import { BoundedBuffer, activeProcessMessage, assertNoResolveRunning, collectResidue, shutdown, spawnResolve } from './lib/spawn.mjs';
 import { checkPython, runProbe } from './lib/probe.mjs';
 import { EXIT, buildReport, classifyExit, renderReport, sanitizeMessage } from './lib/report.mjs';
+import { runInWindowsSession } from './lib/windows-session.mjs';
 
 const HARNESS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RESOLVE_CHILD_STDOUT_LIMIT = 64 * 1024;
@@ -68,6 +69,18 @@ async function main() {
       code: 'unsupported-platform',
       message: `harness supports macOS and Windows, found ${process.platform}`,
     });
+  }
+  if (cfg.windowsInteractive) {
+    if (process.platform !== 'win32') return finish(EXIT.ENVIRONMENT, { code: 'unsupported-platform', message: '--windows-interactive requires Windows' });
+    try {
+      const result = await runInWindowsSession(process.argv[1], argv.filter(arg => arg !== '--windows-interactive'));
+      process.stdout.write(result.stdout);
+      process.stderr.write(result.stderr);
+      process.exitCode = result.status;
+    } catch (err) {
+      finish(EXIT.ENVIRONMENT, { code: 'session-launch-failed', message: sanitizeMessage(err.message) });
+    }
+    return;
   }
 
   // Official layout + official scripting env paths.
@@ -195,7 +208,12 @@ async function main() {
     stderrTail: childErr.toString().slice(-1500),
   });
   if (failure) {
-    return finish(failure.exitCode, failure.error, failure.diagnostics ?? null);
+    const diagnostics = failure.diagnostics ?? {};
+    if (process.platform === 'win32' && !probe.ok) {
+      const probeOutput = sanitizeMessage(`${probe.output?.slice(-750) ?? ''} ${probe.stderr?.slice(-750) ?? ''}`, 1500);
+      if (probeOutput) diagnostics.probeOutputTail = probeOutput;
+    }
+    return finish(failure.exitCode, failure.error, diagnostics);
   }
 
   finish(EXIT.OK);

@@ -11,6 +11,7 @@ import { BoundedBuffer, activeProcessMessage, assertNoResolveRunning, collectPro
 import { checkPython, runProbe } from './lib/probe.mjs';
 import { EXIT, renderReport, sanitizeError, sanitizeMessage } from './lib/report.mjs';
 import { createPythonBridge } from './lib/bridge.mjs';
+import { runInWindowsSession } from './lib/windows-session.mjs';
 import { requireCompletedBuild } from '../lib/completed-build.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,7 @@ Options (same defaults as run.mjs):
   --quit-grace-ms <n>   graceful shutdown wait (default: 15000)
   --term-wait-ms <n>    macOS TERM wait (default: 10000)
   --kill-wait-ms <n>    forced termination wait (default: 5000)
+  --windows-interactive  use the logged-in Windows session via Task Scheduler
   --download-url=<url>  optional yt-dlp download (YouTube or supported social URL)
   --pretty              pretty JSON
   --help                show usage
@@ -376,10 +378,24 @@ export async function runE2e(cfg, injected = {}) {
 }
 
 async function main() {
+  const argv = process.argv.slice(2);
   let cfg;
-  try { cfg = parseE2eArgs(process.argv.slice(2)); }
+  try { cfg = parseE2eArgs(argv); }
   catch (err) { process.stderr.write(`${err.message}\n\n${USAGE}\n`); process.exitCode = EXIT.USAGE; return; }
   if (cfg.help) { process.stdout.write(`${USAGE}\n`); return; }
+  if (cfg.windowsInteractive) {
+    try {
+      if (process.platform !== 'win32') throw new Error('--windows-interactive requires Windows');
+      const result = await runInWindowsSession(process.argv[1], argv.filter(arg => arg !== '--windows-interactive'));
+      process.stdout.write(result.stdout);
+      process.stderr.write(result.stderr);
+      process.exitCode = result.status;
+    } catch (err) {
+      process.stdout.write(renderReport({ harness: 'clipdock-resolve-e2e', ok: false, platform: process.platform, errors: [sanitizeError({ code: 'session-launch-failed', message: err.message })] }, cfg.pretty));
+      process.exitCode = EXIT.ENVIRONMENT;
+    }
+    return;
+  }
   const { exitCode, report } = await runE2e(cfg);
   process.stdout.write(renderReport(report, cfg.pretty));
   process.exitCode = exitCode;

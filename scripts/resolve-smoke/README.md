@@ -110,6 +110,7 @@ Options (all bounded):
 | `--quit-grace-ms <n>` | `15000` |
 | `--term-wait-ms <n>` | `10000` (macOS only) |
 | `--kill-wait-ms <n>` | `5000` |
+| `--windows-interactive` | off |
 | `--pretty` | off |
 
 Exit codes: `0` ok · `1` unexpected harness failure (internal error) · `2` usage ·
@@ -117,6 +118,26 @@ Exit codes: `0` ok · `1` unexpected harness failure (internal error) · `2` usa
 already running) · `5` probe failed (connect timeout/checks/Quit ownership not
 provable) · `6` cleanup incomplete (process residue, or residue evidence
 unavailable).
+
+### Windows over SSH
+
+Resolve may need the logged-in desktop session to initialize its GPU. If
+Windows OpenSSH session 0 cannot start Resolve, use an active logged-in
+session for the same Windows account and run:
+
+```powershell
+npm run test:resolve:headless -- --windows-interactive
+npm run build
+npm run test:resolve:e2e -- --windows-interactive
+```
+
+The option runs the entire harness via a temporary Task Scheduler task
+(`schtasks /Create ... /IT`, `/Run`, then `/Delete`). The launcher is hidden
+and Resolve still starts with `-nogui`. The harness performs its normal
+preflight and owns the Resolve process in that session. The calling terminal
+receives the runner's report and exit code. The task inherits the logged-in
+session's environment, so tools and environment overrides must be available
+there.
 
 ## Files
 

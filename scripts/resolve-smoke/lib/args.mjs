@@ -38,6 +38,7 @@ Options:
   --quit-grace-ms <n>  bounded wait for graceful exit after Quit() (default: 15000)
   --term-wait-ms <n>   macOS wait after SIGTERM before SIGKILL (default: 10000)
   --kill-wait-ms <n>   bounded wait after forced termination (default: 5000)
+  --windows-interactive  use the logged-in Windows session via Task Scheduler
   --pretty             pretty-print the JSON report
   --help               show this help and exit
 
@@ -56,6 +57,7 @@ const COMMON_DEFAULTS = {
   quitGraceMs: 15000,
   termWaitMs: 10000,
   killWaitMs: 5000,
+  windowsInteractive: false,
   pretty: false,
   help: false,
 };
@@ -64,7 +66,7 @@ export const DEFAULTS = Object.freeze({ ...COMMON_DEFAULTS, ...resolveDefaults(p
 
 const NUMERIC_OPTIONS = new Set(['timeout-ms', 'quit-grace-ms', 'term-wait-ms', 'kill-wait-ms']);
 const STRING_OPTIONS = new Set(['bundle', 'script-api', 'python', 'probe']);
-const FLAG_OPTIONS = new Set(['pretty']);
+const FLAG_OPTIONS = new Set(['pretty', 'windows-interactive']);
 
 /** Maps CLI option names to config properties. */
 const PROP = {
@@ -76,6 +78,7 @@ const PROP = {
   'quit-grace-ms': 'quitGraceMs',
   'term-wait-ms': 'termWaitMs',
   'kill-wait-ms': 'killWaitMs',
+  'windows-interactive': 'windowsInteractive',
   pretty: 'pretty',
 };
 
@@ -96,6 +99,7 @@ export function parseArgs(argv, { platform = process.platform, env = process.env
     const name = eq === -1 ? arg.slice(2) : arg.slice(2, eq);
     const inlineValue = eq === -1 ? null : arg.slice(eq + 1);
     if (FLAG_OPTIONS.has(name)) {
+      if (name === 'windows-interactive' && inlineValue !== null) throw new ArgError('--windows-interactive takes no value');
       out[PROP[name]] = true;
       continue;
     }
