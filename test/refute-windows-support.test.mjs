@@ -273,7 +273,8 @@ test('Release ZIP layout matches on native and Windows branches', t => {
   const { version } = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));
   const top = `ClipDock-${version}`;
   const expected = [`${top}/INSTALL.txt`, ...inventory(path.join(repo, 'dist')).files.map(file => `${top}/com.clipdock.app/${file}`)].sort();
-  const tar = host === 'win32' ? 'tar.exe' : '/usr/bin/tar';
+  const windowsTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+  const tar = host === 'win32' ? windowsTar : '/usr/bin/tar';
   for (const platform of new Set([host, 'win32'])) {
     const out = path.join(root, `${platform} archive path`);
     const result = childProcess.spawnSync(process.execPath, ['--input-type=module', '--eval', `
@@ -282,8 +283,8 @@ test('Release ZIP layout matches on native and Windows branches', t => {
       import assert from 'node:assert/strict';
       const exec = childProcess.execFileSync;
       childProcess.execFileSync = (binary, args, options) => {
-        assert.equal(binary, ${JSON.stringify(platform === 'win32' ? 'tar.exe' : 'zip')});
-        return exec(binary === 'tar.exe' ? ${JSON.stringify(tar)} : binary, args, options);
+        assert.equal(binary, ${JSON.stringify(platform === 'win32' ? windowsTar : 'zip')});
+        return exec(binary === ${JSON.stringify(windowsTar)} ? ${JSON.stringify(tar)} : binary, args, options);
       };
       syncBuiltinESMExports();
       Object.defineProperty(process, 'platform', { value: ${JSON.stringify(platform)} });
