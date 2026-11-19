@@ -4,6 +4,22 @@ All notable changes to ClipDock are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and ClipDock follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-19
+
+### Added
+
+- **Windows support.** Installation, YouTube and Pinterest search, downloads, and dragging downloaded files into Resolve were tested on Windows 11 with DaVinci Resolve Studio 21.2.
+
+### Changed
+
+- **ClipDock finds download tools in more places on Windows.** It looks for yt-dlp, gallery-dl, ffmpeg and Deno in WinGet locations, and for gallery-dl installed with `pip --user`, including with Microsoft Store Python. When a tool is missing, ClipDock tells you how to install it.
+- **The release zip can now be built on Windows too.** It includes the same plugin files and install instructions as the macOS zip.
+
+### Fixed
+
+- **YouTube downloads no longer fail with “Choose a usable download folder” on Windows when the folder is valid.**
+- **The Windows installer can recover from an interrupted install even if Windows gives the previous installer's process number to another program.**
+
 ## [0.3.4] - 2026-11-17
 
 ### Added

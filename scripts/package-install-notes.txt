@@ -35,10 +35,10 @@ macOS
 4. Start Resolve Studio and open Workspace > Workflow Integrations > ClipDock.
 
 
-Windows (not tested yet)
-------------------------
+Windows
+-------
 
-ClipDock's Windows support is built in but has not been tested. If a path
+Tested on Windows 11 with DaVinci Resolve Studio 21.2. If a path
 below does not exist on your machine, find WorkflowIntegration.node under
 Resolve's Help > Documentation > Developer folder, in
 Workflow Integrations\Examples\SamplePlugin.

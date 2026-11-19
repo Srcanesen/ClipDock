@@ -8,6 +8,7 @@ ClipDock runs as a Workflow Integration panel inside DaVinci Resolve Studio.
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue)
 ![DaVinci Resolve Studio 21](https://img.shields.io/badge/DaVinci_Resolve-Studio_21-orange)
 ![macOS tested](https://img.shields.io/badge/macOS-tested-lightgrey)
+![Windows tested](https://img.shields.io/badge/Windows-tested-lightgrey)
 
 ![ClipDock adding a YouTube range to the Resolve timeline](docs/demo.gif)
 
@@ -42,7 +43,7 @@ your key appears under **Parameters → `key`**. Paste it in ClipDock **Settings
 ## Requirements
 
 - **DaVinci Resolve Studio.** Workflow Integrations do not run in the free edition.
-  Tested on macOS with Resolve Studio 21. Windows support is built in but untested.
+  Tested on macOS with Resolve Studio 21 and on Windows 11 with Resolve Studio 21.2.
 - **Node.js 18+** to build and install the plugin.
 - **Deno 2.3+ or Node.js 22+** for yt-dlp's YouTube challenge solving.
   ClipDock skips older versions of these runtimes.
@@ -54,6 +55,19 @@ On macOS, install the tools with Homebrew. The ffmpeg package includes ffprobe:
 ```sh
 brew install yt-dlp ffmpeg gallery-dl deno
 ```
+
+On Windows, run these commands in PowerShell with WinGet and Python 3 installed.
+The FFmpeg package includes ffprobe:
+
+```powershell
+winget install --id yt-dlp.yt-dlp --exact --scope user
+py -3 -m pip install --user gallery-dl
+winget install --id Gyan.FFmpeg --exact --scope user
+winget install --id DenoLand.Deno --exact --scope user
+```
+
+For Pinterest videos on Windows, also install the yt-dlp Python module with
+`py -3 -m pip install --user yt-dlp`.
 
 ClipDock looks on `PATH` and in common install locations. See
 [Settings and files](#settings-and-files) for executable overrides.
@@ -67,6 +81,9 @@ Download `ClipDock-<version>.zip` from the
 follow the `INSTALL.txt` inside. The zip holds the built plugin, so you need neither
 Node.js nor a build step: you copy the plugin folder and Resolve's own
 `WorkflowIntegration.node` into Resolve's plugin folder, then restart Resolve.
+On Windows, quit Resolve and open PowerShell as Administrator before following
+the copy steps. If the example native module path is missing, look in
+**Help › Documentation › Developer › Workflow Integrations › Examples › SamplePlugin**.
 
 ### From source
 
@@ -83,7 +100,8 @@ Node.js nor a build step: you copy the plugin folder and Resolve's own
    npm install
    ```
 
-3. Build and copy ClipDock into Resolve's plugin folder:
+3. Quit Resolve, then build and copy ClipDock into its plugin folder. On Windows,
+   run this step from PowerShell opened as Administrator in the repository folder:
 
    ```sh
    npm run install:plugin
