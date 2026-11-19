@@ -1,7 +1,7 @@
 // Path strings are never mutation authority: capture identities, then verify immediately
 // before each syscall. Node has no openat/unlinkat; the residual microsecond window
 // between the final verification and the syscall cannot be closed here and is accepted.
-import { closeSync, constants, fstatSync, fsyncSync, ftruncateSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, renameSync, rmSync, rmdirSync, unlinkSync, writeSync, type BigIntStats } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, ftruncateSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, renameSync, rmSync, rmdirSync, unlinkSync, writeSync, type BigIntStats, type StatOptions } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ManagedRoot } from './managed-root';
 
@@ -13,12 +13,21 @@ type Identity = Readonly<{path: string; dev: bigint; ino: bigint; birth?: bigint
 export type DirectorySnapshot = Readonly<{path: string; directories: ReadonlyArray<Identity>}>;
 const same = (a: {dev: bigint; ino: bigint}, b: {dev: bigint; ino: bigint}) => a.dev === b.dev && a.ino === b.ino;
 type FileStats = {dev: bigint; ino: bigint; birthtimeNs: bigint};
-/** Older Windows libuv reports a 64-bit volume serial by name and only its low 32 bits by handle. */
-export function matchesWindowsFileDescriptor(named: BigIntStats, descriptor: BigIntStats): boolean {
-  return named.isFile() && descriptor.isFile() && (same(named, descriptor)
-    || (descriptor.dev !== 0n && descriptor.dev === BigInt.asUintN(32, named.dev)
-      && descriptor.ino !== 0n && descriptor.ino === named.ino && descriptor.birthtimeNs === named.birthtimeNs));
+declare const handleStatsBrand: unique symbol;
+export type HandleStats = BigIntStats & { readonly [handleStatsBrand]: true };
+declare module 'node:fs' {
+  function fstatSync(fd: number, options: StatOptions & {bigint: true}): HandleStats;
 }
+/** Older Windows libuv reports a 64-bit volume serial by name and only its low 32 bits by handle. */
+export function matchesWindowsFileDescriptor(pathStats: BigIntStats, handleStats: HandleStats): boolean {
+  return pathStats.isFile() && handleStats.isFile() && (same(pathStats, handleStats)
+    || (handleStats.dev !== 0n && handleStats.dev === BigInt.asUintN(32, pathStats.dev)
+      && handleStats.ino !== 0n && handleStats.ino === pathStats.ino && handleStats.birthtimeNs === pathStats.birthtimeNs));
+}
+type AssertFalse<T extends false> = T;
+type RejectTwoPathStats = AssertFalse<
+  [BigIntStats, BigIntStats] extends Parameters<typeof matchesWindowsFileDescriptor> ? true : false
+>;
 // macOS exFAT reports a negative placeholder inode for an empty file and its start
 // cluster after the first write. Adopt that change once, on the same device and birth time.
 const adopted = new WeakMap<Identity, {dev: bigint; ino: bigint}>();
