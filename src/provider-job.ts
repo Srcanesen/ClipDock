@@ -29,8 +29,13 @@ export type ProviderJobOutcome<T> =
   | {state: 'cancelled'; error: ProviderJobCancelledError};
 export type ProviderCancellation = Promise<void> | null;
 
+export function missingFfmpegMessage(tool: 'ffmpeg' | 'ffprobe', platform = process.platform): string {
+  const install = platform === 'win32' ? 'Run winget install --id Gyan.FFmpeg --exact --scope user' : `Install ${tool}`;
+  return `${tool} was not found. ${install} or set CLIPDOCK_${tool.toUpperCase()}_PATH to an absolute executable path.`;
+}
+
 /** The shared prerequisite message remains independent of provider error mapping. */
-export function requireFfprobe(available: unknown, message = 'ffprobe was not found. Install ffprobe or set CLIPDOCK_FFPROBE_PATH to an absolute executable path.'): void {
+export function requireFfprobe(available: unknown, message = missingFfmpegMessage('ffprobe')): void {
   if (!available) throw new Error(message);
 }
 

@@ -4,7 +4,7 @@
 // shell:false invariant enforced here.
 
 import { spawnSync, type ChildProcess } from 'node:child_process';
-import { accessSync, constants, lstatSync, readdirSync, realpathSync } from 'node:fs';
+import { accessSync, constants, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import { ManagedRoot } from './managed-root';
@@ -16,7 +16,10 @@ const VERSION_PROBE_TIMEOUT_MS = 3_000;
 const VERSION_PROBE_MAX_BYTES = 256 * 1024;
 
 export function executable(p: string): boolean {
-  try { accessSync(p, constants.X_OK); return true; } catch { return false; }
+  try {
+    accessSync(p, constants.X_OK);
+    return process.platform !== 'win32' || statSync(p).isFile();
+  } catch { return false; }
 }
 
 export function absoluteForPlatform(p: string, platform: NodeJS.Platform): boolean {
@@ -107,6 +110,7 @@ export function installCandidates(name: string, env: NodeJS.ProcessEnv, platform
   return [
     ...(options.programDir ? [join(env.ProgramFiles ?? 'C:\\Program Files', ...options.programDir.split('/'), exe)] : []),
     ...(options.localAppDataDir ? [join(env.LOCALAPPDATA ?? '', ...options.localAppDataDir.split('/'), exe)] : []),
+    ...(env.LOCALAPPDATA ? [join(env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links', exe)] : []),
     ...(options.homeBin ? [join(env.USERPROFILE ?? '', 'bin', exe)] : []),
   ];
 }

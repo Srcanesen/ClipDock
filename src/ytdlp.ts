@@ -4,8 +4,8 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, win32 } from 'node:path';
 import { contains as pathContains } from './path-boundary';
-import { absoluteForPlatform, discoverBinary, executable, installCandidates, LruCache, requireBinary, spawnBounded, fetchBounded, cleanJobDirectory, downloadProgress, SharedProviderOperation, type VersionProbe } from './provider-platform';
-import { ProviderJobRunner, ProviderJobCancelledError, ProviderJobRejectedError, ProviderSession, requireFfprobe, type ProviderJobContext } from './provider-job';
+import { absoluteForPlatform, discoverBinary, installCandidates, LruCache, requireBinary, spawnBounded, fetchBounded, cleanJobDirectory, downloadProgress, SharedProviderOperation, type VersionProbe } from './provider-platform';
+import { ProviderJobRunner, ProviderJobCancelledError, ProviderJobRejectedError, ProviderSession, missingFfmpegMessage, requireFfprobe, type ProviderJobContext } from './provider-job';
 import { homedir, tmpdir } from 'node:os';
 import { discoverFfprobe } from './media-prep';
 import { VIDEO_EXTENSIONS } from './media-extensions';
@@ -79,14 +79,15 @@ const SOCIAL_ERRORS = new Set([
 ]);
 
 export function discoverYtdlp(env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':')): string | null {
-  const names = platform === 'win32' ? ['yt-dlp.exe', 'yt-dlp.bat'] : ['yt-dlp'];
-  const configured = env.CLIPDOCK_YTDLP_PATH;
-  if (configured && isAbsolute(configured) && executable(configured)) return configured;
-  return discoverBinary(names, null, { env, platform, pathEntries, extraCandidates: installCandidates('yt-dlp', env, platform, {programDir: 'yt-dlp', localAppDataDir: 'yt-dlp'}) });
+  const windows = platform === 'win32';
+  const names = [windows ? 'yt-dlp.exe' : 'yt-dlp'];
+  // Windows batch wrappers can't run with shell: false.
+  const envKey = !windows || extname(env.CLIPDOCK_YTDLP_PATH ?? '').toLowerCase() === '.exe' ? 'CLIPDOCK_YTDLP_PATH' : undefined;
+  return discoverBinary(names, null, { env, platform, pathEntries, envKey, extraCandidates: installCandidates('yt-dlp', env, platform, {programDir: 'yt-dlp', localAppDataDir: 'yt-dlp'}) });
 }
 export function discoverFfmpeg(env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':'), probe?: VersionProbe): string | null {
   const name = platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  const extra = installCandidates('ffmpeg', env, platform, {homeBin: true, programDir: 'ffmpeg/bin', localAppDataDir: 'Microsoft/WinGet/Links'});
+  const extra = installCandidates('ffmpeg', env, platform, {homeBin: true, programDir: 'ffmpeg/bin'});
   return discoverBinary([name], ['-version'], { env, platform, pathEntries, envKey: 'CLIPDOCK_FFMPEG_PATH', extraCandidates: extra, versionIdentity: 'ffmpeg version', probe });
 }
 /**
@@ -99,13 +100,15 @@ export function discoverJsRuntime(env = process.env, platform = process.platform
   const home = env.HOME ?? homedir();
   const deno = discoverBinary([platform === 'win32' ? 'deno.exe' : 'deno'], ['--version'], { env, platform, pathEntries, envKey: 'CLIPDOCK_DENO_PATH', extraCandidates: [...installCandidates('deno', env, platform), ...(platform === 'win32' ? [join(env.USERPROFILE ?? '', '.deno', 'bin', 'deno.exe')] : [join(home, '.deno', 'bin', 'deno')])], versionIdentity: 'deno ', versionCheck: ({ text }) => runtimeVersionSupported(text, /^deno (\S+)/, [2, 3, 0]), probe });
   if (deno) return `deno:${deno}`;
-  const node = discoverBinary([platform === 'win32' ? 'node.exe' : 'node'], ['--version'], { env, platform, pathEntries, extraCandidates: installCandidates('node', env, platform), versionIdentity: 'v', versionCheck: ({ text }) => runtimeVersionSupported(text, /^v(\S+)/, [22, 0, 0]), probe });
+  const nodeLocations = installCandidates('node', env, platform, env.ProgramFiles ? {programDir: 'nodejs'} : {});
+  const node = discoverBinary([platform === 'win32' ? 'node.exe' : 'node'], ['--version'], { env, platform, pathEntries, extraCandidates: nodeLocations, versionIdentity: 'v', versionCheck: ({ text }) => runtimeVersionSupported(text, /^v(\S+)/, [22, 0, 0]), probe });
   if (node) return `node:${node}`;
   const bun = discoverBinary([platform === 'win32' ? 'bun.exe' : 'bun'], ['--version'], { env, platform, pathEntries, extraCandidates: [...installCandidates('bun', env, platform), join(platform === 'win32' ? env.USERPROFILE ?? home : home, '.bun', 'bin', platform === 'win32' ? 'bun.exe' : 'bun')], versionCheck: ({ code, text }) => code === 0 && runtimeVersionSupported(text, /^(\S+)/, [1, 2, 11]), probe });
   if (bun) return `bun:${bun}`;
   const quickjs = discoverBinary([platform === 'win32' ? 'qjs.exe' : 'qjs'], ['--help'], { env, platform, pathEntries, extraCandidates: installCandidates('qjs', env, platform), versionCheck: ({ code, text }) => code !== null && runtimeVersionSupported(text, /^QuickJS(?:-ng)?\s+version\s+(\S+)/, text.includes('QuickJS-ng') ? [0] : [2023, 12, 9], text.includes('QuickJS-ng')), probe });
   if (quickjs) return `quickjs:${quickjs}`;
-  console.warn('No supported JavaScript runtime found. yt-dlp requires Deno >=2.3.0, Node >=22.0.0, Bun >=1.2.11, QuickJS >=2023-12-09, or QuickJS-ng >0. YouTube challenge solving may be unavailable.');
+  const warning = 'No supported JavaScript runtime found. yt-dlp requires Deno >=2.3.0, Node >=22.0.0, Bun >=1.2.11, QuickJS >=2023-12-09, or QuickJS-ng >0. YouTube challenge solving may be unavailable.';
+  console.warn(platform === 'win32' ? `${warning} Run winget install --id DenoLand.Deno --exact --scope user or set CLIPDOCK_DENO_PATH to an absolute executable path.` : warning);
   return null;
 }
 
@@ -423,8 +426,11 @@ export class YtdlpWorker {
     const jobId = details.jobId ?? randomUUID();
     return this.session.run(this.jobs, jobId, details.jobDir, body, {cancelledMessage, mapError, notifyFailure: details.kind === 'download', busyMessage: 'Another ClipDock URL job is already active.', invalidMessage: details.kind === 'metadata' ? 'Invalid social download request.' : 'Invalid download request.', prerequisites: () => {
         if (!details.sharedMetadata && this.current) throw new ProviderJobRejectedError('busy', 'Another ClipDock URL job is already active.');
+      if (this.platform === 'win32' && details.kind === 'search') {
+        requireBinary(this.binary, 'yt-dlp was not found. Run winget install --id yt-dlp.yt-dlp --exact --scope user or set CLIPDOCK_YTDLP_PATH to an absolute executable path.');
+      }
         if (details.kind === 'download') {
-          if (!this.ffmpegPath || !absoluteForPlatform(this.ffmpegPath, this.platform)) throw new Error('ffmpeg was not found. Install ffmpeg or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.');
+          if (!this.ffmpegPath || !absoluteForPlatform(this.ffmpegPath, this.platform)) throw new Error(missingFfmpegMessage('ffmpeg', this.platform));
         }
       }, terminal: outcome => {
         if (outcome.state === 'cancelled') {
@@ -745,7 +751,7 @@ export class YtdlpWorker {
       if (options.mediaMode === 'audio' && !filePath.toLowerCase().endsWith(`.${options.audioFormat}`)) throw new Error('Downloaded file failed the safety check.');
       const size = statSync(filePath).size;
       if (size === 0 || size > 2147483648) throw new Error('Downloaded media exceeded the size limit or was empty.');
-      requireFfprobe(this.ffprobePath, 'ffprobe was not found. Install ffprobe to validate downloaded media.');
+      requireFfprobe(this.ffprobePath, this.platform === 'win32' ? missingFfmpegMessage('ffprobe', this.platform) : 'ffprobe was not found. Install ffprobe to validate downloaded media.');
       const checked = spawnBounded(this.ffprobePath!, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', filePath], this.spawn, {maxStdout: MAX_STDOUT, timeoutMs: this.metadataTimeoutMs, killGraceMs: this.killGraceMs, platform: this.platform, processSpawn: this.processSpawn});
       const probe = await context.wait(checked);
       context.check();

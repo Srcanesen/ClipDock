@@ -4,7 +4,7 @@ import { accessSync, constants, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, win32 } from 'node:path';
 import { probeVersion, spawnBounded } from './provider-platform';
-import { ProviderJobRunner, requireFfprobe, type ProviderJobContext } from './provider-job';
+import { ProviderJobRunner, missingFfmpegMessage, requireFfprobe, type ProviderJobContext } from './provider-job';
 import { ManagedRoot } from './managed-root';
 import { AnchoredDir, SafeFsError, captureFile, createPrivateDir, publishNoReplace, removeOwned, removePrivateDir, verifyFile, type OwnedFile } from './safe-fs';
 
@@ -225,8 +225,8 @@ export function createMediaPrep(options: Options = {}) {
     }, {
       invalidMessage: 'Invalid media preparation request.',
       prerequisites: () => {
-        if (!ffmpeg || !absoluteForPlatform(ffmpeg, platform)) throw new Error('ffmpeg was not found. Install ffmpeg or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.');
-        requireFfprobe(ffprobe && absoluteForPlatform(ffprobe, platform));
+        if (!ffmpeg || !absoluteForPlatform(ffmpeg, platform)) throw new Error(missingFfmpegMessage('ffmpeg', platform));
+        requireFfprobe(ffprobe && absoluteForPlatform(ffprobe, platform), missingFfmpegMessage('ffprobe', platform));
         try {
           if (request.source) ownedSource = request.source;
           else {

@@ -4,7 +4,7 @@
 // WorkflowIntegration.node.
 
 import { searchOrientation, type ORIENTATION_SUPPORT, type SearchOptions } from './renderer-state/search-session';
-import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
+import { SHARE_ENV, Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import {dirname} from 'node:path';
 import { isSafeMediaFile as pathIsSafeMediaFile } from './path-boundary';
@@ -79,7 +79,11 @@ export class ManagedOperations {
 /** Run executable discovery on a worker so synchronous version probes cannot stall Electron. */
 export function discoverEnginePaths(): Promise<{ ffmpegPath: string | null; ffprobePath: string | null; ytdlpPath: string | null; galleryDlPath: string | null; jsRuntime: string | null }> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(__filename, { workerData: { clipdockEngineDiscovery: true } });
+    // On Windows, Node's copied worker environment loses case-insensitive lookup of Path.
+    const worker = new Worker(__filename, {
+      workerData: { clipdockEngineDiscovery: true },
+      ...(process.platform === 'win32' ? { env: SHARE_ENV } : {}),
+    });
     worker.once('message', resolve);
     worker.once('error', reject);
     worker.once('exit', (code) => { if (code !== 0) reject(new Error(`Engine discovery exited with code ${code}.`)); });
