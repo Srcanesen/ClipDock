@@ -138,9 +138,14 @@ function isPidLive(pid) {
   }
 }
 
-function isTransactionOwnerLive({pid, windowsStartTime}) {
+function hasComparableWindowsStartTime({windowsStartTime}) {
+  return process.platform === 'win32' && typeof windowsStartTime === 'string' && /^[1-9]\d*$/.test(windowsStartTime);
+}
+
+function isTransactionOwnerLive(record) {
+  const {pid, windowsStartTime} = record;
   if (!isPidLive(pid)) return false;
-  if (process.platform !== 'win32' || typeof windowsStartTime !== 'string' || !/^[1-9]\d*$/.test(windowsStartTime)) return true;
+  if (!hasComparableWindowsStartTime(record)) return true;
   const current = pid === process.pid ? ownWindowsStartTime : windowsProcessStartTime(pid);
   return current === undefined ? isPidLive(pid) : current === windowsStartTime;
 }
