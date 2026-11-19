@@ -74,7 +74,6 @@ function* winGetPackageExecutables(directory: string, names: ReadonlySet<string>
 /**
  * Single candidate+probe+override discovery.
  * - an absolute envKey override is the first candidate; an invalid one never blocks fallback
- * - PATH, explicit fallbacks, and finally unlinked WinGet binaries are de-duplicated
  * - each candidate must be absoluteForPlatform, executable, and pass versionIdentity/versionCheck if given
  * Returns first match or null. shell:false is enforced in every spawnSync probe.
  */
@@ -118,7 +117,6 @@ export function discoverBinary(
   return null;
 }
 
-/** Common install locations and WinGet links for a provider binary. */
 export function installCandidates(name: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform, options: {homeBin?: boolean; programDir?: string; localAppDataDir?: string} = {}): string[] {
   if (platform === 'darwin') return [`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, ...(options.homeBin ? [join(env.HOME || homedir(), 'bin', name)] : [])];
   if (platform !== 'win32') return [];

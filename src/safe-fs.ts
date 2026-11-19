@@ -112,7 +112,6 @@ function verifiedFileStat(file: OwnedFile): BigIntStats {
 }
 export function verifyFile(file: OwnedFile): string { verifiedFileStat(file); return file.path; }
 
-/** Keep full pathname identities and reconcile the Windows width difference only at the descriptor boundary. */
 export function verifyFileDescriptor(file: OwnedFile, fd: number): BigIntStats {
   const info = fstatSync(fd, {bigint: true});
   if (!info.isFile() || (!sameFile(file.identity, info)

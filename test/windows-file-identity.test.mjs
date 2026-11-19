@@ -8,7 +8,6 @@ import { ManagedRoot } from '../dist/managed-root.js';
 import { AnchoredDir, appendOwned, matchesWindowsFileDescriptor, writeExclusive, writeOwned } from '../dist/safe-fs.js';
 
 const windows = { skip: process.platform !== 'win32' };
-// Volume serials measured on the same NTFS file with Resolve's bundled Node.
 const pathDevice = -572273382278554242n;
 const handleDevice = 249568638n;
 const named = { dev: pathDevice, ino: 42n, birthtimeNs: 1700000000000000000n, isFile: () => true };

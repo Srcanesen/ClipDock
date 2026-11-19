@@ -140,11 +140,8 @@ function isPidLive(pid) {
 
 function isTransactionOwnerLive({pid, windowsStartTime}) {
   if (!isPidLive(pid)) return false;
-  // Windows recycles PIDs quickly. Compare exact creation times when both
-  // are known, and keep legacy or unverifiable records protected.
   if (process.platform !== 'win32' || typeof windowsStartTime !== 'string' || !/^[1-9]\d*$/.test(windowsStartTime)) return true;
   const current = pid === process.pid ? ownWindowsStartTime : windowsProcessStartTime(pid);
-  // The process can exit during the start-time query.
   return current === undefined ? isPidLive(pid) : current === windowsStartTime;
 }
 
