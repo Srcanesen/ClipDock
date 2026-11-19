@@ -11,7 +11,7 @@ const BOOT_MARGIN_MS = 60_000;
 // Allow small backward clock steps between process start and lock creation.
 const PID_REUSE_MARGIN_MS = 5 * 60 * 1000;
 
-type Snapshot = { dev: number; ino: number; mtimeMs: number; encoded: string; pid: number | null; createdAt: number | null };
+type Snapshot = { dev: number | bigint; ino: number | bigint; mtimeMs: number; encoded: string; pid: number | null; createdAt: number | null };
 export type FileLock = { release(): void };
 /** Earliest possible start of the live process `pid`, epoch ms; undefined when it cannot be determined. */
 export type ProcessStartProbe = (pid: number) => number | undefined;
@@ -37,7 +37,7 @@ export const probeProcessStart: ProcessStartProbe = pid => {
 };
 function snapshot(file: string): Snapshot | null {
   try {
-    const info = lstatSync(file);
+    const info = process.platform === 'win32' ? lstatSync(file, {bigint: true}) : lstatSync(file);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error('Unsafe lock file.');
     const encoded = readFileSync(file, 'utf8');
     let value: unknown;
@@ -45,7 +45,7 @@ function snapshot(file: string): Snapshot | null {
     // Accept the old history PID-only format during upgrade.
     const pid = typeof value === 'number' ? value : (value as {pid?: unknown} | null)?.pid;
     const createdAt = (value as {createdAt?: unknown} | null)?.createdAt;
-    return {dev: info.dev, ino: info.ino, mtimeMs: info.mtimeMs, encoded, pid: Number.isSafeInteger(pid) && Number(pid) > 0 ? Number(pid) : null, createdAt: Number.isFinite(createdAt) ? Number(createdAt) : null};
+    return {dev: info.dev, ino: info.ino, mtimeMs: Number(info.mtimeMs), encoded, pid: Number.isSafeInteger(pid) && Number(pid) > 0 ? Number(pid) : null, createdAt: Number.isFinite(createdAt) ? Number(createdAt) : null};
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
@@ -78,7 +78,7 @@ function publish(file: string): FileLock | null {
     const named = process.platform === 'win32' ? lstatSync(candidate, {bigint: true}) : null;
     if (named && !matchesWindowsFileDescriptor(named, fstatSync(fd, {bigint: true}))) throw new Error('Unsafe lock file.');
     const info = named ?? fstatSync(fd);
-    owner = {dev: Number(info.dev), ino: Number(info.ino), mtimeMs: Number(info.mtimeMs), encoded, pid: process.pid, createdAt};
+    owner = {dev: info.dev, ino: info.ino, mtimeMs: Number(info.mtimeMs), encoded, pid: process.pid, createdAt};
     try { linkSync(candidate, file); linked = true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
   } finally {

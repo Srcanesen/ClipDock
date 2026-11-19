@@ -15,11 +15,12 @@ function workspace(t) {
   const { lstatSync, fstatSync } = fs;
   // Values measured on the same NTFS file with Resolve's bundled Node.
   const pathDevice = -572273382278554242n;
+  const numericPathDevice = Number(BigInt.asUintN(64, pathDevice));
   let descriptorDevice = 249568638n;
   let birthOffset = 0n;
   t.mock.method(fs, 'lstatSync', (file, options) => {
     const stat = lstatSync(file, options);
-    if (stat) stat.dev = options?.bigint ? pathDevice : Number(pathDevice);
+    if (stat) stat.dev = options?.bigint ? pathDevice : numericPathDevice;
     return stat;
   });
   t.mock.method(fs, 'fstatSync', (fd, options) => {
