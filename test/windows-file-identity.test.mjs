@@ -8,10 +8,10 @@ import { ManagedRoot } from '../dist/managed-root.js';
 import { AnchoredDir, appendOwned, matchesWindowsFileDescriptor, writeExclusive, writeOwned } from '../dist/safe-fs.js';
 
 const windows = { skip: process.platform !== 'win32' };
-const pathDevice = -572273382278554242n;
-const handleDevice = 249568638n;
-const named = { dev: pathDevice, ino: 42n, birthtimeNs: 1700000000000000000n, isFile: () => true };
-const descriptor = { ...named, dev: handleDevice };
+const resolveNodeNtfsPathSerial = -572273382278554242n;
+const resolveNodeNtfsHandleSerial = 249568638n;
+const named = { dev: resolveNodeNtfsPathSerial, ino: 42n, birthtimeNs: 1700000000000000000n, isFile: () => true };
+const descriptor = { ...named, dev: resolveNodeNtfsHandleSerial };
 
 test('Windows descriptor matching accepts the same file across volume serial widths', () => {
   assert.equal(matchesWindowsFileDescriptor(named, descriptor), true);
@@ -25,12 +25,12 @@ function workspace(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), 'clipdock-volume-id-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { lstatSync, fstatSync } = fs;
-  const numericPathDevice = Number(BigInt.asUintN(64, pathDevice));
-  let descriptorDevice = handleDevice;
+  const numericPathDevice = Number(BigInt.asUintN(64, resolveNodeNtfsPathSerial));
+  let descriptorDevice = resolveNodeNtfsHandleSerial;
   let birthOffset = 0n;
   t.mock.method(fs, 'lstatSync', (file, options) => {
     const stat = lstatSync(file, options);
-    if (stat) stat.dev = options?.bigint ? pathDevice : numericPathDevice;
+    if (stat) stat.dev = options?.bigint ? resolveNodeNtfsPathSerial : numericPathDevice;
     return stat;
   });
   t.mock.method(fs, 'fstatSync', (fd, options) => {
