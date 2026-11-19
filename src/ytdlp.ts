@@ -4,7 +4,7 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, win32 } from 'node:path';
 import { contains as pathContains } from './path-boundary';
-import { absoluteForPlatform, discoverBinary, installCandidates, LruCache, requireBinary, spawnBounded, fetchBounded, cleanJobDirectory, downloadProgress, SharedProviderOperation, type VersionProbe } from './provider-platform';
+import { absoluteForPlatform, discoverBinary, installCandidates, LruCache, probeVersion, requireBinary, spawnBounded, fetchBounded, cleanJobDirectory, downloadProgress, SharedProviderOperation, type VersionProbe } from './provider-platform';
 import { ProviderJobRunner, ProviderJobCancelledError, ProviderJobRejectedError, ProviderSession, missingFfmpegMessage, requireFfprobe, type ProviderJobContext } from './provider-job';
 import { homedir, tmpdir } from 'node:os';
 import { discoverFfprobe } from './media-prep';
@@ -81,11 +81,14 @@ const SOCIAL_ERRORS = new Set([
 export function discoverYtdlp(env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':')): string | null {
   const windows = platform === 'win32';
   const names = [windows ? 'yt-dlp.exe' : 'yt-dlp'];
+  const versionArgs = windows ? ['--version'] : null;
   // Windows batch wrappers can't run with shell: false.
   const envKey = !windows || extname(env.CLIPDOCK_YTDLP_PATH ?? '').toLowerCase() === '.exe' ? 'CLIPDOCK_YTDLP_PATH' : undefined;
-  return discoverBinary(names, windows ? ['--version'] : null, {
+  return discoverBinary(names, versionArgs, {
     env, platform, pathEntries, envKey,
     extraCandidates: installCandidates('yt-dlp', env, platform, {programDir: 'yt-dlp', localAppDataDir: 'yt-dlp'}),
+    // The standalone Windows executable unpacks itself before answering.
+    probe: versionArgs ? candidate => probeVersion(candidate, versionArgs, 15_000) : undefined,
     versionCheck: windows ? ({ code, text }) => code === 0 && /^\d{4}\.\d{1,2}\.\d{1,2}(?:[.+-][\w.+-]+)?\s*$/m.test(text.trim()) : undefined,
   });
 }

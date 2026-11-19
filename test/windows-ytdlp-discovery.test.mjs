@@ -68,6 +68,13 @@ test('Windows skips broken and empty yt-dlp executables before a working WinGet 
   assert.equal(discoverYtdlp(env, 'win32'), valid);
 });
 
+test('Windows accepts a yt-dlp version probe that takes longer than three seconds', windows, t => {
+  const root = workspace(t);
+  redirectFixtureProbes(t, root);
+  const binary = writeNodeFixture(root, 'yt-dlp', `setTimeout(() => { ${ytDlpVersion} }, 3250);`);
+  assert.equal(discoverYtdlp({ PATH: root, ProgramFiles: root }, 'win32'), binary);
+});
+
 for (const [location, directories, exe] of [
   ['machine links', ['WinGet', 'Links'], 'ffmpeg.exe'],
   ['an unlinked package', ['Microsoft', 'WinGet', 'Packages', 'Portable.VideoTools', 'distribution', 'bin'], 'FFmpeg.EXE'],
