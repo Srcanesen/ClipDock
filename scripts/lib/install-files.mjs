@@ -1,6 +1,7 @@
 import {cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, statSync, lstatSync, openSync, fsyncSync, closeSync, linkSync} from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 
 const realFs = {cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, statSync, lstatSync, openSync, fsyncSync, closeSync, linkSync};
 
@@ -112,6 +113,41 @@ function restoreRecoveryError(destination, backupDir, restoreError, originalErro
   return error;
 }
 
+let ownWindowsStartTime;
+
+function windowsProcessStartTime(pid) {
+  const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const command = `[Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)`;
+  try {
+    const result = execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', command], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 5000,
+    }).trim();
+    return /^[1-9]\d*$/.test(result) ? result : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPidLive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+function isTransactionOwnerLive({pid, windowsStartTime}) {
+  if (!isPidLive(pid)) return false;
+  // Windows recycles PIDs quickly. Compare exact creation times when both
+  // are known, and keep legacy or unverifiable records protected.
+  if (process.platform !== 'win32' || typeof windowsStartTime !== 'string' || !/^[1-9]\d*$/.test(windowsStartTime)) return true;
+  const current = pid === process.pid ? ownWindowsStartTime : windowsProcessStartTime(pid);
+  // The process can exit during the start-time query.
+  return current === undefined ? isPidLive(pid) : current === windowsStartTime;
+}
+
 // One canonical target needs one owner. The exclusive journal also records enough
 // immutable state to recover if the owner dies between the two directory renames.
 function acquireTransaction(destination, fs) {
@@ -134,21 +170,30 @@ function acquireTransaction(destination, fs) {
       fs.rmSync(temporary, {force: true});
     }
   };
-  const owner = { pid: process.pid, destination: path.resolve(destination), workDir: path.join(parent, `.__clipdock_work_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}`) };
+  if (process.platform === 'win32') ownWindowsStartTime ??= windowsProcessStartTime(process.pid);
+  const identity = {pid: process.pid, windowsStartTime: ownWindowsStartTime};
+  const owner = { ...identity, destination: path.resolve(destination), workDir: path.join(parent, `.__clipdock_work_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}`) };
   const busy = () => Object.assign(new Error(`Installation transaction is active or needs recovery: ${lock}`), {code: 'INSTALL_BUSY'});
+  const stillRecorded = (file, encoded) => {
+    try { return fs.readFileSync(file, 'utf8') === encoded; }
+    catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  };
   const recover = () => {
     // Never unlink a dead owner's shared lock to claim it: two retries could
     // otherwise unlink each other's replacement. Dead claims instead lead to
     // one immutable successor path, on which exclusive creation elects a winner.
     const claims = [];
-    const recoveryOwner = {pid: process.pid, token: randomUUID()};
+    const recoveryOwner = {...identity, token: randomUUID()};
     let claim = recovery;
     for (;;) {
       try { publish(claim, recoveryOwner); break; } catch (error) {
         if (error.code !== 'EEXIST') throw error;
       }
-      let previous;
-      try { previous = JSON.parse(fs.readFileSync(claim, 'utf8')); } catch (error) {
+      let previous, encoded;
+      try {
+        encoded = fs.readFileSync(claim, 'utf8');
+        previous = JSON.parse(encoded);
+      } catch (error) {
         if (!(error instanceof SyntaxError)) throw busy();
         // Legacy torn claims have no live owner. All retries follow the same
         // immutable successor, so they cannot remove each other's claims.
@@ -159,15 +204,18 @@ function acquireTransaction(destination, fs) {
       // The old installer recorded just a PID. Retain its live-owner refusal.
       if (Number.isInteger(previous)) previous = {pid: previous, token: `legacy-${previous}`};
       if (!Number.isInteger(previous?.pid) || previous.pid <= 0 || !/^(?:[a-f0-9-]{36}|legacy-\d+)$/.test(previous.token)) throw busy();
-      try { process.kill(previous.pid, 0); throw busy(); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      if (isTransactionOwnerLive(previous) || !stillRecorded(claim, encoded)) throw busy();
       claims.push(claim);
       claim = `${recovery}.${previous.token}`;
       if (claims.includes(claim)) throw busy();
     }
     let recovered = false;
     try {
-      let prior;
-      try { prior = JSON.parse(fs.readFileSync(lock, 'utf8')); } catch (error) {
+      let prior, encoded;
+      try {
+        encoded = fs.readFileSync(lock, 'utf8');
+        prior = JSON.parse(encoded);
+      } catch (error) {
         if (error.code === 'ENOENT') { recovered = true; return; }
         if (!(error instanceof SyntaxError)) throw error;
         // No work directory can be trusted without a complete journal. Only
@@ -177,7 +225,7 @@ function acquireTransaction(destination, fs) {
         return;
       }
       if (typeof prior.workDir !== 'string' || !Number.isInteger(prior.pid) || prior.pid <= 0 || prior.destination !== path.resolve(destination) || path.dirname(prior.workDir) !== parent || !path.basename(prior.workDir).startsWith('.__clipdock_work_')) throw busy();
-      try { process.kill(prior.pid, 0); throw busy(); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      if (isTransactionOwnerLive(prior) || !stillRecorded(lock, encoded)) throw busy();
       const backup = path.join(prior.workDir, 'backup');
       const stage = path.join(prior.workDir, 'stage');
       // The journal precedes mkdir and outlives work-directory cleanup. If

@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { recoverInterruptedTransaction, reconcileDirectoryContents } from '../scripts/lib/install-files.mjs';
 
 const helper = new URL('../scripts/lib/install-files.mjs', import.meta.url).href;
+const interruptRecovery = `recoverInterruptedTransaction(destination, {...fs, linkSync(from, to) { fs.linkSync(from, to); fs.rmSync(from); if (to.includes('.recovery')) process.exit(74); }});`;
 function fixture(t) {
   fs.mkdirSync('output', { recursive: true });
   const root = fs.mkdtempSync(path.resolve('output/testtool-recovery-'));
@@ -15,7 +16,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(source, 'new.js'), 'new');
   fs.writeFileSync(path.join(destination, 'old.js'), 'working original');
   const lock = path.join(root, '.__clipdock_lock_installed');
-  const run = code => spawnSync(process.execPath, ['--input-type=module', '-e', `import fs from 'node:fs'; import {reconcileDirectoryContents, recoverInterruptedTransaction} from ${JSON.stringify(helper)}; const source=${JSON.stringify(source)}, destination=${JSON.stringify(destination)}; ${code}`], { encoding: 'utf8', timeout: 5000 });
+  const run = code => spawnSync(process.execPath, ['--input-type=module', '-e', `import fs from 'node:fs'; import {reconcileDirectoryContents, recoverInterruptedTransaction} from ${JSON.stringify(helper)}; const source=${JSON.stringify(source)}, destination=${JSON.stringify(destination)}; ${code}`], { encoding: 'utf8', timeout: process.platform === 'win32' ? 15000 : 5000 });
   const crashed = run(`reconcileDirectoryContents(source, destination, {...fs, renameSync(from, to) { fs.renameSync(from, to); if (from === destination) process.exit(73); }});`);
   assert.equal(crashed.status, 73, crashed.stderr);
   assert.equal(fs.existsSync(destination), false);
@@ -25,7 +26,7 @@ function fixture(t) {
 test('retry restores original after recovery itself is interrupted, and remains repeatable', t => {
   const fx = fixture(t);
   for (let attempt = 0; attempt < 2; attempt++) {
-    const crashed = fx.run(`recoverInterruptedTransaction(destination, {...fs, linkSync(from, to) { fs.linkSync(from, to); fs.rmSync(from); if (to.includes('.recovery')) process.exit(74); }});`);
+    const crashed = fx.run(interruptRecovery);
     assert.equal(crashed.status, 74, crashed.stderr);
     assert.equal(fs.existsSync(fx.destination), false);
   }
@@ -49,7 +50,7 @@ test('recovery refuses a live recovery owner and preserves the journal and backu
 
 test('a competing recovery cannot pass an active successor claim', t => {
   const fx = fixture(t);
-  const crashed = fx.run(`recoverInterruptedTransaction(destination, {...fs, linkSync(from, to) { fs.linkSync(from, to); fs.rmSync(from); if (to.includes('.recovery')) process.exit(74); }});`);
+  const crashed = fx.run(interruptRecovery);
   assert.equal(crashed.status, 74, crashed.stderr);
   let competed = false;
   recoverInterruptedTransaction(fx.destination, { ...fs, linkSync(from, to) {
@@ -61,6 +62,20 @@ test('a competing recovery cannot pass an active successor claim', t => {
     }
   } });
   assert.equal(competed, true);
+  assert.equal(fs.readFileSync(path.join(fx.destination, 'old.js'), 'utf8'), 'working original');
+  assert.deepEqual(fs.readdirSync(fx.root).sort(), ['installed', 'source']);
+});
+
+test('Windows recovery reclaims the journal and recovery claim when their PIDs have been reused', { skip: process.platform !== 'win32' }, t => {
+  const fx = fixture(t);
+  const crashed = fx.run(interruptRecovery);
+  assert.equal(crashed.status, 74, crashed.stderr);
+  for (const file of [fx.lock, `${fx.lock}.recovery`]) {
+    const owner = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fs.writeFileSync(file, JSON.stringify({ ...owner, pid: process.pid }));
+  }
+  const recovered = fx.run('recoverInterruptedTransaction(destination);');
+  assert.equal(recovered.status, 0, recovered.stderr);
   assert.equal(fs.readFileSync(path.join(fx.destination, 'old.js'), 'utf8'), 'working original');
   assert.deepEqual(fs.readdirSync(fx.root).sort(), ['installed', 'source']);
 });
