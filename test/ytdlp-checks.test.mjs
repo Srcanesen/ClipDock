@@ -350,7 +350,10 @@ test('social and YouTube URL/process/search/download/cancel boundaries', async (
   {
     const calls = [];
     const worker = new YtdlpWorker('/fake/yt-dlp', queuedSpawn([], calls), undefined, { sessionDir: path.join(phase3Root, 'no-ffmpeg'), ffmpegPath: null });
-    await rejected('download requires ffmpeg before spawn', worker.download(canonical, '2160p', 'job-no-ffmpeg', () => undefined), 'ffmpeg was not found. Install ffmpeg or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.');
+    const message = process.platform === 'win32'
+      ? 'ffmpeg was not found. Run winget install --id Gyan.FFmpeg --exact --scope user or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.'
+      : 'ffmpeg was not found. Install ffmpeg or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.';
+    await rejected('download requires ffmpeg before spawn', worker.download(canonical, '2160p', 'job-no-ffmpeg', () => undefined), message);
     expect('missing ffmpeg does not spawn yt-dlp', calls.length, 0);
   }
   const ffmpegDiscoveryFixture = writeVersionFixture(path.join(phase3Root, 'ffmpeg-version-fixture'), 'ffmpeg');

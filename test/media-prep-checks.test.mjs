@@ -177,8 +177,14 @@ test('probe, profiles, collisions, rate selection, cancellation and target label
   // Missing binaries and symlink escape fail before spawn; oversized probe JSON is rejected.
   {
     const { dir, file } = prepFile('prep-missing-bin'); const calls = [];
-    await rejected('media-prep missing ffmpeg before spawn', createMediaPrep({ ffmpegPath: null, ffprobePath: '/fake/ffprobe', spawn: queuedSpawn([], calls) }).prepare({ jobId: 'missing-ffmpeg', inputPath: file, allowedRoot: dir, profile: 'fast', emit: () => undefined }), 'ffmpeg was not found. Install ffmpeg or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.');
-    await rejected('media-prep missing ffprobe before spawn', createMediaPrep({ ffmpegPath: '/fake/ffmpeg', ffprobePath: null, spawn: queuedSpawn([], calls) }).prepare({ jobId: 'missing-ffprobe', inputPath: file, allowedRoot: dir, profile: 'fast', emit: () => undefined }), 'ffprobe was not found. Install ffprobe or set CLIPDOCK_FFPROBE_PATH to an absolute executable path.');
+    const missingFfmpeg = process.platform === 'win32'
+      ? 'ffmpeg was not found. Run winget install --id Gyan.FFmpeg --exact --scope user or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.'
+      : 'ffmpeg was not found. Install ffmpeg or set CLIPDOCK_FFMPEG_PATH to an absolute executable path.';
+    const missingFfprobe = process.platform === 'win32'
+      ? 'ffprobe was not found. Run winget install --id Gyan.FFmpeg --exact --scope user or set CLIPDOCK_FFPROBE_PATH to an absolute executable path.'
+      : 'ffprobe was not found. Install ffprobe or set CLIPDOCK_FFPROBE_PATH to an absolute executable path.';
+    await rejected('media-prep missing ffmpeg before spawn', createMediaPrep({ ffmpegPath: null, ffprobePath: '/fake/ffprobe', spawn: queuedSpawn([], calls) }).prepare({ jobId: 'missing-ffmpeg', inputPath: file, allowedRoot: dir, profile: 'fast', emit: () => undefined }), missingFfmpeg);
+    await rejected('media-prep missing ffprobe before spawn', createMediaPrep({ ffmpegPath: '/fake/ffmpeg', ffprobePath: null, spawn: queuedSpawn([], calls) }).prepare({ jobId: 'missing-ffprobe', inputPath: file, allowedRoot: dir, profile: 'fast', emit: () => undefined }), missingFfprobe);
     expect('media-prep missing binaries never spawn', calls.length, 0);
   }
   {

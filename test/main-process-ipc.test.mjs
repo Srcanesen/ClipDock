@@ -186,7 +186,9 @@ test('Pexels IPC timeout retains its failed notification as well as the invoke r
 
 
 for (const [method, args, message] of [
-  ['searchYoutube', ['safe query', 1], 'Could not search YouTube.'],
+  ['searchYoutube', ['safe query', 1], process.platform === 'win32'
+    ? 'yt-dlp was not found. Run winget install --id yt-dlp.yt-dlp --exact --scope user or set CLIPDOCK_YTDLP_PATH to an absolute executable path.'
+    : 'Could not search YouTube.'],
   ['loadYoutube', ['https://www.youtube.com/watch?v=dQw4w9WgXcQ'], 'Could not load video metadata.'],
   ['loadSocial', ['https://www.instagram.com/reel/abc'], 'Could not load public social video metadata.'],
 ]) {
@@ -202,14 +204,16 @@ for (const [method, args, message] of [
 
 test('yt-dlp diagnostics: missing ffprobe preserves failed IPC payload, log and cleanup', async t => {
   const f = await providerIpcFixture(t, 'youtube', {ffprobePath: null});
-  const message = 'ffprobe was not found. Install ffprobe to validate downloaded media.';
+  const message = process.platform === 'win32'
+    ? 'ffprobe was not found. Run winget install --id Gyan.FFmpeg --exact --scope user or set CLIPDOCK_FFPROBE_PATH to an absolute executable path.'
+    : 'ffprobe was not found. Install ffprobe to validate downloaded media.';
   try {
     await assert.rejects(f.start(), {name: 'Error', message});
     assert.deepEqual(f.events(), [ytdlpStart, event('failed', message)]);
     assert.equal(f.children.length, 2, 'metadata and download run, without a validation spawn');
     const log = join(f.root, 'youtube', 'clipdock.log');
     assert.equal(existsSync(log), true);
-    assert.match(readFileSync(log, 'utf8'), /download error: ffprobe was not found\. Install ffprobe to validate downloaded media\./);
+    assert.ok(readFileSync(log, 'utf8').includes(`download error: ${message}`));
     assert.deepEqual(readdirSync(join(f.root, 'youtube')), ['clipdock.log']);
   } finally {await f.stop();}
 });

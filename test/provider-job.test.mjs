@@ -221,7 +221,10 @@ test('admission validates ids and prerequisites before work; rejected work has n
   for (const id of ['', '../escape', 'x'.repeat(81), null]) {
     await assert.rejects(jobs.run(id, async () => {bodies++;}, options), {message: 'Invalid download request.'});
   }
-  await assert.rejects(jobs.run('valid_Job-7', async () => {bodies++;}, options), {message: 'ffprobe was not found. Install ffprobe or set CLIPDOCK_FFPROBE_PATH to an absolute executable path.'});
+  const message = process.platform === 'win32'
+    ? 'ffprobe was not found. Run winget install --id Gyan.FFmpeg --exact --scope user or set CLIPDOCK_FFPROBE_PATH to an absolute executable path.'
+    : 'ffprobe was not found. Install ffprobe or set CLIPDOCK_FFPROBE_PATH to an absolute executable path.';
+  await assert.rejects(jobs.run('valid_Job-7', async () => {bodies++;}, options), {message});
   assert.deepEqual([bodies, prerequisites, mapped, events, jobs.isActive()], [0, 1, 0, [], false]);
   assert.equal(await jobs.run('valid_Job-7', async () => 'admitted', {...options, prerequisites: () => {prerequisites++; requireFfprobe(true);}}), 'admitted');
   assert.deepEqual([prerequisites, events], [2, ['completed']]);
