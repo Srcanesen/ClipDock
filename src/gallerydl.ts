@@ -160,6 +160,16 @@ export function galleryDlVersionSupported(value: unknown): boolean {
   return version !== null && versionAtLeast(version);
 }
 
+function windowsGalleryDlUserScripts(env: NodeJS.ProcessEnv): string[] {
+  const python = env.PYTHONUSERBASE || (env.APPDATA && join(env.APPDATA, 'Python'));
+  if (!python) return [];
+  try {
+    return readdirSync(python, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && /^Python3\d+t?$/i.test(entry.name))
+      .map(entry => join(python, entry.name, 'Scripts', 'gallery-dl.exe'));
+  } catch { return []; }
+}
+
 /**
  * Discover only an executable gallery-dl whose bounded --version probe is
  * successful and is at least the approved 1.28.0 floor. Invalid configured
@@ -173,7 +183,10 @@ export function discoverGalleryDl(
 ): string | null {
   return discoverBinary([platform === 'win32' ? 'gallery-dl.exe' : 'gallery-dl'], ['--version'], {
     env, platform, pathEntries, envKey: 'CLIPDOCK_GALLERYDL_PATH', probe,
-    extraCandidates: installCandidates('gallery-dl', env, platform, {homeBin: true, programDir: 'gallery-dl', localAppDataDir: 'gallery-dl'}),
+    extraCandidates: [
+      ...installCandidates('gallery-dl', env, platform, {homeBin: true, programDir: 'gallery-dl', localAppDataDir: 'gallery-dl'}),
+      ...(platform === 'win32' ? windowsGalleryDlUserScripts(env) : []),
+    ],
     versionCheck: ({code, text}) => code === 0 && galleryDlVersionSupported(text),
   });
 }
@@ -635,7 +648,10 @@ export class GalleryDlWorker {
   setSessionDir(directory: string): void { this.session.capture(resolve(directory)); }
   isActive(): boolean { return this.jobs.isActive(); }
   isDownloadActive(): boolean { return this.jobs.isActive() && this.current?.kind === 'download'; }
-  private assertAvailable(): string { return requireBinary(this.binary, 'gallery-dl 1.28.0 or newer was not found. Install gallery-dl or set CLIPDOCK_GALLERYDL_PATH to an absolute executable path.'); }
+  private assertAvailable(): string {
+    const install = this.platform === 'win32' ? 'Run py -3 -m pip install --user "gallery-dl>=1.28.0"' : 'Install gallery-dl';
+    return requireBinary(this.binary, `gallery-dl 1.28.0 or newer was not found. ${install} or set CLIPDOCK_GALLERYDL_PATH to an absolute executable path.`);
+  }
   private jobDirectory(prefix: 'metadata' | 'download' | 'search'): string {
     return join(this.session.path, `${prefix}-${randomUUID()}`);
   }
