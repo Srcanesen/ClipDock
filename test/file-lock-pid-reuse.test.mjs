@@ -6,12 +6,13 @@ import vm from 'node:vm';
 import {createRequire} from 'node:module';
 import {test} from 'node:test';
 
-const require = createRequire(import.meta.url);
+const fileLockModule = new URL('../dist/file-lock.js', import.meta.url);
+const require = createRequire(fileLockModule);
 const now = Date.now(), self = 4000, pid = 54321;
 const lockCreatedAt = now - 370000;
 function load({platform = 'darwin', execFileSync = () => '00:00', kill = () => true, clock = () => now} = {}) {
   const module = {exports: {}};
-  vm.runInNewContext(fs.readFileSync(new URL('../dist/file-lock.js', import.meta.url), 'utf8'), {
+  vm.runInNewContext(fs.readFileSync(fileLockModule, 'utf8'), {
     module, exports: module.exports,
     process: {pid: self, platform, kill},
     Date: class extends Date {static now() {return clock();}},

@@ -1,10 +1,10 @@
 // Main-only, disposable History artwork. Renderer input is an opaque record id.
 import { spawn as nodeSpawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fsyncSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { spawnBounded, type Spawn } from './provider-platform';
-import { AnchoredDir, captureEntry, captureFile, ensureDirectory, openExclusive, publishNoReplace, removeEntry, removeOwned, verifyFile, type OwnedFile } from './safe-fs';
+import { AnchoredDir, captureEntry, captureFile, ensureDirectory, openExclusive, publishNoReplace, removeEntry, removeOwned, verifyFile, verifyFileDescriptor, type OwnedFile } from './safe-fs';
 
 export type HistoryThumbnailOptions = {
   tools: () => Promise<{ ffmpegPath: string | null; ffprobePath: string | null }>;
@@ -55,8 +55,7 @@ export class HistoryThumbnails {
       const file = captureFile(directory, directory.child(name));
       const fd = openSync(verifyFile(file), constants.O_RDONLY | constants.O_NOFOLLOW);
       try {
-        const stat = fstatSync(fd, { bigint: true });
-        if (stat.dev !== file.identity.dev || stat.ino !== file.identity.ino) return null;
+        const stat = verifyFileDescriptor(file, fd);
         if (stat.size > BigInt(MAX_BYTES)) { removeOwned(file); return null; }
         const bytes = readFileSync(fd);
         verifyFile(file);

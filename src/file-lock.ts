@@ -2,6 +2,7 @@ import { closeSync, fstatSync, linkSync, lstatSync, openSync, readFileSync, unli
 import { randomUUID } from 'node:crypto';
 import { uptime } from 'node:os';
 import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
+import { matchesWindowsFileDescriptor } from './safe-fs';
 
 const LOCK_STALE_MS = 60_000;
 
@@ -74,8 +75,10 @@ function publish(file: string): FileLock | null {
     const createdAt = Date.now();
     const encoded = JSON.stringify({pid: process.pid, token: randomUUID(), createdAt});
     writeFileSync(fd, encoded);
-    const info = fstatSync(fd);
-    owner = {dev: info.dev, ino: info.ino, mtimeMs: info.mtimeMs, encoded, pid: process.pid, createdAt};
+    const named = process.platform === 'win32' ? lstatSync(candidate, {bigint: true}) : null;
+    if (named && !matchesWindowsFileDescriptor(named, fstatSync(fd, {bigint: true}))) throw new Error('Unsafe lock file.');
+    const info = named ?? fstatSync(fd);
+    owner = {dev: Number(info.dev), ino: Number(info.ino), mtimeMs: Number(info.mtimeMs), encoded, pid: process.pid, createdAt};
     try { linkSync(candidate, file); linked = true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
   } finally {

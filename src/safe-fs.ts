@@ -1,7 +1,7 @@
 // Path strings are never mutation authority: capture identities, then verify immediately
 // before each syscall. Node has no openat/unlinkat; the residual microsecond window
 // between the final verification and the syscall cannot be closed here and is accepted.
-import { closeSync, constants, fstatSync, fsyncSync, ftruncateSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, renameSync, rmSync, rmdirSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, ftruncateSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, renameSync, rmSync, rmdirSync, unlinkSync, writeSync, type BigIntStats } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ManagedRoot } from './managed-root';
 
@@ -13,6 +13,12 @@ type Identity = Readonly<{path: string; dev: bigint; ino: bigint; birth?: bigint
 export type DirectorySnapshot = Readonly<{path: string; directories: ReadonlyArray<Identity>}>;
 const same = (a: {dev: bigint; ino: bigint}, b: {dev: bigint; ino: bigint}) => a.dev === b.dev && a.ino === b.ino;
 type FileStats = {dev: bigint; ino: bigint; birthtimeNs: bigint};
+/** Older Windows libuv reports a 64-bit volume serial by name and only its low 32 bits by handle. */
+export function matchesWindowsFileDescriptor(named: BigIntStats, descriptor: BigIntStats): boolean {
+  return named.isFile() && descriptor.isFile() && (same(named, descriptor)
+    || (descriptor.dev !== 0n && descriptor.dev === BigInt.asUintN(32, named.dev)
+      && descriptor.ino !== 0n && descriptor.ino === named.ino && descriptor.birthtimeNs === named.birthtimeNs));
+}
 // macOS exFAT reports a negative placeholder inode for an empty file and its start
 // cluster after the first write. Adopt that change once, on the same device and birth time.
 const adopted = new WeakMap<Identity, {dev: bigint; ino: bigint}>();
@@ -95,14 +101,25 @@ export function captureFile(dir: AnchoredDir, path: string): OwnedFile {
   const file = Object.freeze({dir, path, chain: parent.snapshot().directories, identity: fileIdentity(path, info)});
   verifyFile(file); return file;
 }
-export function verifyFile(file: OwnedFile): string {
+function verifiedFileStat(file: OwnedFile): BigIntStats {
   // Once admitted, any changed component has the same public meaning: replaced.
   try {
     file.dir.verify(); verifyChain(file.chain);
     const info = lstatSync(file.path, {bigint: true});
     if (!info.isFile() || info.isSymbolicLink() || !sameFile(file.identity, info)) throw new SafeFsError('replaced');
-    return file.path;
+    return info;
   } catch (error) { if (error instanceof SafeFsError || missing(error)) throw new SafeFsError('replaced'); throw error; }
+}
+export function verifyFile(file: OwnedFile): string { verifiedFileStat(file); return file.path; }
+
+/** Keep full pathname identities and reconcile the Windows width difference only at the descriptor boundary. */
+export function verifyFileDescriptor(file: OwnedFile, fd: number): BigIntStats {
+  const info = fstatSync(fd, {bigint: true});
+  if (!info.isFile() || (!sameFile(file.identity, info)
+    && !(process.platform === 'win32' && matchesWindowsFileDescriptor(verifiedFileStat(file), info)))) {
+    throw new SafeFsError('replaced');
+  }
+  return info;
 }
 export function removeOwned(file: OwnedFile): 'removed' | 'missing' | 'replaced' {
   try {
@@ -162,7 +179,7 @@ export function openExclusive(dir: AnchoredDir, name: string, mode = 0o600): {fd
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new SafeFsError('exists'); throw error; }
   try {
     const file = captureFile(dir, path);
-    if (!sameFile(file.identity, fstatSync(fd, {bigint: true}))) throw new SafeFsError('replaced');
+    verifyFileDescriptor(file, fd);
     return {fd, file};
   } catch (error) { closeSync(fd); throw error; }
 }
@@ -196,7 +213,7 @@ export function publishNoReplace(src: OwnedFile, dest: AnchoredDir, name: string
     try {
       verifyFile(src);
       input = openSync(src.path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      if (!sameFile(src.identity, fstatSync(input, {bigint: true}))) throw new SafeFsError('replaced');
+      verifyFileDescriptor(src, input);
       // Both descriptors are bound to verified inodes; a pathname swap mid-copy fails the final checks.
       const buffer = Buffer.alloc(64 * 1024);
       for (let count; (count = readSync(input, buffer, 0, buffer.length, null)) > 0;) {
@@ -217,8 +234,7 @@ export function appendOwned(file: OwnedFile, line: string, limit: number): void 
   verifyFile(file);
   const fd = openSync(file.path, constants.O_RDWR | constants.O_NOFOLLOW);
   try {
-    const info = fstatSync(fd, {bigint: true});
-    if (!info.isFile() || !sameFile(file.identity, info)) throw new SafeFsError('replaced');
+    const info = verifyFileDescriptor(file, fd);
     verifyFile(file);
     const next = Buffer.from(line), size = Number(info.size);
     const kept = Math.min(size, Math.max(0, limit - next.length));
@@ -238,7 +254,7 @@ export function writeOwned(file: OwnedFile, content: string): void {
   verifyFile(file);
   const fd = openSync(file.path, constants.O_WRONLY | constants.O_NOFOLLOW);
   try {
-    if (!sameFile(file.identity, fstatSync(fd, {bigint: true}))) throw new SafeFsError('replaced');
+    verifyFileDescriptor(file, fd);
     const bytes = Buffer.from(content);
     for (let offset = 0; offset < bytes.length;) {
       verifyFile(file); offset += writeSync(fd, bytes, offset, bytes.length - offset, offset);

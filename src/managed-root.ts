@@ -7,7 +7,9 @@ import { AnchoredDir, ensureDirectory, openExclusive, prepareDirectory, removeOw
 
 export type RootIdentity = Readonly<{ path: string; directories: ReadonlyArray<Readonly<{ path: string; dev: number | string; ino: number | string }>> }>;
 const serial = (value: bigint): number | string => Number.isSafeInteger(Number(value)) ? Number(value) : value.toString();
-const validIdentity = (value: unknown): boolean => typeof value === 'number' ? Number.isSafeInteger(value) && value >= 0 : typeof value === 'string' && /^\d+$/.test(value);
+const validIdentity = (value: unknown): boolean => typeof value === 'number'
+  ? Number.isSafeInteger(value) && (value >= 0 || process.platform === 'win32')
+  : typeof value === 'string' && (process.platform === 'win32' ? /^-?\d+$/ : /^\d+$/).test(value);
 const failure = () => new Error('Managed root failed the safety check.');
 
 export class ManagedRoot {
