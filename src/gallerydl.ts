@@ -160,14 +160,23 @@ export function galleryDlVersionSupported(value: unknown): boolean {
   return version !== null && versionAtLeast(version);
 }
 
+function matchingDirectories(root: string, pattern: RegExp): string[] {
+  try {
+    return readdirSync(root, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && pattern.test(entry.name))
+      .map(entry => join(root, entry.name));
+  } catch { return []; }
+}
+
 function windowsGalleryDlUserScripts(env: NodeJS.ProcessEnv): string[] {
   const python = env.PYTHONUSERBASE || (env.APPDATA && join(env.APPDATA, 'Python'));
-  if (!python) return [];
-  try {
-    return readdirSync(python, { withFileTypes: true })
-      .filter(entry => entry.isDirectory() && /^Python3\d+t?$/i.test(entry.name))
-      .map(entry => join(python, entry.name, 'Scripts', 'gallery-dl.exe'));
-  } catch { return []; }
+  const roots = python ? [python] : [];
+  if (env.LOCALAPPDATA) {
+    const packages = matchingDirectories(join(env.LOCALAPPDATA, 'Packages'), /^PythonSoftwareFoundation\.Python\./i);
+    roots.push(...packages.map(folder => join(folder, 'LocalCache', 'local-packages')));
+  }
+  return roots.flatMap(root => matchingDirectories(root, /^Python3\d+t?$/i)
+    .map(folder => join(folder, 'Scripts', 'gallery-dl.exe')));
 }
 
 /**

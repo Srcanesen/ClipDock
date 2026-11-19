@@ -83,7 +83,11 @@ export function discoverYtdlp(env = process.env, platform = process.platform, pa
   const names = [windows ? 'yt-dlp.exe' : 'yt-dlp'];
   // Windows batch wrappers can't run with shell: false.
   const envKey = !windows || extname(env.CLIPDOCK_YTDLP_PATH ?? '').toLowerCase() === '.exe' ? 'CLIPDOCK_YTDLP_PATH' : undefined;
-  return discoverBinary(names, null, { env, platform, pathEntries, envKey, extraCandidates: installCandidates('yt-dlp', env, platform, {programDir: 'yt-dlp', localAppDataDir: 'yt-dlp'}) });
+  return discoverBinary(names, windows ? ['--version'] : null, {
+    env, platform, pathEntries, envKey,
+    extraCandidates: installCandidates('yt-dlp', env, platform, {programDir: 'yt-dlp', localAppDataDir: 'yt-dlp'}),
+    versionCheck: windows ? ({ code, text }) => code === 0 && /^\d{4}\.\d{1,2}\.\d{1,2}(?:[.+-][\w.+-]+)?\s*$/m.test(text.trim()) : undefined,
+  });
 }
 export function discoverFfmpeg(env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':'), probe?: VersionProbe): string | null {
   const name = platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';

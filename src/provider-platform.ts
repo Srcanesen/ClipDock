@@ -60,10 +60,21 @@ export type DiscoverBinaryOptions = {
   probe?: VersionProbe;
 };
 
+function* winGetPackageExecutables(directory: string, names: ReadonlySet<string>): Generator<string> {
+  let entries;
+  try { entries = readdirSync(directory, { withFileTypes: true }); }
+  catch { return; }
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) yield* winGetPackageExecutables(path, names);
+    else if (entry.isFile() && names.has(entry.name.toLowerCase())) yield path;
+  }
+}
+
 /**
  * Single candidate+probe+override discovery.
  * - an absolute envKey override is the first candidate; an invalid one never blocks fallback
- * - PATH candidates + extraCandidates are enumerated, de-duplicated via seen Set
+ * - PATH, explicit fallbacks, and finally unlinked WinGet binaries are de-duplicated
  * - each candidate must be absoluteForPlatform, executable, and pass versionIdentity/versionCheck if given
  * Returns first match or null. shell:false is enforced in every spawnSync probe.
  */
@@ -77,16 +88,21 @@ export function discoverBinary(
   const pathEntries = opts.pathEntries ?? (env.PATH ?? '').split(platform === 'win32' ? ';' : ':');
   const probe: VersionProbe = opts.probe ?? (versionArgs ? candidate => probeVersion(candidate, versionArgs) : () => null);
 
-  const candidates: string[] = [];
-  const configured = opts.envKey ? env[opts.envKey] : undefined;
-  if (configured && absoluteForPlatform(configured, platform)) candidates.push(configured);
-  for (const dir of pathEntries.filter(Boolean)) {
-    for (const name of names) candidates.push(join(dir, name));
+  function* candidates(): Generator<string> {
+    const configured = opts.envKey ? env[opts.envKey] : undefined;
+    if (configured) yield configured;
+    for (const dir of pathEntries.filter(Boolean)) {
+      for (const name of names) yield join(dir, name);
+    }
+    yield* opts.extraCandidates ?? [];
+    if (platform === 'win32' && env.LOCALAPPDATA && absoluteForPlatform(env.LOCALAPPDATA, platform)) {
+      const packages = join(env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages');
+      yield* winGetPackageExecutables(packages, new Set(names.map(name => name.toLowerCase())));
+    }
   }
-  if (opts.extraCandidates) candidates.push(...opts.extraCandidates);
 
   const seen = new Set<string>();
-  for (const candidate of candidates) {
+  for (const candidate of candidates()) {
     if (seen.has(candidate)) continue;
     seen.add(candidate);
     if (!absoluteForPlatform(candidate, platform)) continue;
@@ -102,7 +118,7 @@ export function discoverBinary(
   return null;
 }
 
-/** Common per-user and Homebrew install locations for a provider binary. */
+/** Common install locations and WinGet links for a provider binary. */
 export function installCandidates(name: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform, options: {homeBin?: boolean; programDir?: string; localAppDataDir?: string} = {}): string[] {
   if (platform === 'darwin') return [`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, ...(options.homeBin ? [join(env.HOME || homedir(), 'bin', name)] : [])];
   if (platform !== 'win32') return [];
@@ -111,6 +127,7 @@ export function installCandidates(name: string, env: NodeJS.ProcessEnv, platform
     ...(options.programDir ? [join(env.ProgramFiles ?? 'C:\\Program Files', ...options.programDir.split('/'), exe)] : []),
     ...(options.localAppDataDir ? [join(env.LOCALAPPDATA ?? '', ...options.localAppDataDir.split('/'), exe)] : []),
     ...(env.LOCALAPPDATA ? [join(env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links', exe)] : []),
+    ...(env.ProgramFiles ? [join(env.ProgramFiles, 'WinGet', 'Links', exe)] : []),
     ...(options.homeBin ? [join(env.USERPROFILE ?? '', 'bin', exe)] : []),
   ];
 }

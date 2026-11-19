@@ -1,9 +1,8 @@
 // Resolve compatibility preparation boundary: Node-only, Electron-free.
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
-import { accessSync, constants, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, win32 } from 'node:path';
-import { probeVersion, spawnBounded } from './provider-platform';
+import { statSync } from 'node:fs';
+import { basename, dirname, extname, join, relative, resolve } from 'node:path';
+import { absoluteForPlatform, discoverBinary, installCandidates, spawnBounded, type VersionProbe } from './provider-platform';
 import { ProviderJobRunner, missingFfmpegMessage, requireFfprobe, type ProviderJobContext } from './provider-job';
 import { ManagedRoot } from './managed-root';
 import { AnchoredDir, SafeFsError, captureFile, createPrivateDir, publishNoReplace, removeOwned, removePrivateDir, verifyFile, type OwnedFile } from './safe-fs';
@@ -20,25 +19,13 @@ type Probe = { video: { codec: string; pixFmt: string; width: number; height: nu
 const MAX_PROBE = 2 * 1024 * 1024;
 const MAX_STDERR = 64 * 1024;
 
-function executable(p: string): boolean { try { accessSync(p, constants.X_OK); return true; } catch { return false; } }
-function absoluteForPlatform(p: string, platform: NodeJS.Platform): boolean { return platform === 'win32' ? win32.isAbsolute(p) : isAbsolute(p); }
-type VersionProbe = (candidate: string) => { code: number | null; text: string } | null;
-function versionMatches(candidate: string, identity: string, probe: VersionProbe): boolean {
-  const result = probe(candidate);
-  return result !== null && result.code === 0 && result.text.toLowerCase().includes(identity);
-}
-
-export function discoverFfprobe(ffmpegPath: string | null = null, env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':'), probe: VersionProbe = candidate => probeVersion(candidate, ['-version'])): string | null {
-  const configured = env.CLIPDOCK_FFPROBE_PATH;
+export function discoverFfprobe(ffmpegPath: string | null = null, env = process.env, platform = process.platform, pathEntries = (env.PATH ?? '').split(platform === 'win32' ? ';' : ':'), probe?: VersionProbe): string | null {
   const name = platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
-  const candidates = [
-    ...(configured && absoluteForPlatform(configured, platform) ? [configured] : []),
-    ...(ffmpegPath && absoluteForPlatform(ffmpegPath, platform) ? [join(dirname(ffmpegPath), name)] : []),
-    ...pathEntries.filter(Boolean).map((dir) => join(dir, name)),
-    ...(platform === 'darwin' ? ['/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', join(env.HOME || homedir(), 'bin', 'ffprobe')] : []),
-    ...(platform === 'win32' ? [join(env.ProgramFiles ?? 'C:\\Program Files', 'ffmpeg', 'bin', 'ffprobe.exe'), join(env.LOCALAPPDATA ?? '', 'Microsoft', 'WinGet', 'Links', 'ffprobe.exe'), join(env.USERPROFILE ?? '', 'bin', 'ffprobe.exe')] : []),
-  ];
-  return candidates.find((candidate) => absoluteForPlatform(candidate, platform) && executable(candidate) && versionMatches(candidate, 'ffprobe version', probe)) ?? null;
+  return discoverBinary([name], ['-version'], {
+    env, platform, envKey: 'CLIPDOCK_FFPROBE_PATH', versionIdentity: 'ffprobe version', probe,
+    pathEntries: ffmpegPath && absoluteForPlatform(ffmpegPath, platform) ? [dirname(ffmpegPath), ...pathEntries] : pathEntries,
+    extraCandidates: installCandidates('ffprobe', env, platform, {homeBin: true, programDir: 'ffmpeg/bin'}),
+  });
 }
 
 function rate(value: unknown): number | null {
