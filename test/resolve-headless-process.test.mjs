@@ -17,21 +17,26 @@ import {
 
 const NODE = process.execPath;
 
-test('Windows scripting readiness queries Established connections owned by the Resolve child', async t => {
-  const observations = ['', '42\r\n'];
-  const launch = t.mock.method(childProcessTools, 'spawnSync', (command, args, options) => {
-    assert.equal(command, 'powershell.exe');
-    assert.deepEqual(args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
-    assert.match(args[3], /^Get-NetTCPConnection -OwningProcess 42 -RemoteAddress 127\.0\.0\.1 -RemotePort 1144 -State Established -ErrorAction SilentlyContinue /);
-    assert.match(args[3], /-ExpandProperty OwningProcess/);
-    assert.equal(options.windowsHide, true);
-    // PowerShell emits no row when the only connection has not completed its SYN handshake.
-    return { status: 0, stdout: observations.shift() };
-  });
+function mockScriptingPoll(t, run) {
+  const launch = t.mock.method(childProcessTools, 'spawnSync', run);
   syncBuiltinESMExports();
   t.after(() => {
     launch.mock.restore();
     syncBuiltinESMExports();
+  });
+  return launch;
+}
+
+test('Windows scripting readiness queries Established connections owned by the Resolve child', async t => {
+  const observations = ['', '42\r\n'];
+  mockScriptingPoll(t, (command, args, options) => {
+    assert.equal(command, 'powershell.exe');
+    assert.deepEqual(args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
+    assert.match(args[3], /Get-NetTCPConnection -OwningProcess 42 -RemoteAddress 127\.0\.0\.1 -RemotePort 1144 -State Established -ErrorAction SilentlyContinue /);
+    assert.match(args[3], /-ExpandProperty OwningProcess/);
+    assert.equal(options.windowsHide, true);
+    // PowerShell emits no row when the only connection has not completed its SYN handshake.
+    return { status: 0, stdout: observations.shift() };
   });
   assert.equal(hasWindowsScriptingConnection('\r\n', 42), false);
   assert.equal(hasWindowsScriptingConnection('41\r\n', 42), false);
@@ -42,6 +47,35 @@ test('Windows scripting readiness queries Established connections owned by the R
   assert.ok(remaining > 0 && remaining < 5000);
   await assert.rejects(waitForWindowsScriptingServer(child, 5, { connected: () => false }),
     /did not connect to its Windows scripting server within 5 ms/);
+});
+
+test('Windows scripting readiness retries a timed-out PowerShell poll within its overall deadline', async t => {
+  const timedOut = {
+    status: null, stdout: '42\r\n', stderr: '',
+    error: Object.assign(new Error('spawnSync powershell.exe ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+  };
+  const results = [timedOut, { status: 0, stdout: '42\r\n' }];
+  const launch = mockScriptingPoll(t, () => results.shift() ?? timedOut);
+  const child = { pid: 42, exitCode: null, signalCode: null };
+  assert.ok(await waitForWindowsScriptingServer(child, 5000) > 0);
+  assert.equal(launch.mock.callCount(), 2);
+  await assert.rejects(waitForWindowsScriptingServer(child, 5), {
+    message: 'Resolve did not connect to its Windows scripting server within 5 ms',
+  });
+});
+
+test('Windows scripting readiness fails immediately when Get-NetTCPConnection is missing', async t => {
+  const message = 'Get-NetTCPConnection is unavailable in Windows PowerShell';
+  const launch = mockScriptingPoll(t, (_command, args) => {
+    assert.match(args[3], /^if \(-not \(Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue\)\) \{/);
+    assert.ok(args[3].includes(`[Console]::Error.WriteLine('${message}'); exit 1`));
+    return { status: 1, stdout: '', stderr: `${message}\r\n` };
+  });
+  const child = { pid: 42, exitCode: null, signalCode: null };
+  await assert.rejects(waitForWindowsScriptingServer(child, 5000), {
+    message: `Windows scripting connection check failed: ${message}`,
+  });
+  assert.equal(launch.mock.callCount(), 1);
 });
 
 function childProcess(code) {

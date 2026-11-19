@@ -11,13 +11,16 @@ function connectionEstablished(pid, timeout) {
   if (!Number.isInteger(pid) || pid <= 0 || pid > 0xffffffff) throw new Error('Invalid Resolve process ID');
   // The cmdlet reports an empty result as ObjectNotFound on Windows PowerShell.
   const command = [
+    "if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine('Get-NetTCPConnection is unavailable in Windows PowerShell'); exit 1 }",
     `Get-NetTCPConnection -OwningProcess ${pid} -RemoteAddress 127.0.0.1 -RemotePort 1144 -State Established -ErrorAction SilentlyContinue -ErrorVariable queryErrors | Select-Object -First 1 -ExpandProperty OwningProcess`,
     "if ($queryErrors | Where-Object { $_.CategoryInfo.Category -ne 'ObjectNotFound' }) { exit 1 }",
     'exit 0',
   ].join('; ');
   const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', windowsHide: true, timeout });
+  if (result.error?.code === 'ETIMEDOUT') return false;
   if (result.error || result.status !== 0) {
-    throw new Error(`Windows scripting connection check failed: ${result.error?.message ?? `PowerShell exit ${result.status}`}`);
+    const detail = result.error?.message ?? (result.stderr?.trim() || `PowerShell exit ${result.status}`);
+    throw new Error(`Windows scripting connection check failed: ${detail}`);
   }
   return hasWindowsScriptingConnection(result.stdout, pid);
 }
