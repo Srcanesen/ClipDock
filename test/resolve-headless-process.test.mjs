@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import childProcessTools, { spawn } from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { test } from 'node:test';
 import { hasWindowsScriptingConnection, waitForWindowsScriptingServer } from '../scripts/resolve-smoke/lib/windows-scripting.mjs';
@@ -16,21 +17,27 @@ import {
 
 const NODE = process.execPath;
 
-test('Windows scripting readiness requires a loopback connection owned by the Resolve child', async () => {
-  const rows = [
-    'TCP  0.0.0.0:1144       0.0.0.0:0       LISTENING    40',
-    'TCP  127.0.0.1:29125   127.0.0.1:1144  ESTABLISHED  41',
-    'TCP  127.0.0.1:29126   127.0.0.1:1144  SYN_SENT     42',
-    'TCP  192.0.2.1:29127   192.0.2.2:1144  ESTABLISHED  42',
-  ].join('\r\n');
-  const ready = rows + '\r\nTCP  127.0.0.1:29126  127.0.0.1:1144  ESTABLISHED  42';
-  assert.equal(hasWindowsScriptingConnection(rows, 42), false);
-  assert.equal(hasWindowsScriptingConnection(ready, 42), true);
-  const child = { pid: 42, exitCode: null, signalCode: null };
-  const observations = [rows, ready];
-  const remaining = await waitForWindowsScriptingServer(child, 5000, {
-    connected: pid => hasWindowsScriptingConnection(observations.shift(), pid),
+test('Windows scripting readiness queries Established connections owned by the Resolve child', async t => {
+  const observations = ['', '42\r\n'];
+  const launch = t.mock.method(childProcessTools, 'spawnSync', (command, args, options) => {
+    assert.equal(command, 'powershell.exe');
+    assert.deepEqual(args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
+    assert.match(args[3], /^Get-NetTCPConnection -OwningProcess 42 -RemoteAddress 127\.0\.0\.1 -RemotePort 1144 -State Established -ErrorAction SilentlyContinue /);
+    assert.match(args[3], /-ExpandProperty OwningProcess/);
+    assert.equal(options.windowsHide, true);
+    // PowerShell emits no row when the only connection has not completed its SYN handshake.
+    return { status: 0, stdout: observations.shift() };
   });
+  syncBuiltinESMExports();
+  t.after(() => {
+    launch.mock.restore();
+    syncBuiltinESMExports();
+  });
+  assert.equal(hasWindowsScriptingConnection('\r\n', 42), false);
+  assert.equal(hasWindowsScriptingConnection('41\r\n', 42), false);
+  assert.equal(hasWindowsScriptingConnection('42\r\n', 42), true);
+  const child = { pid: 42, exitCode: null, signalCode: null };
+  const remaining = await waitForWindowsScriptingServer(child, 5000);
   assert.deepEqual(observations, []);
   assert.ok(remaining > 0 && remaining < 5000);
   await assert.rejects(waitForWindowsScriptingServer(child, 5, { connected: () => false }),
