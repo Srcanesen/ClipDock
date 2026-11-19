@@ -5,18 +5,29 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { tryAcquireFileLock } from '../dist/file-lock.js';
 import { ManagedRoot } from '../dist/managed-root.js';
-import { AnchoredDir, appendOwned, writeExclusive, writeOwned } from '../dist/safe-fs.js';
+import { AnchoredDir, appendOwned, matchesWindowsFileDescriptor, writeExclusive, writeOwned } from '../dist/safe-fs.js';
 
 const windows = { skip: process.platform !== 'win32' };
+// Volume serials measured on the same NTFS file with Resolve's bundled Node.
+const pathDevice = -572273382278554242n;
+const handleDevice = 249568638n;
+const named = { dev: pathDevice, ino: 42n, birthtimeNs: 1700000000000000000n, isFile: () => true };
+const descriptor = { ...named, dev: handleDevice };
+
+test('Windows descriptor matching accepts the same file across volume serial widths', () => {
+  assert.equal(matchesWindowsFileDescriptor(named, descriptor), true);
+});
+
+test('Windows descriptor matching rejects a different inode with the same volume and creation time', () => {
+  assert.equal(matchesWindowsFileDescriptor(named, { ...descriptor, ino: 43n }), false);
+});
 
 function workspace(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), 'clipdock-volume-id-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { lstatSync, fstatSync } = fs;
-  // Values measured on the same NTFS file with Resolve's bundled Node.
-  const pathDevice = -572273382278554242n;
   const numericPathDevice = Number(BigInt.asUintN(64, pathDevice));
-  let descriptorDevice = 249568638n;
+  let descriptorDevice = handleDevice;
   let birthOffset = 0n;
   t.mock.method(fs, 'lstatSync', (file, options) => {
     const stat = lstatSync(file, options);
