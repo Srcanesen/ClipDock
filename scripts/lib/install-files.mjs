@@ -115,6 +115,7 @@ function restoreRecoveryError(destination, backupDir, restoreError, originalErro
 
 let ownWindowsStartTime;
 
+/** @returns {{state: 'exited'} | {state: 'unknown'} | {state: 'started', startTime: string}} */
 function windowsProcessStartTime(pid) {
   const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const command = `[Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)`;
@@ -122,10 +123,9 @@ function windowsProcessStartTime(pid) {
     const result = execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', command], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 5000,
     }).trim();
-    return /^[1-9]\d*$/.test(result) ? result : undefined;
-  } catch {
-    return undefined;
-  }
+    if (/^[1-9]\d*$/.test(result)) return {state: 'started', startTime: result};
+  } catch { /* Check whether the process exited during the query. */ }
+  return pid === process.pid || isPidLive(pid) ? {state: 'unknown'} : {state: 'exited'};
 }
 
 function isPidLive(pid) {
@@ -146,8 +146,9 @@ function isTransactionOwnerLive(record) {
   const {pid, windowsStartTime} = record;
   if (!isPidLive(pid)) return false;
   if (!hasComparableWindowsStartTime(record)) return true;
-  const current = pid === process.pid ? ownWindowsStartTime : windowsProcessStartTime(pid);
-  return current === undefined ? isPidLive(pid) : current === windowsStartTime;
+  if (pid === process.pid) return ownWindowsStartTime === undefined || ownWindowsStartTime === windowsStartTime;
+  const current = windowsProcessStartTime(pid);
+  return current.state === 'unknown' || (current.state === 'started' && current.startTime === windowsStartTime);
 }
 
 // One canonical target needs one owner. The exclusive journal also records enough
@@ -172,7 +173,10 @@ function acquireTransaction(destination, fs) {
       fs.rmSync(temporary, {force: true});
     }
   };
-  if (process.platform === 'win32') ownWindowsStartTime ??= windowsProcessStartTime(process.pid);
+  if (process.platform === 'win32' && ownWindowsStartTime === undefined) {
+    const current = windowsProcessStartTime(process.pid);
+    if (current.state === 'started') ownWindowsStartTime = current.startTime;
+  }
   const identity = {pid: process.pid, windowsStartTime: ownWindowsStartTime};
   const owner = { ...identity, destination: path.resolve(destination), workDir: path.join(parent, `.__clipdock_work_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}`) };
   const busy = () => Object.assign(new Error(`Installation transaction is active or needs recovery: ${lock}`), {code: 'INSTALL_BUSY'});
